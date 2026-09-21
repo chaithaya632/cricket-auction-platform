@@ -7,7 +7,7 @@ import { getUserPermissionContext } from '@/lib/permissions/context';
 import { AccLogo } from '@/components/acc/brand';
 import { LogoutButton } from '@/components/auth/logout-button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { buttonVariants } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Clock,
@@ -88,22 +88,22 @@ export default async function OnboardingPage({
             </AlertDescription>
             <div className="mt-4 flex flex-wrap gap-3">
               {hasAdminRole && (
-                <Button render={<Link href="/admin" />} size="sm">
+                <Link href="/admin" className={buttonVariants({ size: "sm" })}>
                   Go to Admin Console
                   <ChevronRight className="ml-1 size-4" />
-                </Button>
+                </Link>
               )}
               {hasFranchiseRole && (
-                <Button render={<Link href="/franchise" />} size="sm">
+                <Link href="/franchise" className={buttonVariants({ size: "sm" })}>
                   Go to Franchise Portal
                   <ChevronRight className="ml-1 size-4" />
-                </Button>
+                </Link>
               )}
               {hasPlayerRole && (
-                <Button render={<Link href="/player" />} size="sm">
+                <Link href="/player" className={buttonVariants({ size: "sm" })}>
                   Go to Player Portal
                   <ChevronRight className="ml-1 size-4" />
-                </Button>
+                </Link>
               )}
             </div>
           </Alert>
@@ -177,18 +177,18 @@ export default async function OnboardingPage({
               <div className="flex flex-col gap-3 rounded-lg border border-dashed bg-muted/30 p-4">
                 <span className="text-xs font-semibold text-foreground">While waiting, you can explore public features:</span>
                 <div className="flex flex-wrap gap-2">
-                  <Button render={<Link href="/auction" />} variant="outline" size="sm">
+                  <Link href="/auction" className={buttonVariants({ variant: "outline", size: "sm" })}>
                     <Radio className="mr-1.5 size-3.5 text-red-500" />
                     Public Auction Feed
-                  </Button>
-                  <Button render={<Link href="/players" />} variant="outline" size="sm">
+                  </Link>
+                  <Link href="/players" className={buttonVariants({ variant: "outline", size: "sm" })}>
                     <Users className="mr-1.5 size-3.5" />
                     Player Directory
-                  </Button>
-                  <Button render={<Link href="/teams" />} variant="outline" size="sm">
+                  </Link>
+                  <Link href="/teams" className={buttonVariants({ variant: "outline", size: "sm" })}>
                     <Trophy className="mr-1.5 size-3.5" />
                     Franchise Standings
-                  </Button>
+                  </Link>
                 </div>
               </div>
             </CardContent>

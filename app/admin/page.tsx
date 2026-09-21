@@ -8,7 +8,7 @@ import { CategoryDistributionChart, FranchiseSpendChart } from "@/components/acc
 import { ActivityPanel } from "@/components/acc/admin/activity-panel"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import { SEASON, CATEGORY_CONFIG, BUCKET_ORDER, formatCredits } from "@/lib/acc/config"
 import {
   PLAYERS,
@@ -66,10 +66,10 @@ export default async function AdminDashboardPage() {
       user={sessionUser}
       breadcrumb="Dashboard"
       actions={
-        <Button render={<Link href="/admin/auction" />} size="sm">
+        <Link href="/admin/auction" className={buttonVariants({ size: "sm" })}>
           <Gavel className="size-4" />
           Open auction console
-        </Button>
+        </Link>
       }
     >
       <PageHeader

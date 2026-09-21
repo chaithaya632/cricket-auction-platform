@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import { ArrowRight } from "lucide-react"
 import { Hero } from "@/components/acc/public/hero"
 import { CategoryShowcase } from "@/components/acc/public/category-showcase"
@@ -76,12 +76,12 @@ export default function HomePage() {
             Admins run the auction floor.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3">
-            <Button render={<Link href="/login" />} size="lg">
+            <Link href="/login" className={buttonVariants({ size: "lg" })}>
               Sign in to your portal
-            </Button>
-            <Button render={<Link href="/auction" />} size="lg" variant="outline">
+            </Link>
+            <Link href="/auction" className={buttonVariants({ size: "lg", variant: "outline" })}>
               Follow the auction
-            </Button>
+            </Link>
           </div>
         </div>
       </section>

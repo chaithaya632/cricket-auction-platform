@@ -1,6 +1,6 @@
 import Link from "next/link"
 import Image from "next/image"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import { LiveIndicator } from "@/components/acc/status-badges"
 import { SEASON } from "@/lib/acc/config"
 import { ArrowRight, Gavel } from "lucide-react"
@@ -24,23 +24,17 @@ export function Hero({
         <div className="absolute inset-0 bg-gradient-to-r from-background via-transparent to-transparent" />
       </div>
 
-      <div className="relative mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-20 md:px-6 md:py-28">
-        <div className="flex flex-col gap-6">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-2 rounded-full border border-live/40 bg-live/10 px-3 py-1 text-xs font-semibold text-live">
-              <LiveIndicator />
-              Auction live now
-            </span>
-            <span className="rounded-full border border-border bg-card/60 px-3 py-1 font-mono text-xs text-muted-foreground">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-10 px-4 md:px-6">
+        <div className="flex max-w-3xl flex-col gap-5">
+          <div className="flex items-center gap-2">
+            <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-xs font-medium text-primary">
               {SEASON}
             </span>
+            <span className="text-xs text-muted-foreground">March 2026</span>
           </div>
 
-          <h1 className="max-w-3xl text-balance text-4xl font-bold tracking-tight md:text-6xl">
-            Campus cricket meets the{" "}
-            <span className="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-              bidding floor
-            </span>
+          <h1 className="text-balance text-4xl font-bold tracking-tight sm:text-5xl md:text-6xl">
+            Where talent meets the hammer.
           </h1>
 
           <p className="max-w-xl text-pretty text-lg text-muted-foreground">
@@ -49,14 +43,14 @@ export function Hero({
           </p>
 
           <div className="flex flex-wrap items-center gap-3">
-            <Button render={<Link href="/auction" />} size="lg">
+            <Link href="/auction" className={buttonVariants({ size: "lg" })}>
               <Gavel data-icon="inline-start" />
               Watch the live auction
-            </Button>
-            <Button render={<Link href="/players" />} size="lg" variant="outline">
+            </Link>
+            <Link href="/players" className={buttonVariants({ size: "lg", variant: "outline" })}>
               Explore players
               <ArrowRight data-icon="inline-end" />
-            </Button>
+            </Link>
           </div>
         </div>
 

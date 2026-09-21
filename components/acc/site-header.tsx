@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useState } from "react"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { AccLogo } from "@/components/acc/brand"
 import { LiveIndicator } from "@/components/acc/status-badges"
@@ -55,15 +55,23 @@ export function SiteHeader() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
-          <Button render={<Link href="/login" />} variant="ghost" size="sm" className="hidden md:inline-flex">
+          <Link
+            href="/login"
+            className={buttonVariants({ variant: "ghost", size: "sm", className: "hidden md:inline-flex" })}
+          >
             Sign in
-          </Button>
-          <Button render={<Link href="/auction" />} size="sm" className="hidden md:inline-flex">
+          </Link>
+          <Link
+            href="/auction"
+            className={buttonVariants({ size: "sm", className: "hidden md:inline-flex" })}
+          >
             Watch live
-          </Button>
+          </Link>
 
           <Sheet open={open} onOpenChange={setOpen}>
-            <SheetTrigger render={<Button variant="outline" size="icon" className="md:hidden" />}>
+            <SheetTrigger
+              className={buttonVariants({ variant: "outline", size: "icon", className: "md:hidden" })}
+            >
               <Menu />
               <span className="sr-only">Open menu</span>
             </SheetTrigger>
@@ -91,12 +99,20 @@ export function SiteHeader() {
                   </Link>
                 ))}
                 <div className="mt-4 flex flex-col gap-2">
-                  <Button render={<Link href="/login" />} variant="outline" onClick={() => setOpen(false)}>
+                  <Link
+                    href="/login"
+                    onClick={() => setOpen(false)}
+                    className={buttonVariants({ variant: "outline", className: "w-full justify-center" })}
+                  >
                     Sign in
-                  </Button>
-                  <Button render={<Link href="/auction" />} onClick={() => setOpen(false)}>
+                  </Link>
+                  <Link
+                    href="/auction"
+                    onClick={() => setOpen(false)}
+                    className={buttonVariants({ className: "w-full justify-center" })}
+                  >
                     Watch live
-                  </Button>
+                  </Link>
                 </div>
               </nav>
             </SheetContent>
@@ -106,6 +122,7 @@ export function SiteHeader() {
     </header>
   )
 }
+
 
 export function SiteFooter() {
   return (

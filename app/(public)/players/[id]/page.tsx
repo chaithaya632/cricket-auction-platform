@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation"
 import Link from "next/link"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Separator } from "@/components/ui/separator"
 import { CategoryBadge } from "@/components/acc/category-badge"
 import { PlayerStatusBadge } from "@/components/acc/status-badges"
@@ -36,10 +36,13 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-10 md:px-6">
-      <Button render={<Link href="/players" />} variant="ghost" size="sm" className="mb-6 -ml-2 w-fit">
+      <Link
+        href="/players"
+        className={buttonVariants({ variant: "ghost", size: "sm", className: "mb-6 -ml-2 w-fit" })}
+      >
         <ArrowLeft data-icon="inline-start" />
         Player pool
-      </Button>
+      </Link>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_2fr]">
         {/* Left: identity card */}

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import Link from "next/link"
+import { buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { FranchiseCrest } from "@/components/acc/franchise-crest"
@@ -36,10 +36,10 @@ export default async function TeamDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-10 md:px-6">
-      <Button render={<Link href="/teams" />} variant="ghost" size="sm" className="mb-6 -ml-2 w-fit">
+      <Link href="/teams" className={buttonVariants({ variant: "ghost", size: "sm", className: "mb-6 -ml-2 w-fit" })}>
         <ArrowLeft data-icon="inline-start" />
         All franchises
-      </Button>
+      </Link>
 
       {/* Header */}
       <div
