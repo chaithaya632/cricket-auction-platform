@@ -78,3 +78,4 @@ INSERT INTO bid_increment_rules (season_id, min_price, max_price, increment, sor
   ('00000000-0000-0000-0000-000000000001', 100, 199, 20, 2),
   ('00000000-0000-0000-0000-000000000001', 200, NULL, 30, 3)
 ON CONFLICT (season_id, sort_order) DO NOTHING;
+

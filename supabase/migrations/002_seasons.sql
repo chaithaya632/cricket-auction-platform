@@ -10,7 +10,7 @@
 -- Seasons
 -- ---------------------------------------------------------------------------
 CREATE TABLE seasons (
-  id            uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   name          text NOT NULL,
   code          text NOT NULL UNIQUE,
   year          integer NOT NULL CHECK (year >= 2020 AND year <= 2100),
@@ -35,7 +35,7 @@ CREATE UNIQUE INDEX seasons_single_active_idx ON seasons (is_active) WHERE is_ac
 -- Stores scalar season settings: purse, squad sizes, timers, etc.
 -- value_type indicates how to interpret the text value.
 CREATE TABLE season_config (
-  id            uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   season_id     uuid NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   key           text NOT NULL,
   value         text NOT NULL,
@@ -55,7 +55,7 @@ CREATE INDEX season_config_season_idx ON season_config(season_id);
 -- ---------------------------------------------------------------------------
 -- The ladder of allowed base prices for player registration.
 CREATE TABLE base_price_tiers (
-  id            uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   season_id     uuid NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   price         integer NOT NULL CHECK (price > 0),
   sort_order    integer NOT NULL,
@@ -73,7 +73,7 @@ CREATE INDEX base_price_tiers_season_idx ON base_price_tiers(season_id);
 -- Defines increment tiers: e.g. below 100 → +10, 100-199 → +20, 200+ → +30
 -- max_price = NULL means infinity (no upper bound).
 CREATE TABLE bid_increment_rules (
-  id            uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   season_id     uuid NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   min_price     integer NOT NULL CHECK (min_price >= 0),
   max_price     integer,
@@ -87,3 +87,4 @@ CREATE TABLE bid_increment_rules (
 );
 
 CREATE INDEX bid_increment_rules_season_idx ON bid_increment_rules(season_id);
+

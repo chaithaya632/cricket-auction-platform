@@ -7,7 +7,7 @@
 -- =============================================================================
 
 CREATE TABLE audit_logs (
-  id              uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   season_id       uuid REFERENCES seasons(id) ON DELETE SET NULL,  -- nullable for global actions
   actor_user_id   uuid NOT NULL REFERENCES users(id),
   action          text NOT NULL,
@@ -22,3 +22,4 @@ CREATE INDEX audit_logs_season_idx ON audit_logs(season_id) WHERE season_id IS N
 CREATE INDEX audit_logs_actor_idx ON audit_logs(actor_user_id);
 CREATE INDEX audit_logs_entity_idx ON audit_logs(entity_type, entity_id);
 CREATE INDEX audit_logs_created_idx ON audit_logs(created_at);
+

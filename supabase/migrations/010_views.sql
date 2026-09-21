@@ -95,3 +95,4 @@ JOIN player_season_registrations psr ON psr.id = al.registration_id
 JOIN players p ON p.id = psr.player_id
 LEFT JOIN player_skill_profiles psp ON psp.registration_id = psr.id
 LEFT JOIN franchises f ON f.id = al.highest_bidder_franchise_id;
+

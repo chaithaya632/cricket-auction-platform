@@ -15,7 +15,7 @@
 -- Bucket Rules (per-season configuration)
 -- ---------------------------------------------------------------------------
 CREATE TABLE bucket_rules (
-  id              uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id              uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   season_id       uuid NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   bucket          text NOT NULL
                     CHECK (bucket IN ('B1', 'B2', 'B3', 'B4', 'B5', 'PG')),
@@ -38,7 +38,7 @@ CREATE INDEX bucket_rules_season_idx ON bucket_rules(season_id);
 -- This is a projection that will be updated as the auction progresses.
 -- The authoritative history lives in auction_events.
 CREATE TABLE auction_lots (
-  id                          uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                          uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   season_id                   uuid NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   registration_id             uuid NOT NULL
                                 REFERENCES player_season_registrations(id) ON DELETE CASCADE,
@@ -83,7 +83,7 @@ CREATE SEQUENCE auction_event_seq START WITH 1 INCREMENT BY 1;
 -- reconstruct the auction history. Events are NEVER updated or deleted
 -- by normal operations — corrective events (e.g. UNDO_SALE) are appended.
 CREATE TABLE auction_events (
-  id                uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   season_id         uuid NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   auction_lot_id    uuid NOT NULL REFERENCES auction_lots(id) ON DELETE CASCADE,
   event_type        text NOT NULL
@@ -116,7 +116,7 @@ CREATE INDEX auction_events_type_idx ON auction_events(season_id, event_type);
 -- Maximum 5 per franchise is enforced at the application/domain layer
 -- (a CHECK constraint cannot reference a count of rows).
 CREATE TABLE franchise_referrals (
-  id                  uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                  uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   franchise_id        uuid NOT NULL REFERENCES franchises(id) ON DELETE CASCADE,
   registration_id     uuid NOT NULL
                         REFERENCES player_season_registrations(id) ON DELETE CASCADE,
@@ -134,3 +134,4 @@ CREATE TABLE franchise_referrals (
 
 CREATE INDEX franchise_referrals_franchise_idx ON franchise_referrals(franchise_id);
 CREATE INDEX franchise_referrals_registration_idx ON franchise_referrals(registration_id);
+

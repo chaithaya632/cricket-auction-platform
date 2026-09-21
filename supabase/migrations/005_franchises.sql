@@ -10,7 +10,7 @@
 -- Franchises
 -- ---------------------------------------------------------------------------
 CREATE TABLE franchises (
-  id                          uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                          uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   season_id                   uuid NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   name                        text NOT NULL,
   short_name                  text NOT NULL,
@@ -45,7 +45,7 @@ ALTER TABLE season_roles
 -- player_registration_id is set for captain/vice_captain to link them
 -- to their player registration record.
 CREATE TABLE franchise_members (
-  id                      uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                      uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   franchise_id            uuid NOT NULL REFERENCES franchises(id) ON DELETE CASCADE,
   user_id                 uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role                    text NOT NULL
@@ -70,3 +70,4 @@ CREATE UNIQUE INDEX franchise_members_vice_captain_unique
 
 CREATE INDEX franchise_members_franchise_idx ON franchise_members(franchise_id);
 CREATE INDEX franchise_members_user_idx ON franchise_members(user_id);
+

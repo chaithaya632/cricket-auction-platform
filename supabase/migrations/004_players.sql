@@ -7,7 +7,7 @@
 -- =============================================================================
 
 CREATE TABLE players (
-  id            uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   roll_number   text NOT NULL UNIQUE,
   full_name     text NOT NULL,
   mobile        text NOT NULL,      -- PRIVATE: never in public views/APIs
@@ -22,3 +22,4 @@ CREATE INDEX players_roll_number_idx ON players(roll_number);
 
 -- Name search support
 CREATE INDEX players_full_name_trgm_idx ON players USING gin(full_name gin_trgm_ops);
+

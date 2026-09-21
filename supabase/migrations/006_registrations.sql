@@ -10,7 +10,7 @@
 -- Player Season Registrations
 -- ---------------------------------------------------------------------------
 CREATE TABLE player_season_registrations (
-  id                        uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                        uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   player_id                 uuid NOT NULL REFERENCES players(id) ON DELETE CASCADE,
   season_id                 uuid NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
 
@@ -89,7 +89,7 @@ ALTER TABLE franchise_members
 -- One profile per registration. The derived_player_type is computed from
 -- the questionnaire answers by the domain layer.
 CREATE TABLE player_skill_profiles (
-  id                      uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                      uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   registration_id         uuid NOT NULL UNIQUE
                             REFERENCES player_season_registrations(id) ON DELETE CASCADE,
 
@@ -136,3 +136,4 @@ CREATE TABLE player_skill_profiles (
     (is_batter = false AND is_bowler = false AND is_wicket_keeper = false)
   )
 );
+

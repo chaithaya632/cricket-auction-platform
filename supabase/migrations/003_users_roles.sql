@@ -12,7 +12,7 @@
 -- The id column will reference auth.users(id) when Supabase Auth is
 -- integrated in Phase 3. For now it is a standalone UUID primary key.
 CREATE TABLE users (
-  id            uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   email         text NOT NULL UNIQUE,
   full_name     text NOT NULL,
   phone         text,
@@ -28,7 +28,7 @@ CREATE TABLE users (
 -- Assigns roles to users per season. A user can have different roles
 -- in different seasons. franchise_id is required when role = 'franchise'.
 CREATE TABLE season_roles (
-  id            uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   user_id       uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   season_id     uuid NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   role          text NOT NULL
@@ -50,3 +50,4 @@ CREATE TABLE season_roles (
 CREATE INDEX season_roles_user_idx ON season_roles(user_id);
 CREATE INDEX season_roles_season_idx ON season_roles(season_id);
 CREATE INDEX season_roles_franchise_idx ON season_roles(franchise_id) WHERE franchise_id IS NOT NULL;
+

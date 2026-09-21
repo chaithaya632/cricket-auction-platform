@@ -159,3 +159,4 @@ CREATE POLICY franchise_referrals_select_own ON franchise_referrals
 -- For now, deny all access. Admin reads via service-role client.
 -- ---------------------------------------------------------------------------
 -- (No SELECT policy = denied by RLS default)
+
