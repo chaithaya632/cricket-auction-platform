@@ -1,8 +1,7 @@
 // =============================================================================
-// Domain: Academic System
-// =============================================================================
-// Roll number parsing, academic year calculation, bucket derivation.
-// Implementation: Phase 4
+// ACC Auction Portal — Domain: Academic System Barrel Export
 // =============================================================================
 
-export {};
+export * from './parser';
+export * from './year-calculator';
+export * from './bucket-derivation';

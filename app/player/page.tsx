@@ -1,19 +1,23 @@
-export default function PlayerPage() {
+import { requirePlayer } from '@/lib/permissions/guards';
+import { createClient } from '@/lib/supabase/server';
+import { getPlayerFullData } from '@/lib/players/queries';
+import { PlayerPortalForm } from '@/components/player/player-portal-form';
+
+export default async function PlayerPage() {
+  const permContext = await requirePlayer();
+  const supabase = await createClient();
+
+  const seasonId = permContext.activeSeason?.id;
+  const seasonName = permContext.activeSeason?.name || 'ACC 2026';
+
+  const fullData = seasonId
+    ? await getPlayerFullData(supabase, permContext.user.id, seasonId)
+    : { player: null, registration: null, skillProfile: null };
+
   return (
-    <div>
-      <h1 className="text-3xl font-bold">Player Profile</h1>
-      <p className="mt-2 text-sm" style={{ color: 'var(--muted-foreground)' }}>
-        View your profile, auction information, and registration status.
-      </p>
-      <div
-        className="mt-6 rounded-md p-4 text-sm"
-        style={{
-          backgroundColor: 'var(--muted)',
-          color: 'var(--muted-foreground)',
-        }}
-      >
-        Player profiles will be implemented in Phase 4.
-      </div>
+    <div className="space-y-6">
+      <PlayerPortalForm initialData={fullData} activeSeasonName={seasonName} />
     </div>
   );
 }
+

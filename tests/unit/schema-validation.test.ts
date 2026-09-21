@@ -62,9 +62,10 @@ describe('Migration files', () => {
     '010_views.sql',
     '011_seed.sql',
     '012_auth_sync.sql',
+    '013_player_rls.sql',
   ];
 
-  it('all 12 migration files exist', () => {
+  it('all 13 migration files exist', () => {
     for (const file of expectedFiles) {
       const fullPath = path.join(MIGRATIONS_DIR, file);
       expect(fs.existsSync(fullPath), `Missing migration: ${file}`).toBe(true);

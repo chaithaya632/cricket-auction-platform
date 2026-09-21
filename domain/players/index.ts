@@ -1,8 +1,6 @@
 // =============================================================================
-// Domain: Players
-// =============================================================================
-// Player registration, validation, eligibility.
-// Implementation: Phase 4
+// ACC Auction Portal — Domain: Players Barrel Export
 // =============================================================================
 
-export {};
+export * from './skill-derivation';
+export * from './eligibility';
