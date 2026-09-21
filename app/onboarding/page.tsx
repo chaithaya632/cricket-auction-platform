@@ -7,7 +7,7 @@ import { getUserPermissionContext } from '@/lib/permissions/context';
 import { AccLogo } from '@/components/acc/brand';
 import { LogoutButton } from '@/components/auth/logout-button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { buttonVariants } from '@/components/ui/button';
+import { buttonVariants, Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Clock,
@@ -18,6 +18,9 @@ import {
   Radio,
   ExternalLink,
   ChevronRight,
+  ClipboardList,
+  Shield,
+  RotateCw,
 } from 'lucide-react';
 
 export const metadata: Metadata = {
@@ -51,6 +54,7 @@ export default async function OnboardingPage({
   const activeSeasonName = permContext?.activeSeason?.name || 'ACC 2026';
   const userName = appUser?.full_name || authUser.email?.split('@')[0] || 'Member';
   const userEmail = authUser.email || '';
+  const assignedFranchiseName = permContext?.assignedFranchise?.name;
 
   return (
     <div className="min-h-svh bg-background text-foreground">
@@ -80,83 +84,153 @@ export default async function OnboardingPage({
       <main className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10 sm:px-6">
         {/* If user already has an active season role */}
         {hasAnySeasonRole ? (
-          <Alert className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-            <UserCheck className="size-5 text-emerald-500" />
-            <AlertTitle className="font-semibold">Active Season Access Verified</AlertTitle>
-            <AlertDescription className="mt-2 text-sm">
-              Your account has authorized role access for <strong>{activeSeasonName}</strong>. You may proceed directly to your assigned workspace.
-            </AlertDescription>
-            <div className="mt-4 flex flex-wrap gap-3">
-              {hasAdminRole && (
-                <Link href="/admin" className={buttonVariants({ size: "sm" })}>
-                  Go to Admin Console
-                  <ChevronRight className="ml-1 size-4" />
-                </Link>
-              )}
-              {hasFranchiseRole && (
-                <Link href="/franchise" className={buttonVariants({ size: "sm" })}>
-                  Go to Franchise Portal
-                  <ChevronRight className="ml-1 size-4" />
-                </Link>
-              )}
+          <div className="space-y-6">
+            <Alert className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <UserCheck className="size-5 text-emerald-500" />
+              <AlertTitle className="font-semibold text-base">Active Season Access Verified</AlertTitle>
+              <AlertDescription className="mt-2 text-sm text-foreground/90">
+                Welcome, <strong>{userName}</strong>! Your account has authorized role access for{' '}
+                <strong>{activeSeasonName}</strong>. Select your portal below to proceed.
+              </AlertDescription>
+            </Alert>
+
+            <div className="grid gap-4 sm:grid-cols-2">
               {hasPlayerRole && (
-                <Link href="/player" className={buttonVariants({ size: "sm" })}>
-                  Go to Player Portal
-                  <ChevronRight className="ml-1 size-4" />
-                </Link>
+                <div className="flex flex-col gap-3 rounded-xl border bg-card p-5 shadow-sm">
+                  <div className="flex items-center gap-2 text-emerald-500 font-semibold text-sm">
+                    <ClipboardList className="size-4" />
+                    <span>Player Credentials Active</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Your player access has been approved. Submit your academic roll number, cricket skills, and CricHeroes profile to complete registration.
+                  </p>
+                  <div className="mt-auto flex flex-col gap-2 pt-2">
+                    <Link
+                      href="/player/registration"
+                      className={buttonVariants({ size: 'sm', className: 'w-full justify-center gap-1.5' })}
+                    >
+                      <ClipboardList className="size-4" />
+                      Complete Registration Form
+                      <ChevronRight className="size-4" />
+                    </Link>
+                    <Link
+                      href="/player"
+                      className={buttonVariants({ variant: 'outline', size: 'sm', className: 'w-full justify-center' })}
+                    >
+                      Player Dashboard
+                    </Link>
+                  </div>
+                </div>
+              )}
+
+              {hasFranchiseRole && (
+                <div className="flex flex-col gap-3 rounded-xl border bg-card p-5 shadow-sm">
+                  <div className="flex items-center gap-2 text-blue-500 font-semibold text-sm">
+                    <Trophy className="size-4" />
+                    <span>Franchise Bidding Seat Active</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    You are an official representative for{' '}
+                    <strong className="text-foreground">{assignedFranchiseName || 'your assigned franchise'}</strong>. Access your squad roster, purse tracking, and live auction console.
+                  </p>
+                  <div className="mt-auto pt-2">
+                    <Link
+                      href="/franchise"
+                      className={buttonVariants({ size: 'sm', className: 'w-full justify-center gap-1.5' })}
+                    >
+                      <Trophy className="size-4" />
+                      Open Franchise Portal
+                      <ChevronRight className="size-4" />
+                    </Link>
+                  </div>
+                </div>
+              )}
+
+              {hasAdminRole && (
+                <div className="flex flex-col gap-3 rounded-xl border bg-card p-5 shadow-sm">
+                  <div className="flex items-center gap-2 text-purple-500 font-semibold text-sm">
+                    <Shield className="size-4" />
+                    <span>Tournament Administrator</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    You have executive privileges for season orchestration, lot queues, live bidding hammer controls, and user role provisioning.
+                  </p>
+                  <div className="mt-auto pt-2">
+                    <Link
+                      href="/admin"
+                      className={buttonVariants({ size: 'sm', className: 'w-full justify-center gap-1.5' })}
+                    >
+                      <Shield className="size-4" />
+                      Open Admin Console
+                      <ChevronRight className="size-4" />
+                    </Link>
+                  </div>
+                </div>
               )}
             </div>
-          </Alert>
+          </div>
         ) : (
           /* User is authenticated but has no season role yet */
           <Card className="border-border">
             <CardHeader className="pb-4">
               <div className="flex items-center gap-2 text-amber-500">
                 <Clock className="size-5" />
-                <span className="font-mono text-xs uppercase tracking-wider">
-                  Season Onboarding · {activeSeasonName}
+                <span className="font-mono text-xs uppercase tracking-wider font-semibold">
+                  Season Access Pending · {activeSeasonName}
                 </span>
               </div>
               <CardTitle className="text-2xl font-bold tracking-tight">
-                Your account is awaiting access/setup.
+                Your account is waiting for tournament role assignment
               </CardTitle>
               <CardDescription className="text-sm">
                 Signed in as <strong className="text-foreground">{userName}</strong> ({userEmail}).
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-6">
+              {params.reason === 'pending_access' && (
+                <Alert className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  <Clock className="size-4 text-amber-500" />
+                  <AlertTitle className="font-semibold text-xs">Role Assignment Required</AlertTitle>
+                  <AlertDescription className="text-xs mt-1">
+                    The requested page requires an authorized tournament role. Because your account has not yet been provisioned as a Player, Franchise Representative, or Operator for this season, access is held in staging.
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {params.reason === 'admin_required' && (
                 <Alert variant="destructive">
                   <ShieldAlert className="size-4" />
-                  <AlertDescription>
+                  <AlertDescription className="text-xs">
                     Administrative privileges are required to access the requested console.
                   </AlertDescription>
                 </Alert>
               )}
 
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Your user account is securely authenticated. In accordance with Avanthi Cricket Championship regulations, privileged access to operator consoles, franchise bidding desks, and player registries is provisioned administratively by the tournament committee.
+                Your account is securely authenticated with Supabase Auth. In accordance with Avanthi Cricket Championship governance, privileged access to player registration forms, franchise bidding desks, and operator consoles is provisioned by tournament administrators.
               </p>
 
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-4">
+                {/* Player Info Box (Pending) */}
+                <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4">
                   <div className="flex items-center gap-2 font-medium text-foreground">
                     <Trophy className="size-4 text-primary" />
                     <span>Tournament Players</span>
                   </div>
                   <p className="text-xs text-muted-foreground leading-normal">
-                    If you are a student participating in the auction, tournament coordinators verify your academic credentials before activating your player profile. Once activated, visit the player registration portal.
+                    If you are a student participating in the auction, tournament coordinators verify your student enrollment before granting player credentials.
                   </p>
-                  <Link
-                    href="/player/registration"
-                    className="mt-auto inline-flex items-center text-xs font-medium text-primary hover:underline"
-                  >
-                    Player Registration Portal
-                    <ExternalLink className="ml-1 size-3" />
-                  </Link>
+                  <div className="mt-auto flex items-center gap-2 rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-600 dark:text-amber-400">
+                    <Clock className="size-3.5 shrink-0" />
+                    <span>Awaiting Admin Role Assignment</span>
+                  </div>
+                  <span className="text-[11px] text-muted-foreground">
+                    Once activated by an admin, the registration portal will unlock for your account.
+                  </span>
                 </div>
 
-                <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-4">
+                {/* Franchise Info Box (Pending) */}
+                <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4">
                   <div className="flex items-center gap-2 font-medium text-foreground">
                     <Users className="size-4 text-primary" />
                     <span>Franchise Representatives</span>
@@ -164,9 +238,13 @@ export default async function OnboardingPage({
                   <p className="text-xs text-muted-foreground leading-normal">
                     Franchise coordinators assign bidding seats directly through official team rosters prior to the live hammer stage. Contact the Super Admin if your seat is not yet visible.
                   </p>
+                  <div className="mt-auto flex items-center gap-2 rounded-md border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs font-medium text-blue-600 dark:text-blue-400">
+                    <Shield className="size-3.5 shrink-0" />
+                    <span>Franchise Seat Assignment Pending</span>
+                  </div>
                   <Link
                     href="/teams"
-                    className="mt-auto inline-flex items-center text-xs font-medium text-primary hover:underline"
+                    className="inline-flex items-center text-[11px] font-medium text-primary hover:underline"
                   >
                     View Official Franchises
                     <ExternalLink className="ml-1 size-3" />
@@ -174,8 +252,18 @@ export default async function OnboardingPage({
                 </div>
               </div>
 
+              {/* Status Refresh & Public Links */}
               <div className="flex flex-col gap-3 rounded-lg border border-dashed bg-muted/30 p-4">
-                <span className="text-xs font-semibold text-foreground">While waiting, you can explore public features:</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-foreground">Explore public features while waiting:</span>
+                  <Link
+                    href="/onboarding"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <RotateCw className="size-3" />
+                    Check Status
+                  </Link>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   <Link href="/auction" className={buttonVariants({ variant: "outline", size: "sm" })}>
                     <Radio className="mr-1.5 size-3.5 text-red-500" />

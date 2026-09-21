@@ -9,6 +9,7 @@ import {
   Search,
   ClipboardList,
   Settings,
+  UserCheck,
   type LucideIcon,
 } from "lucide-react"
 
@@ -43,6 +44,7 @@ export const ROLE_NAV: Record<Role, NavSection[]> = {
       items: [
         { title: "Players", href: "/admin/players", icon: Users },
         { title: "Franchises", href: "/admin/franchises", icon: Shield },
+        { title: "Users & Roles", href: "/admin/users", icon: UserCheck },
       ],
     },
     {
