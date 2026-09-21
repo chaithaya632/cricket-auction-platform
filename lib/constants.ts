@@ -138,8 +138,10 @@ export type AuctionEventType = (typeof AUCTION_EVENT_TYPES)[number];
 // CricHeroes Status (spec §13)
 // ---------------------------------------------------------------------------
 export const CRICHEROES_STATUS = {
-  VERIFIED: 'verified',
   PROFILE_CREATION_PENDING: 'profile_creation_pending',
+  VERIFICATION_PENDING: 'verification_pending',
+  VERIFIED: 'verified',
+  REJECTED: 'rejected',
   UNVERIFIED: 'unverified',
 } as const;
 
@@ -164,11 +166,13 @@ export type RegistrationStatus =
 // ---------------------------------------------------------------------------
 export const LOT_STATUS = {
   PENDING: 'pending',
-  ACTIVE: 'active',
+  IN_PROGRESS: 'in_progress',
   SOLD: 'sold',
   UNSOLD: 'unsold',
   SKIPPED: 'skipped',
+  RECALLED: 'recalled',
   ALLOTTED: 'allotted',
+  SCOUTED: 'scouted',
 } as const;
 
 export type LotStatus = (typeof LOT_STATUS)[keyof typeof LOT_STATUS];
