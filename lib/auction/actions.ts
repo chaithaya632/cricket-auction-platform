@@ -536,3 +536,226 @@ export async function undoSaleAction(
     return { success: false, error: err?.message || 'Failed to undo sale.' };
   }
 }
+
+/**
+ * Starts the auction session for the active season.
+ * Transitions season status to 'auction' and sets session config to 'live'.
+ * Idempotent and protected against duplicate start calls.
+ * Guarded by requireAdmin().
+ */
+export async function startAuctionAction(): Promise<
+  AuctionActionResult<{ status: 'live' }>
+> {
+  try {
+    const adminContext = await requireAdmin();
+    const activeSeason = adminContext.activeSeason;
+
+    if (!activeSeason) {
+      return { success: false, error: 'No active season found to start auction.' };
+    }
+
+    const adminClient = createAdminClient();
+
+    // Check if season is already in auction status
+    const { data: season } = await adminClient
+      .from('seasons')
+      .select('id, status')
+      .eq('id', activeSeason.id)
+      .single();
+
+    const { data: sessionConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', activeSeason.id)
+      .eq('key', 'auction_session_status')
+      .maybeSingle();
+
+    if (season?.status === 'auction' && sessionConfig?.value === 'live') {
+      return { success: false, error: 'Auction session is already LIVE.' };
+    }
+
+    const now = new Date().toISOString();
+
+    // 1. Update season status to 'auction'
+    const { error: seasonErr } = await adminClient
+      .from('seasons')
+      .update({ status: 'auction', updated_at: now })
+      .eq('id', activeSeason.id);
+
+    if (seasonErr) {
+      return { success: false, error: seasonErr.message || 'Failed to update season status.' };
+    }
+
+    // 2. Upsert auction_session_status to 'live'
+    await adminClient
+      .from('season_config')
+      .upsert(
+        {
+          season_id: activeSeason.id,
+          key: 'auction_session_status',
+          value: 'live',
+          value_type: 'text',
+          description: 'Current operational state of the live auction session (live, paused, completed)',
+          updated_at: now,
+        },
+        { onConflict: 'season_id,key' }
+      );
+
+    // 3. Upsert auction_started_at
+    await adminClient
+      .from('season_config')
+      .upsert(
+        {
+          season_id: activeSeason.id,
+          key: 'auction_started_at',
+          value: now,
+          value_type: 'text',
+          description: 'Timestamp when auction session was officially started',
+          updated_at: now,
+        },
+        { onConflict: 'season_id,key' }
+      );
+
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/auction');
+
+    return { success: true, data: { status: 'live' } };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to start auction session.' };
+  }
+}
+
+/**
+ * Pauses the live auction session.
+ * Records a PAUSE event if an active lot is in progress.
+ * Guarded by requireAdmin().
+ */
+export async function pauseAuctionAction(): Promise<
+  AuctionActionResult<{ status: 'paused' }>
+> {
+  try {
+    const adminContext = await requireAdmin();
+    const activeSeason = adminContext.activeSeason;
+
+    if (!activeSeason) {
+      return { success: false, error: 'No active season found.' };
+    }
+
+    const adminClient = createAdminClient();
+    const now = new Date().toISOString();
+
+    // 1. Set auction_session_status to 'paused'
+    await adminClient
+      .from('season_config')
+      .upsert(
+        {
+          season_id: activeSeason.id,
+          key: 'auction_session_status',
+          value: 'paused',
+          value_type: 'text',
+          updated_at: now,
+        },
+        { onConflict: 'season_id,key' }
+      );
+
+    // 2. If a lot is currently in progress, record PAUSE event in auction_events
+    const { data: activeLot } = await adminClient
+      .from('auction_lots')
+      .select('id')
+      .eq('season_id', activeSeason.id)
+      .eq('status', 'in_progress')
+      .maybeSingle();
+
+    if (activeLot) {
+      await adminClient.from('auction_events').insert({
+        season_id: activeSeason.id,
+        auction_lot_id: activeLot.id,
+        event_type: 'PAUSE',
+        actor_user_id: adminContext.user.id,
+        reason: 'Auction paused by operator',
+        payload: { paused_at: now },
+        created_at: now,
+      });
+    }
+
+    revalidatePath('/admin/auction');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+
+    return { success: true, data: { status: 'paused' } };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to pause auction session.' };
+  }
+}
+
+/**
+ * Resumes a paused auction session.
+ * Records a RESUME event and refreshes active lot clock if a lot is in progress.
+ * Guarded by requireAdmin().
+ */
+export async function resumeAuctionAction(): Promise<
+  AuctionActionResult<{ status: 'live' }>
+> {
+  try {
+    const adminContext = await requireAdmin();
+    const activeSeason = adminContext.activeSeason;
+
+    if (!activeSeason) {
+      return { success: false, error: 'No active season found.' };
+    }
+
+    const adminClient = createAdminClient();
+    const now = new Date().toISOString();
+
+    // 1. Set auction_session_status to 'live'
+    await adminClient
+      .from('season_config')
+      .upsert(
+        {
+          season_id: activeSeason.id,
+          key: 'auction_session_status',
+          value: 'live',
+          value_type: 'text',
+          updated_at: now,
+        },
+        { onConflict: 'season_id,key' }
+      );
+
+    // 2. If a lot is currently in progress, record RESUME event and refresh clock
+    const { data: activeLot } = await adminClient
+      .from('auction_lots')
+      .select('id')
+      .eq('season_id', activeSeason.id)
+      .eq('status', 'in_progress')
+      .maybeSingle();
+
+    if (activeLot) {
+      await adminClient.from('auction_events').insert({
+        season_id: activeSeason.id,
+        auction_lot_id: activeLot.id,
+        event_type: 'RESUME',
+        actor_user_id: adminContext.user.id,
+        reason: 'Auction resumed by operator',
+        payload: { resumed_at: now },
+        created_at: now,
+      });
+
+      await adminClient
+        .from('auction_lots')
+        .update({ started_at: now, updated_at: now })
+        .eq('id', activeLot.id);
+    }
+
+    revalidatePath('/admin/auction');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+
+    return { success: true, data: { status: 'live' } };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to resume auction session.' };
+  }
+}
+

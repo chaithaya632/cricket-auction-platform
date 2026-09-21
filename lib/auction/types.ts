@@ -77,3 +77,16 @@ export interface AuctionActionResult<T = unknown> {
 }
 
 export type RestoreToMode = 'resume_bidding' | 'return_to_queue';
+
+export type AuctionSessionStatus = 'not_started' | 'live' | 'paused' | 'completed';
+
+export interface AuctionSessionState {
+  status: AuctionSessionStatus;
+  seasonId: string;
+  seasonName: string;
+  isLive: boolean;
+  isPaused: boolean;
+  isNotStarted: boolean;
+  startedAt: string | null;
+  activeLotId: string | null;
+}

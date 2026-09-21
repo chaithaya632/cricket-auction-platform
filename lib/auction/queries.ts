@@ -7,6 +7,7 @@ import type {
   AuctionLotWithDetails,
   AuctionEventDTO,
   AuctionConfigDTO,
+  AuctionSessionState,
 } from './types';
 import type { LotStatus, AuctionEventType } from '@/lib/constants';
 
@@ -300,3 +301,70 @@ export async function getSeasonAuctionConfig(
     defaultPurse: parseInt(configMap['default_purse'] || '1000', 10),
   };
 }
+
+/**
+ * Retrieves the authoritative session lifecycle state of the auction.
+ * Evaluates seasons.status ('draft', 'registration', 'auction', 'completed'),
+ * season_config ('auction_session_status' = 'live' | 'paused'),
+ * and current active lot in progress.
+ */
+export async function getAuctionSessionState(
+  supabase: SupabaseClient,
+  seasonId: string
+): Promise<AuctionSessionState> {
+  const { data: season } = await supabase
+    .from('seasons')
+    .select('id, name, status')
+    .eq('id', seasonId)
+    .maybeSingle();
+
+  const { data: configRows } = await supabase
+    .from('season_config')
+    .select('key, value')
+    .eq('season_id', seasonId)
+    .in('key', ['auction_session_status', 'auction_started_at']);
+
+  const configMap: Record<string, string> = {};
+  if (configRows) {
+    for (const r of configRows as { key: string; value: string }[]) {
+      configMap[r.key] = r.value;
+    }
+  }
+
+  const { data: activeLot } = await supabase
+    .from('auction_lots')
+    .select('id')
+    .eq('season_id', seasonId)
+    .eq('status', 'in_progress')
+    .maybeSingle();
+
+  const seasonStatus = season?.status || 'draft';
+  const sessionStatusConfig = configMap['auction_session_status'];
+  const startedAt = configMap['auction_started_at'] || null;
+
+  let computedStatus: 'not_started' | 'live' | 'paused' | 'completed' = 'not_started';
+
+  if (seasonStatus === 'completed' || seasonStatus === 'archived') {
+    computedStatus = 'completed';
+  } else if (seasonStatus === 'auction') {
+    if (sessionStatusConfig === 'paused') {
+      computedStatus = 'paused';
+    } else {
+      computedStatus = 'live';
+    }
+  } else {
+    computedStatus = 'not_started';
+  }
+
+  return {
+    status: computedStatus,
+    seasonId,
+    seasonName: season?.name || 'ACC 2026',
+    isLive: computedStatus === 'live',
+    isPaused: computedStatus === 'paused',
+    isNotStarted: computedStatus === 'not_started',
+    startedAt,
+    activeLotId: activeLot?.id || null,
+  };
+}
+

@@ -10,6 +10,7 @@ import {
   getAuctionQueue,
   getRecentAuctionEvents,
   getSeasonAuctionConfig,
+  getAuctionSessionState,
 } from '@/lib/auction/queries';
 import { ActiveLotCard } from '@/components/auction/active-lot-card';
 import { AuctionTimer } from '@/components/auction/auction-timer';
@@ -26,12 +27,13 @@ export default async function AdminAuctionPage() {
   const seasonId =
     adminContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 
-  // 1. Fetch live operational data
-  const [activeLot, upcomingLots, recentEvents, config] = await Promise.all([
+  // 1. Fetch live operational data & session lifecycle state
+  const [activeLot, upcomingLots, recentEvents, config, sessionState] = await Promise.all([
     getActiveLot(supabase, seasonId),
     getAuctionQueue(supabase, seasonId, 25),
     getRecentAuctionEvents(supabase, seasonId, 20),
     getSeasonAuctionConfig(supabase, seasonId),
+    getAuctionSessionState(supabase, seasonId),
   ]);
 
   // 2. Fetch last sold lot for possible deterministic undo
@@ -120,6 +122,7 @@ export default async function AdminAuctionPage() {
             activeLot={activeLot}
             upcomingLots={upcomingLots}
             lastSoldLotId={lastSoldLotId}
+            sessionState={sessionState}
           />
         </div>
 
