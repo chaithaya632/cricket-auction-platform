@@ -19,6 +19,7 @@ import { AuctionTimer } from '@/components/auction/auction-timer';
 import { BiddingControl } from '@/components/auction/bidding-control';
 import { RecentActivityStream } from '@/components/auction/recent-activity-stream';
 import { LiveExitBar } from '@/components/auction/live-exit-bar';
+import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
 
 export default async function LiveAuctionPage() {
   const { appUser } = await getCurrentUser();
@@ -67,6 +68,7 @@ export default async function LiveAuctionPage() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
+      <AuctionRealtimeSync seasonId={seasonId} />
       {/* Top Persistent Exit Navigation Bar */}
       <LiveExitBar
         mode="live_room"

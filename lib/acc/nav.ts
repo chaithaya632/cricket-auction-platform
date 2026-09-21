@@ -73,6 +73,7 @@ export const ROLE_NAV: Record<Role, NavSection[]> = {
       label: "My Portal",
       items: [
         { title: "Dashboard", href: "/player", icon: LayoutDashboard },
+        { title: "Live Auction", href: "/player/auction", icon: Gavel },
         { title: "My Profile", href: "/player/profile", icon: UserRound },
         { title: "Registration", href: "/player/registration", icon: ClipboardList },
       ],

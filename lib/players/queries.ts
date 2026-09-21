@@ -6,7 +6,89 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DbPlayer, DbPlayerSeasonRegistration, DbPlayerSkillProfile } from '@/lib/db/types';
 import type { Player, PlayerType, PlayerStatus, Bucket } from '@/lib/acc/types';
 import { PLAYERS } from '@/lib/acc/mock-data';
-import type { PlayerFullData } from './types';
+import type { PlayerFullData, PlayerCareerStats } from './types';
+
+/**
+ * Safely parses structured career statistics from player_skill_profiles.experience_description.
+ */
+export function parseCareerStats(experienceDescription?: string | null): PlayerCareerStats {
+  const defaultStats: PlayerCareerStats = {
+    matches: 0,
+    runs: 0,
+    battingAvg: 0,
+    strikeRate: 0,
+    highestScore: 0,
+    wickets: 0,
+    bowlingAvg: 0,
+    economy: 0,
+    catches: 0,
+    stumpings: 0,
+  };
+
+  if (!experienceDescription || typeof experienceDescription !== 'string') {
+    return defaultStats;
+  }
+
+  try {
+    const parsed = JSON.parse(experienceDescription);
+    if (parsed && typeof parsed === 'object') {
+      return {
+        matches: Number(parsed.matches) || 0,
+        runs: Number(parsed.runs) || 0,
+        battingAvg: Number(parsed.battingAvg) || 0,
+        strikeRate: Number(parsed.strikeRate) || 0,
+        highestScore: Number(parsed.highestScore) || 0,
+        wickets: Number(parsed.wickets) || 0,
+        bowlingAvg: Number(parsed.bowlingAvg) || 0,
+        economy: Number(parsed.economy) || 0,
+        catches: Number(parsed.catches) || 0,
+        stumpings: Number(parsed.stumpings) || 0,
+        notes: typeof parsed.notes === 'string' ? parsed.notes : undefined,
+      };
+    }
+  } catch {
+    // If it is plain text, keep notes
+    return {
+      ...defaultStats,
+      notes: experienceDescription,
+    };
+  }
+
+  return defaultStats;
+}
+
+/**
+ * Retrieves the auction lot and result for a player's registration in a season.
+ */
+export async function getPlayerAuctionLot(
+  supabase: SupabaseClient,
+  registrationId: string
+) {
+  try {
+    const { data: lot } = await supabase
+      .from('auction_lots')
+      .select(`
+        id,
+        draw_number,
+        bucket,
+        base_price,
+        current_price,
+        status,
+        highest_bidder_franchise_id,
+        franchises:highest_bidder_franchise_id (
+          id,
+          name,
+          short_name
+        )
+      `)
+      .eq('registration_id', registrationId)
+      .maybeSingle();
+
+    return lot || null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Retrieves a permanent player record by ID.

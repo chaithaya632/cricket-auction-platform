@@ -62,6 +62,21 @@ export async function selectLotAction(
       };
     }
 
+    // Check if auction session has ended
+    const { data: sessionConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', lot.season_id)
+      .eq('key', 'auction_session_status')
+      .maybeSingle();
+
+    if (sessionConfig?.value === 'completed') {
+      return {
+        success: false,
+        error: 'Cannot select lot: auction session has ended.',
+      };
+    }
+
     // 3. Ensure no other lot is currently in progress
     const { data: existingActive } = await adminClient
       .from('auction_lots')
@@ -147,6 +162,21 @@ export async function placeBidAction(
 
     if (lot.status !== 'in_progress') {
       return { success: false, error: 'Lot is no longer in progress.' };
+    }
+
+    // Check auction session status
+    const { data: sessionConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', lot.season_id)
+      .eq('key', 'auction_session_status')
+      .maybeSingle();
+
+    if (sessionConfig?.value === 'paused') {
+      return { success: false, error: 'Cannot place bid: auction session is currently paused.' };
+    }
+    if (sessionConfig?.value === 'completed') {
+      return { success: false, error: 'Cannot place bid: auction session has ended.' };
     }
 
     // 3. Fetch franchise squad and financial position (Spec §20)
@@ -756,6 +786,171 @@ export async function resumeAuctionAction(): Promise<
     return { success: true, data: { status: 'live' } };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to resume auction session.' };
+  }
+}
+
+/**
+ * Safely ends the live auction session.
+ * Resolves active in-progress lot if present (hammer if winning bid exists and not set to unsold; unsold otherwise).
+ * Transitions season status to 'completed' and sets auction_session_status to 'completed'.
+ * Guarded by requireAdmin().
+ */
+export async function endAuctionAction(
+  options?: { resolveActiveLotMode?: 'hammer' | 'unsold' }
+): Promise<AuctionActionResult<{ status: 'completed' }>> {
+  try {
+    const adminContext = await requireAdmin();
+    const activeSeason = adminContext.activeSeason;
+
+    if (!activeSeason) {
+      return { success: false, error: 'No active season found to end auction.' };
+    }
+
+    const adminClient = createAdminClient();
+    const now = new Date().toISOString();
+
+    // 1. Check if active lot is in progress
+    const { data: activeLot } = await adminClient
+      .from('auction_lots')
+      .select('*')
+      .eq('season_id', activeSeason.id)
+      .eq('status', 'in_progress')
+      .maybeSingle();
+
+    if (activeLot) {
+      const mode = options?.resolveActiveLotMode;
+      const canHammer =
+        activeLot.current_price !== null &&
+        activeLot.highest_bidder_franchise_id !== null &&
+        mode !== 'unsold';
+
+      if (canHammer) {
+        // Resolve active lot with hammer sale
+        const saleResult = await executeAuctionMutationFlow(
+          adminClient,
+          activeLot,
+          {
+            lotId: activeLot.id,
+            expectedStatus: 'in_progress',
+            newStatus: 'sold',
+            newPrice: activeLot.current_price,
+            highestBidderId: activeLot.highest_bidder_franchise_id,
+            startedAt: activeLot.started_at,
+            endedAt: now,
+          },
+          {
+            seasonId: activeSeason.id,
+            lotId: activeLot.id,
+            eventType: 'SALE',
+            actorUserId: adminContext.user.id,
+            franchiseId: activeLot.highest_bidder_franchise_id,
+            price: activeLot.current_price,
+            reason: 'Lot resolved with hammer upon ending auction session',
+            createdAt: now,
+          }
+        );
+
+        if (!saleResult.success) {
+          return {
+            success: false,
+            error: `Failed to hammer active lot before ending session: ${saleResult.error}`,
+          };
+        }
+      } else {
+        // Mark active lot unsold
+        const unsoldResult = await executeAuctionMutationFlow(
+          adminClient,
+          activeLot,
+          {
+            lotId: activeLot.id,
+            expectedStatus: 'in_progress',
+            newStatus: 'unsold',
+            newPrice: null,
+            highestBidderId: null,
+            startedAt: activeLot.started_at,
+            endedAt: now,
+          },
+          {
+            seasonId: activeSeason.id,
+            lotId: activeLot.id,
+            eventType: 'UNSOLD',
+            actorUserId: adminContext.user.id,
+            franchiseId: null,
+            price: null,
+            reason: 'Lot marked unsold upon ending auction session',
+            createdAt: now,
+          }
+        );
+
+        if (!unsoldResult.success) {
+          return {
+            success: false,
+            error: `Failed to mark active lot unsold before ending session: ${unsoldResult.error}`,
+          };
+        }
+      }
+    }
+
+    // 2. Set auction_session_status to 'completed'
+    await adminClient
+      .from('season_config')
+      .upsert(
+        {
+          season_id: activeSeason.id,
+          key: 'auction_session_status',
+          value: 'completed',
+          value_type: 'text',
+          description: 'Current operational state of the live auction session (live, paused, completed)',
+          updated_at: now,
+        },
+        { onConflict: 'season_id,key' }
+      );
+
+    // 3. Set auction_ended_at timestamp
+    await adminClient
+      .from('season_config')
+      .upsert(
+        {
+          season_id: activeSeason.id,
+          key: 'auction_ended_at',
+          value: now,
+          value_type: 'text',
+          description: 'Timestamp when auction session was officially ended',
+          updated_at: now,
+        },
+        { onConflict: 'season_id,key' }
+      );
+
+    // 4. Update seasons table status to 'completed'
+    await adminClient
+      .from('seasons')
+      .update({ status: 'completed', updated_at: now })
+      .eq('id', activeSeason.id);
+
+    // 5. Insert event in auction_events
+    await adminClient.from('auction_events').insert({
+      season_id: activeSeason.id,
+      auction_lot_id: activeLot?.id || '00000000-0000-0000-0000-000000000000',
+      event_type: 'SESSION_RESET',
+      actor_user_id: adminContext.user.id,
+      reason: 'Auction session completed by operator',
+      payload: { ended_at: now, active_lot_resolved: Boolean(activeLot) },
+      created_at: now,
+    });
+
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/auction');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+    revalidatePath('/franchise');
+    revalidatePath('/player');
+
+    return { success: true, data: { status: 'completed' } };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to end auction session.' };
   }
 }
 

@@ -136,3 +136,61 @@ describe('Player Application — Skill Profile Schema', () => {
     expect(playerSkillSchema.safeParse(invalid).success).toBe(false);
   });
 });
+
+import { parseCareerStats } from '@/lib/players/queries';
+import type { PlayerCareerStats } from '@/lib/players/types';
+
+describe('Player Application — Career Stats Parsing & Structure', () => {
+  it('parses valid serialized JSON career stats correctly', () => {
+    const rawStats: PlayerCareerStats = {
+      matches: 15,
+      runs: 450,
+      battingAvg: 34.62,
+      strikeRate: 142.8,
+      highestScore: 88,
+      wickets: 18,
+      bowlingAvg: 17.5,
+      economy: 6.4,
+      catches: 8,
+      stumpings: 0,
+      notes: 'Finalist captain 2025',
+    };
+
+    const json = JSON.stringify(rawStats);
+    const parsed = parseCareerStats(json);
+
+    expect(parsed.matches).toBe(15);
+    expect(parsed.runs).toBe(450);
+    expect(parsed.battingAvg).toBe(34.62);
+    expect(parsed.strikeRate).toBe(142.8);
+    expect(parsed.highestScore).toBe(88);
+    expect(parsed.wickets).toBe(18);
+    expect(parsed.bowlingAvg).toBe(17.5);
+    expect(parsed.economy).toBe(6.4);
+    expect(parsed.catches).toBe(8);
+    expect(parsed.notes).toBe('Finalist captain 2025');
+  });
+
+  it('handles unstructured text description by placing it into notes with 0 stats', () => {
+    const plainText = 'Played for university team as opening batsman';
+    const parsed = parseCareerStats(plainText);
+
+    expect(parsed.matches).toBe(0);
+    expect(parsed.runs).toBe(0);
+    expect(parsed.wickets).toBe(0);
+    expect(parsed.notes).toBe(plainText);
+  });
+
+  it('handles null, undefined, or empty string gracefully', () => {
+    const nullParsed = parseCareerStats(null);
+    expect(nullParsed.matches).toBe(0);
+    expect(nullParsed.runs).toBe(0);
+
+    const undefParsed = parseCareerStats(undefined);
+    expect(undefParsed.matches).toBe(0);
+
+    const emptyParsed = parseCareerStats('');
+    expect(emptyParsed.matches).toBe(0);
+  });
+});
+

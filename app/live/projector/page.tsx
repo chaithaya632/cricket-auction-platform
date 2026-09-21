@@ -14,6 +14,7 @@ import { getActiveSeason } from '@/lib/permissions/context';
 import { ActiveLotCard } from '@/components/auction/active-lot-card';
 import { AuctionTimer } from '@/components/auction/auction-timer';
 import { LiveExitBar } from '@/components/auction/live-exit-bar';
+import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
 
 export default async function ProjectorPage() {
   const supabase = await createClient();
@@ -33,6 +34,7 @@ export default async function ProjectorPage() {
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col justify-between">
+      <AuctionRealtimeSync seasonId={seasonId} />
       {/* Top Unobtrusive Exit & Fullscreen Bar */}
       <LiveExitBar
         mode="projector"

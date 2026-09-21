@@ -20,6 +20,7 @@ import type {
   PlayerProfileInput,
   PlayerRegistrationInput,
   PlayerSkillInput,
+  PlayerCareerStats,
   PlayerActionResult,
   AdminCreatePlayerInput,
   AdminDeletePlayerResult,
@@ -310,8 +311,213 @@ export async function savePlayerSkillProfileAction(
       };
     }
 
+    // 4. Automatically evaluate & activate auction eligibility upon completion of profile + registration + skill questionnaire
+    await supabase
+      .from('player_season_registrations')
+      .update({
+        registration_status: 'eligible',
+        is_auction_eligible: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', registrationId);
+
     revalidatePath('/player');
+    revalidatePath('/player/registration');
+    revalidatePath('/player/profile');
+    revalidatePath('/franchise/players');
+    revalidatePath('/admin/players');
+
     return { success: true, data: skillProfile as DbPlayerSkillProfile };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+    };
+  }
+}
+
+/**
+ * Server action for a player to update their own career statistics.
+ * The statistics are serialized into JSON and stored in the native
+ * player_skill_profiles.experience_description column without modifying schema.
+ */
+export async function savePlayerCareerStatsAction(
+  registrationId: string,
+  stats: PlayerCareerStats
+): Promise<PlayerActionResult<PlayerCareerStats>> {
+  try {
+    const permContext = await requirePlayer();
+    const userId = permContext.user.id;
+    const supabase = await createClient();
+
+    // 1. Authoritative ownership check: verify registration belongs to this authenticated user
+    const { data: registration, error: regError } = await supabase
+      .from('player_season_registrations')
+      .select('id, player_id')
+      .eq('id', registrationId)
+      .maybeSingle();
+
+    if (regError || !registration || registration.player_id !== userId) {
+      return {
+        success: false,
+        error: 'Unauthorized. You can only update your own career statistics.',
+      };
+    }
+
+    // Sanitize stats object
+    const sanitizedStats: PlayerCareerStats = {
+      matches: Math.max(0, Math.floor(Number(stats.matches) || 0)),
+      runs: Math.max(0, Math.floor(Number(stats.runs) || 0)),
+      battingAvg: Number((Number(stats.battingAvg) || 0).toFixed(2)),
+      strikeRate: Number((Number(stats.strikeRate) || 0).toFixed(2)),
+      highestScore: Math.max(0, Math.floor(Number(stats.highestScore) || 0)),
+      wickets: Math.max(0, Math.floor(Number(stats.wickets) || 0)),
+      bowlingAvg: Number((Number(stats.bowlingAvg) || 0).toFixed(2)),
+      economy: Number((Number(stats.economy) || 0).toFixed(2)),
+      catches: Math.max(0, Math.floor(Number(stats.catches) || 0)),
+      stumpings: Math.max(0, Math.floor(Number(stats.stumpings) || 0)),
+      notes: typeof stats.notes === 'string' ? stats.notes.slice(0, 500) : undefined,
+    };
+
+    const jsonString = JSON.stringify(sanitizedStats);
+    const now = new Date().toISOString();
+
+    // Check if skill profile exists
+    const { data: existingProfile } = await supabase
+      .from('player_skill_profiles')
+      .select('registration_id')
+      .eq('registration_id', registrationId)
+      .maybeSingle();
+
+    if (existingProfile) {
+      const { error: updateError } = await supabase
+        .from('player_skill_profiles')
+        .update({
+          experience_description: jsonString,
+          updated_at: now,
+        })
+        .eq('registration_id', registrationId);
+
+      if (updateError) {
+        return { success: false, error: 'Failed to update career statistics.' };
+      }
+    } else {
+      const { error: insertError } = await supabase
+        .from('player_skill_profiles')
+        .insert({
+          registration_id: registrationId,
+          is_batter: false,
+          is_bowler: false,
+          is_wicket_keeper: false,
+          is_fielder_only: false,
+          derived_player_type: 'all_rounder',
+          experience_description: jsonString,
+          updated_at: now,
+        });
+
+      if (insertError) {
+        return { success: false, error: 'Failed to save career statistics.' };
+      }
+    }
+
+    revalidatePath('/player');
+    revalidatePath('/player/profile');
+    revalidatePath('/franchise/players');
+    revalidatePath('/admin/players');
+
+    return { success: true, data: sanitizedStats };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+    };
+  }
+}
+
+/**
+ * Privileged Admin Action to update any player's career statistics.
+ * Guarded by requireAdmin() and uses createAdminClient().
+ */
+export async function adminSavePlayerCareerStatsAction(
+  registrationId: string,
+  stats: PlayerCareerStats
+): Promise<PlayerActionResult<PlayerCareerStats>> {
+  try {
+    await requireAdmin();
+    const adminClient = createAdminClient();
+
+    // Verify registration exists
+    const { data: registration, error: regError } = await adminClient
+      .from('player_season_registrations')
+      .select('id, player_id')
+      .eq('id', registrationId)
+      .maybeSingle();
+
+    if (regError || !registration) {
+      return { success: false, error: 'Player registration not found.' };
+    }
+
+    const sanitizedStats: PlayerCareerStats = {
+      matches: Math.max(0, Math.floor(Number(stats.matches) || 0)),
+      runs: Math.max(0, Math.floor(Number(stats.runs) || 0)),
+      battingAvg: Number((Number(stats.battingAvg) || 0).toFixed(2)),
+      strikeRate: Number((Number(stats.strikeRate) || 0).toFixed(2)),
+      highestScore: Math.max(0, Math.floor(Number(stats.highestScore) || 0)),
+      wickets: Math.max(0, Math.floor(Number(stats.wickets) || 0)),
+      bowlingAvg: Number((Number(stats.bowlingAvg) || 0).toFixed(2)),
+      economy: Number((Number(stats.economy) || 0).toFixed(2)),
+      catches: Math.max(0, Math.floor(Number(stats.catches) || 0)),
+      stumpings: Math.max(0, Math.floor(Number(stats.stumpings) || 0)),
+      notes: typeof stats.notes === 'string' ? stats.notes.slice(0, 500) : undefined,
+    };
+
+    const jsonString = JSON.stringify(sanitizedStats);
+    const now = new Date().toISOString();
+
+    const { data: existingProfile } = await adminClient
+      .from('player_skill_profiles')
+      .select('registration_id')
+      .eq('registration_id', registrationId)
+      .maybeSingle();
+
+    if (existingProfile) {
+      const { error: updateError } = await adminClient
+        .from('player_skill_profiles')
+        .update({
+          experience_description: jsonString,
+          updated_at: now,
+        })
+        .eq('registration_id', registrationId);
+
+      if (updateError) {
+        return { success: false, error: 'Failed to update career statistics.' };
+      }
+    } else {
+      const { error: insertError } = await adminClient
+        .from('player_skill_profiles')
+        .insert({
+          registration_id: registrationId,
+          is_batter: false,
+          is_bowler: false,
+          is_wicket_keeper: false,
+          is_fielder_only: false,
+          derived_player_type: 'all_rounder',
+          experience_description: jsonString,
+          updated_at: now,
+        });
+
+      if (insertError) {
+        return { success: false, error: 'Failed to save career statistics.' };
+      }
+    }
+
+    revalidatePath('/player');
+    revalidatePath('/player/profile');
+    revalidatePath('/players');
+    revalidatePath('/admin/players');
+    revalidatePath('/franchise/players');
+
+    return { success: true, data: sanitizedStats };
   } catch (err) {
     return {
       success: false,

@@ -52,6 +52,20 @@ export interface PlayerFullData {
   skillProfile: DbPlayerSkillProfile | null;
 }
 
+export interface PlayerCareerStats {
+  matches: number;
+  runs: number;
+  battingAvg: number;
+  strikeRate: number;
+  highestScore: number;
+  wickets: number;
+  bowlingAvg: number;
+  economy: number;
+  catches: number;
+  stumpings: number;
+  notes?: string;
+}
+
 export interface PlayerActionResult<T = unknown> {
   success: boolean;
   data?: T;

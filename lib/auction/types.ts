@@ -87,6 +87,7 @@ export interface AuctionSessionState {
   isLive: boolean;
   isPaused: boolean;
   isNotStarted: boolean;
+  isCompleted: boolean;
   startedAt: string | null;
   activeLotId: string | null;
 }

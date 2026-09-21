@@ -208,14 +208,31 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
       if (!res.success) {
         setMessage({ type: 'error', text: res.error || 'Failed to save skill profile' });
       } else {
-        setMessage({ type: 'success', text: 'Skill questionnaire saved successfully!' });
+        setMessage({
+          type: 'success',
+          text: 'Skill questionnaire saved! Auction eligibility is now active. Redirecting to your Player Dashboard...',
+        });
         router.refresh();
+        setTimeout(() => {
+          router.push('/player');
+        }, 1200);
       }
     });
   }
 
   return (
     <div>
+      {/* Return to Dashboard link */}
+      <div className="mb-4 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => router.push('/player')}
+          className="text-xs font-semibold text-muted-foreground hover:text-foreground inline-flex items-center gap-1 cursor-pointer"
+        >
+          <span>← Return to Player Dashboard</span>
+        </button>
+      </div>
+
       {/* Tab Navigation */}
       <div className="mb-6 flex border-b border-gray-200 dark:border-gray-800">
         <button

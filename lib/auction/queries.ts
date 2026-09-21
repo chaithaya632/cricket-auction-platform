@@ -344,7 +344,7 @@ export async function getAuctionSessionState(
 
   let computedStatus: 'not_started' | 'live' | 'paused' | 'completed' = 'not_started';
 
-  if (seasonStatus === 'completed' || seasonStatus === 'archived') {
+  if (seasonStatus === 'completed' || seasonStatus === 'archived' || sessionStatusConfig === 'completed') {
     computedStatus = 'completed';
   } else if (seasonStatus === 'auction') {
     if (sessionStatusConfig === 'paused') {
@@ -363,6 +363,7 @@ export async function getAuctionSessionState(
     isLive: computedStatus === 'live',
     isPaused: computedStatus === 'paused',
     isNotStarted: computedStatus === 'not_started',
+    isCompleted: computedStatus === 'completed',
     startedAt,
     activeLotId: activeLot?.id || null,
   };

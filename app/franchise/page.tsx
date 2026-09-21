@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { requireFranchise } from '@/lib/permissions/guards';
 import { createClient } from '@/lib/supabase/server';
 import { getFranchiseSquadData } from '@/lib/franchises';
+import { getAuctionSessionState } from '@/lib/auction/queries';
+import { LiveAuctionBanner } from '@/components/auction/live-auction-banner';
 import { DashboardShell } from '@/components/acc/dashboard-shell';
 import { getSessionUser } from '@/lib/acc/server-session';
 
@@ -14,10 +16,14 @@ export default async function FranchiseDashboard() {
   const { assignedFranchise, activeSeason } = permContext;
 
   const supabase = await createClient();
+  const seasonId = activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 
-  const squadData = activeSeason
-    ? await getFranchiseSquadData(supabase, assignedFranchise.id, activeSeason.id)
-    : null;
+  const [squadData, sessionState] = await Promise.all([
+    activeSeason
+      ? getFranchiseSquadData(supabase, assignedFranchise.id, activeSeason.id)
+      : null,
+    getAuctionSessionState(supabase, seasonId),
+  ]);
 
   const purseState = squadData?.purseState;
   const bucketProgress = squadData?.bucketProgress;
@@ -31,6 +37,12 @@ export default async function FranchiseDashboard() {
   return (
     <DashboardShell role="franchise" user={sessionUser} breadcrumb="Dashboard">
       <div className="space-y-8">
+        <LiveAuctionBanner
+          role="franchise"
+          seasonId={seasonId}
+          initialIsLive={sessionState.isLive}
+          seasonName={activeSeason?.name || 'ACC 2026'}
+        />
       {/* Header */}
       <div>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">

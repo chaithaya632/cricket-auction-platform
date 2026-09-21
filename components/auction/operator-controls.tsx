@@ -10,6 +10,7 @@ import {
   startAuctionAction,
   pauseAuctionAction,
   resumeAuctionAction,
+  endAuctionAction,
   selectLotAction,
   confirmSaleAction,
   markUnsoldAction,
@@ -20,7 +21,7 @@ import type {
   AuctionSessionState,
   RestoreToMode,
 } from '@/lib/auction/types';
-import { Play, Pause, Loader2, AlertCircle } from 'lucide-react';
+import { Play, Pause, Square, Loader2, AlertCircle } from 'lucide-react';
 
 interface OperatorControlsProps {
   activeLot: AuctionLotWithDetails | null;
@@ -41,6 +42,8 @@ export function OperatorControls({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showUndoModal, setShowUndoModal] = useState(false);
   const [undoMode, setUndoMode] = useState<RestoreToMode>('resume_bidding');
+  const [showEndModal, setShowEndModal] = useState(false);
+  const [endLotMode, setEndLotMode] = useState<'hammer' | 'unsold'>('hammer');
 
   const handleStartAuction = () => {
     setErrorMsg(null);
@@ -79,6 +82,21 @@ export function OperatorControls({
         setErrorMsg(res.error || 'Failed to resume auction.');
       } else {
         setSuccessMsg('Auction session RESUMED and LIVE.');
+        router.refresh();
+      }
+    });
+  };
+
+  const handleEndAuction = () => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    startTransition(async () => {
+      const res = await endAuctionAction({ resolveActiveLotMode: endLotMode });
+      if (!res.success) {
+        setErrorMsg(res.error || 'Failed to end auction.');
+      } else {
+        setSuccessMsg('Auction session has officially ENDED and status is COMPLETED.');
+        setShowEndModal(false);
         router.refresh();
       }
     });
@@ -171,7 +189,22 @@ export function OperatorControls({
       )}
 
       {/* 1. SESSION LIFECYCLE CONTROLS */}
-      {sessionState.isNotStarted ? (
+      {sessionState.isCompleted ? (
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-5 shadow-xl flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span className="size-3 rounded-full bg-blue-500" />
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-300">
+              Session Status:
+            </span>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider bg-blue-500/20 text-blue-400 border border-blue-500/30">
+              AUCTION SESSION COMPLETED
+            </span>
+          </div>
+          <span className="text-xs text-zinc-400">
+            Official hammer floor is closed. Rosters finalized.
+          </span>
+        </div>
+      ) : sessionState.isNotStarted ? (
         <div className="rounded-2xl border-2 border-dashed border-amber-500/40 bg-zinc-900/90 p-8 text-center space-y-5 shadow-2xl">
           <div className="inline-flex items-center gap-2 rounded-full bg-amber-500/15 px-3.5 py-1 text-xs font-bold text-amber-400 border border-amber-500/30 uppercase tracking-widest">
             <span className="inline-block size-2 rounded-full bg-amber-400" />
@@ -258,6 +291,97 @@ export function OperatorControls({
                 <span>RESUME AUCTION</span>
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={() => setShowEndModal(true)}
+              disabled={isPending}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-950/80 hover:bg-red-900 text-red-300 hover:text-white font-bold text-xs border border-red-800 shadow transition-colors cursor-pointer"
+            >
+              <Square className="size-3.5 fill-current" />
+              <span>END AUCTION</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* End Auction Confirmation Modal */}
+      {showEndModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="rounded-2xl border border-red-900/80 bg-zinc-900 p-6 max-w-md w-full shadow-2xl space-y-4">
+            <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+              <span className="text-red-500">🛑</span> Confirm End Auction Session
+            </h3>
+
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Ending the auction completes the tournament season, closes the bidding floor, and disables any further bids or lot selection.
+            </p>
+
+            {activeLot && activeLot.status === 'in_progress' && (
+              <div className="rounded-xl bg-zinc-950 p-3.5 border border-zinc-800 space-y-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400 block">
+                  Active Lot in Progress
+                </span>
+                <p className="text-xs text-zinc-300">
+                  Player: <strong>{activeLot.player.full_name}</strong> (Lot #{activeLot.draw_number})
+                </p>
+                {activeLot.highest_bidder ? (
+                  <p className="text-xs text-zinc-400">
+                    Current highest bid: <strong>₹{activeLot.current_price}</strong> by <strong>{activeLot.highest_bidder.name}</strong>
+                  </p>
+                ) : (
+                  <p className="text-xs text-zinc-400">No bids placed on this lot yet.</p>
+                )}
+
+                <div className="pt-2 space-y-1.5">
+                  <label className="text-[11px] font-semibold text-zinc-300 block">
+                    How should this lot be resolved?
+                  </label>
+                  {activeLot.highest_bidder && (
+                    <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="endLotMode"
+                        value="hammer"
+                        checked={endLotMode === 'hammer'}
+                        onChange={() => setEndLotMode('hammer')}
+                        className="text-red-500"
+                      />
+                      <span>Confirm sale to highest bidder (₹{activeLot.current_price})</span>
+                    </label>
+                  )}
+                  <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="endLotMode"
+                      value="unsold"
+                      checked={endLotMode === 'unsold' || !activeLot.highest_bidder}
+                      onChange={() => setEndLotMode('unsold')}
+                      className="text-amber-500"
+                    />
+                    <span>Pass and mark lot UNSOLD</span>
+                  </label>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setShowEndModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-zinc-400 hover:text-zinc-200 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleEndAuction}
+                disabled={isPending}
+                className="px-4 py-2 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-500 text-white shadow cursor-pointer"
+              >
+                {isPending ? 'Ending Session...' : 'Confirm & End Auction'}
+              </button>
+            </div>
           </div>
         </div>
       )}

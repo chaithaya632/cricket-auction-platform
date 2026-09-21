@@ -16,6 +16,7 @@ export function PlayerDiscoveryView({ initialPlayers, seasonName }: PlayerDiscov
   const [search, setSearch] = useState('');
   const [selectedBucket, setSelectedBucket] = useState('ALL');
   const [selectedRole, setSelectedRole] = useState('ALL');
+  const [selectedPlayer, setSelectedPlayer] = useState<PlayerDiscoveryItem | null>(null);
 
   const filteredPlayers = useMemo(() => {
     return initialPlayers.filter((p) => {
@@ -170,27 +171,185 @@ export function PlayerDiscoveryView({ initialPlayers, seasonName }: PlayerDiscov
                 </div>
               </div>
 
-              {/* Card Footer: Base Price & CricHeroes link */}
-              <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between text-xs">
-                <span className="font-semibold text-gray-900 dark:text-gray-100">
-                  Base: ₹{player.basePrice}
-                </span>
+                {/* Card Footer: Base Price, CricHeroes, & Inspect Stats */}
+                <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between text-xs">
+                  <span className="font-semibold text-gray-900 dark:text-gray-100">
+                    Base: ₹{player.basePrice}
+                  </span>
 
-                {player.cricheroesUrl ? (
-                  <a
-                    href={player.cricheroesUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 hover:underline font-medium"
-                  >
-                    CricHeroes Profile ↗
-                  </a>
-                ) : (
-                  <span className="text-gray-400 dark:text-gray-500">Unlinked</span>
-                )}
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPlayer(player)}
+                      className="font-semibold text-primary hover:underline cursor-pointer text-xs"
+                    >
+                      Inspect Stats 📊
+                    </button>
+
+                    {player.cricheroesUrl ? (
+                      <a
+                        href={player.cricheroesUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 hover:underline font-medium"
+                      >
+                        CricHeroes ↗
+                      </a>
+                    ) : (
+                      <span className="text-gray-400 dark:text-gray-500">Unlinked</span>
+                    )}
+                  </div>
+                </div>
               </div>
+            ))}
+          </div>
+        )}
+
+      {/* Player Stats Inspection Modal */}
+      {selectedPlayer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="relative w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl text-zinc-100 space-y-5">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+              <div className="flex items-center gap-3">
+                {selectedPlayer.photoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={selectedPlayer.photoUrl}
+                    alt={selectedPlayer.fullName}
+                    className="size-12 rounded-full object-cover border border-zinc-700"
+                  />
+                ) : (
+                  <div className="flex size-12 items-center justify-center rounded-full bg-amber-500/20 text-amber-400 font-bold text-lg border border-amber-500/30">
+                    {selectedPlayer.fullName.charAt(0)}
+                  </div>
+                )}
+                <div>
+                  <h3 className="text-base font-black text-zinc-100">{selectedPlayer.fullName}</h3>
+                  <p className="text-xs text-zinc-400">
+                    {selectedPlayer.programme === 'diploma'
+                      ? 'Diploma'
+                      : `B.Tech Year ${selectedPlayer.academicYear}`} • {selectedPlayer.branch}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedPlayer(null)}
+                className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
             </div>
-          ))}
+
+            {/* Badges */}
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="rounded-full bg-amber-500/20 px-3 py-1 font-bold text-amber-400 border border-amber-500/30">
+                Bucket {selectedPlayer.bucket}
+              </span>
+              <span className="rounded-full bg-zinc-800 px-3 py-1 font-bold text-zinc-200 capitalize">
+                {selectedPlayer.derivedPlayerType?.replace(/_/g, ' ') || 'Player'}
+              </span>
+              <span className="rounded-full bg-emerald-500/20 px-3 py-1 font-bold text-emerald-400 border border-emerald-500/30">
+                Base Price: ₹{selectedPlayer.basePrice}
+              </span>
+            </div>
+
+            {/* Career Stats Grid */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                Tournament Career Statistics
+              </h4>
+
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-2.5 text-center">
+                  <span className="text-[10px] text-zinc-400 block">Matches</span>
+                  <span className="text-base font-black text-zinc-100">
+                    {selectedPlayer.careerStats?.matches ?? 0}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-2.5 text-center">
+                  <span className="text-[10px] text-zinc-400 block">Total Runs</span>
+                  <span className="text-base font-black text-zinc-100">
+                    {selectedPlayer.careerStats?.runs ?? 0}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-2.5 text-center">
+                  <span className="text-[10px] text-zinc-400 block">Batting Avg</span>
+                  <span className="text-base font-black text-amber-400">
+                    {selectedPlayer.careerStats?.battingAvg ?? 0}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-2.5 text-center">
+                  <span className="text-[10px] text-zinc-400 block">Strike Rate</span>
+                  <span className="text-base font-black text-zinc-100">
+                    {selectedPlayer.careerStats?.strikeRate ?? 0}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-2.5 text-center">
+                  <span className="text-[10px] text-zinc-400 block">Highest</span>
+                  <span className="text-base font-black text-zinc-100">
+                    {selectedPlayer.careerStats?.highestScore ?? 0}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-2.5 text-center">
+                  <span className="text-[10px] text-zinc-400 block">Wickets</span>
+                  <span className="text-base font-black text-emerald-400">
+                    {selectedPlayer.careerStats?.wickets ?? 0}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-2.5 text-center">
+                  <span className="text-[10px] text-zinc-400 block">Bowling Avg</span>
+                  <span className="text-base font-black text-zinc-100">
+                    {selectedPlayer.careerStats?.bowlingAvg ?? 0}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-2.5 text-center">
+                  <span className="text-[10px] text-zinc-400 block">Economy</span>
+                  <span className="text-base font-black text-zinc-100">
+                    {selectedPlayer.careerStats?.economy ?? 0}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-2.5 text-center">
+                  <span className="text-[10px] text-zinc-400 block">Catches</span>
+                  <span className="text-base font-black text-sky-400">
+                    {selectedPlayer.careerStats?.catches ?? 0}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-2.5 text-center">
+                  <span className="text-[10px] text-zinc-400 block">Stumpings</span>
+                  <span className="text-base font-black text-sky-400">
+                    {selectedPlayer.careerStats?.stumpings ?? 0}
+                  </span>
+                </div>
+              </div>
+
+              {selectedPlayer.notes && (
+                <div className="rounded-xl bg-zinc-950 p-3.5 border border-zinc-800 text-xs text-zinc-300 italic">
+                  &ldquo;{selectedPlayer.notes}&rdquo;
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end pt-3 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setSelectedPlayer(null)}
+                className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-4 py-2 text-xs font-semibold text-zinc-200 transition-colors cursor-pointer"
+              >
+                Close Drawer
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

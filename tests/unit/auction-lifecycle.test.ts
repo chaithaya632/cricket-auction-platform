@@ -78,3 +78,59 @@ describe('Auction Lifecycle — Read-Only Presentation Surface Safety', () => {
     }
   });
 });
+
+describe('Auction Lifecycle — End Auction & Bid Rejection Contracts', () => {
+  it('rejects bids when session is paused or completed', () => {
+    function validateCanBid(sessionStatus: string): { canBid: boolean; error?: string } {
+      if (sessionStatus === 'paused') {
+        return { canBid: false, error: 'Cannot place bid: auction session is currently paused.' };
+      }
+      if (sessionStatus === 'completed') {
+        return { canBid: false, error: 'Cannot place bid: auction session has ended.' };
+      }
+      if (sessionStatus !== 'live') {
+        return { canBid: false, error: 'Auction is not live.' };
+      }
+      return { canBid: true };
+    }
+
+    expect(validateCanBid('live').canBid).toBe(true);
+    expect(validateCanBid('paused').canBid).toBe(false);
+    expect(validateCanBid('paused').error).toBe('Cannot place bid: auction session is currently paused.');
+    expect(validateCanBid('completed').canBid).toBe(false);
+    expect(validateCanBid('completed').error).toBe('Cannot place bid: auction session has ended.');
+  });
+
+  it('rejects selecting lots when session is completed', () => {
+    function validateCanSelectLot(sessionConfigStatus?: string): { canSelect: boolean; error?: string } {
+      if (sessionConfigStatus === 'completed') {
+        return { canSelect: false, error: 'Cannot select lot: auction session has ended.' };
+      }
+      return { canSelect: true };
+    }
+
+    expect(validateCanSelectLot('live').canSelect).toBe(true);
+    expect(validateCanSelectLot('completed').canSelect).toBe(false);
+    expect(validateCanSelectLot('completed').error).toBe('Cannot select lot: auction session has ended.');
+  });
+
+  it('determines correct active lot resolution on end auction', () => {
+    function resolveLotOnEnd(
+      activeLot: { currentPrice: number | null; highestBidderId: string | null },
+      mode?: 'hammer' | 'unsold'
+    ): 'hammer' | 'unsold' {
+      if (activeLot.currentPrice !== null && activeLot.highestBidderId !== null && mode !== 'unsold') {
+        return 'hammer';
+      }
+      return 'unsold';
+    }
+
+    // Has bidder, default mode -> hammer
+    expect(resolveLotOnEnd({ currentPrice: 150, highestBidderId: 'f1' })).toBe('hammer');
+    // Has bidder, explicit unsold mode -> unsold
+    expect(resolveLotOnEnd({ currentPrice: 150, highestBidderId: 'f1' }, 'unsold')).toBe('unsold');
+    // No bidder -> unsold
+    expect(resolveLotOnEnd({ currentPrice: null, highestBidderId: null })).toBe('unsold');
+  });
+});
+

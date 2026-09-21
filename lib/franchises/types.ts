@@ -39,6 +39,8 @@ export interface FranchiseSquadSummary {
   squadPlayers: SquadPlayerItem[];
 }
 
+import type { PlayerCareerStats } from '@/lib/players/types';
+
 export interface PlayerDiscoveryItem {
   registrationId: string;
   seasonId: string;
@@ -61,6 +63,8 @@ export interface PlayerDiscoveryItem {
   battingStyle: string | null;
   bowlingStyle: string | null;
   experienceYears: number | null;
+  careerStats?: PlayerCareerStats;
+  notes?: string | null;
   // NOTE: Mobile numbers are strictly absent from public player view
 }
 
