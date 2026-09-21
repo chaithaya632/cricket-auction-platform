@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { requireFranchise } from '@/lib/permissions/guards';
 import { UserProfileBadge } from '@/components/auth/user-profile-badge';
 import { LogoutButton } from '@/components/auth/logout-button';
+import { FranchiseNav } from '@/components/franchise/franchise-nav';
 
 export default async function FranchiseLayout({
   children,
@@ -33,26 +34,7 @@ export default async function FranchiseLayout({
             <UserProfileBadge context={permContext} />
           </div>
 
-          <nav className="flex flex-col gap-1 text-sm">
-            <Link
-              href="/franchise"
-              className="rounded-md px-3 py-2 font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
-            >
-              Dashboard
-            </Link>
-            <Link
-              href="/franchise"
-              className="rounded-md px-3 py-2 text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
-            >
-              My Squad
-            </Link>
-            <Link
-              href="/live"
-              className="rounded-md px-3 py-2 text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
-            >
-              Live Auction
-            </Link>
-          </nav>
+          <FranchiseNav />
         </div>
 
         <div className="mt-8 border-t pt-4" style={{ borderColor: 'var(--border)' }}>

@@ -50,6 +50,7 @@ describe('Route Classification & Protection Boundaries', () => {
 
     expect(getLoginRedirect('/admin')).toBe('/login?redirectTo=%2Fadmin');
     expect(getLoginRedirect('/franchise')).toBe('/login?redirectTo=%2Ffranchise');
+    expect(getLoginRedirect('/franchise/squad')).toBe('/login?redirectTo=%2Ffranchise%2Fsquad');
     expect(getLoginRedirect('/player')).toBe('/login?redirectTo=%2Fplayer');
   });
 
@@ -58,6 +59,7 @@ describe('Route Classification & Protection Boundaries', () => {
       '/admin?role=super_admin',
       '/admin?bypass=true',
       '/franchise?franchiseId=123',
+      '/franchise/squad?role=super_admin',
       '/player?role=player',
     ];
 
@@ -65,5 +67,18 @@ describe('Route Classification & Protection Boundaries', () => {
       const pathname = path.split('?')[0];
       expect(isRouteProtected(pathname), `Spoofed path should still be protected: ${path}`).toBe(true);
     }
+  });
+
+  it('franchise navigation defines distinct hrefs for Dashboard and My Squad', () => {
+    // Read the component source to ensure hrefs are correct
+    const fs = require('fs');
+    const path = require('path');
+    const navSource = fs.readFileSync(
+      path.resolve(__dirname, '../../components/franchise/franchise-nav.tsx'),
+      'utf-8'
+    );
+    expect(navSource).toContain('href="/franchise"');
+    expect(navSource).toContain('href="/franchise/squad"');
+    expect(navSource).not.toMatch(/href="\/franchise"[^>]*>\s*My Squad/);
   });
 });
