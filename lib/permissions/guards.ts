@@ -41,6 +41,9 @@ export async function requireAdmin(seasonId?: string): Promise<UserPermissionCon
   const context = await getUserPermissionContext(supabase, appUser, seasonId);
 
   if (!context.isAdmin) {
+    if (context.roles.length === 0) {
+      redirect('/onboarding?reason=pending_access');
+    }
     redirect('/?error=unauthorized_admin');
   }
 
@@ -66,6 +69,9 @@ export async function requireFranchise(
   const context = await getUserPermissionContext(supabase, appUser, seasonId);
 
   if (!context.isFranchise || !context.assignedFranchise) {
+    if (context.roles.length === 0) {
+      redirect('/onboarding?reason=pending_access');
+    }
     redirect('/?error=unauthorized_franchise');
   }
 
@@ -86,8 +92,12 @@ export async function requirePlayer(seasonId?: string): Promise<UserPermissionCo
   const context = await getUserPermissionContext(supabase, appUser, seasonId);
 
   if (!context.isPlayer) {
+    if (context.roles.length === 0) {
+      redirect('/onboarding?reason=pending_access');
+    }
     redirect('/?error=unauthorized_player');
   }
+
 
   return context;
 }

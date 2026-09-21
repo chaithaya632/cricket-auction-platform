@@ -44,9 +44,9 @@ export default async function PlayerProfilePage() {
 
   const fallback = getPlayer(CURRENT_PLAYER_ID)!;
 
-  const displayName = fullData.player?.full_name || fallback.fullName;
-  const rollNumber = fullData.player?.roll_number || fallback.rollNumber;
-  const photoUrl = fullData.player?.photo_url || fallback.photoUrl;
+  const displayName = fullData.player?.full_name || permContext.user.full_name || 'Player';
+  const rollNumber = fullData.player?.roll_number || 'Pending Registration';
+  const photoUrl = fullData.player?.photo_url || permContext.user.avatar_url || null;
   const bucket = (fullData.registration?.bucket || fallback.bucket) as Bucket;
   const status = (fullData.registration?.registration_status?.toUpperCase() || fallback.status) as PlayerStatus;
   const playerType = (fullData.skillProfile
@@ -64,7 +64,7 @@ export default async function PlayerProfilePage() {
   const sessionUser = await getSessionUser('player');
   sessionUser.name = displayName;
   sessionUser.sub = rollNumber;
-  sessionUser.avatarUrl = photoUrl;
+  sessionUser.avatarUrl = photoUrl || undefined;
 
   return (
     <DashboardShell role="player" user={sessionUser} breadcrumb="My Profile">

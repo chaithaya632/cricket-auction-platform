@@ -21,6 +21,21 @@ export function formatAuthError(error: unknown): string {
 
   const lower = rawMessage.toLowerCase();
 
+  // Account already exists (signup)
+  if (
+    lower.includes('user already registered') ||
+    lower.includes('user_already_exists') ||
+    lower.includes('already exists') ||
+    lower.includes('already registered')
+  ) {
+    return 'An account with this email already exists. Please sign in instead.';
+  }
+
+  // Password requirements
+  if (lower.includes('password should be at least')) {
+    return 'Password must be at least 6 characters.';
+  }
+
   // Invalid login credentials
   if (
     lower.includes('invalid login credentials') ||
@@ -29,7 +44,7 @@ export function formatAuthError(error: unknown): string {
     lower.includes('wrong password') ||
     lower.includes('user not found')
   ) {
-    return 'Invalid email or password. Please verify your credentials and try again.';
+    return 'Invalid email or password.';
   }
 
   // Email verification required

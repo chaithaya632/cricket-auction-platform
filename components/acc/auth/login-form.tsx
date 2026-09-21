@@ -8,20 +8,15 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { ROLE_META, type Role } from "@/lib/acc/nav"
-import { Eye, EyeOff, Loader2, LogIn, AlertCircle } from "lucide-react"
+import { Eye, EyeOff, Loader2, LogIn, AlertCircle, CheckCircle2 } from "lucide-react"
 import { loginAction } from "@/lib/auth/actions"
 
-const DEMO: Record<string, Role> = {
-  "admin@avanthi.edu": "admin",
-  "franchise@avanthi.edu": "franchise",
-  "player@avanthi.edu": "player",
-}
 
 function LoginFormFields() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const redirectTo = searchParams.get("redirectTo") || "/"
+  const notice = searchParams.get("notice")
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -46,7 +41,7 @@ function LoginFormFields() {
       )
 
       if (!result.success) {
-        setError(result.error || "Authentication failed. Please check your credentials.")
+        setError(result.error || "Invalid email or password.")
         setLoading(false)
         return
       }
@@ -68,6 +63,15 @@ function LoginFormFields() {
         </p>
       </div>
 
+      {notice === "confirmation_required" && (
+        <Alert className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+          <CheckCircle2 className="size-4 text-emerald-500" />
+          <AlertDescription>
+            Account created. Please check your email to verify your account before signing in.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {error && (
         <Alert variant="destructive">
           <AlertCircle className="size-4" />
@@ -82,7 +86,7 @@ function LoginFormFields() {
             id="email"
             type="email"
             autoComplete="email"
-            placeholder="you@avanthi.edu"
+            placeholder="you@domain.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             aria-invalid={!!error && !email}
@@ -92,9 +96,9 @@ function LoginFormFields() {
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <Label htmlFor="password">Password</Label>
-            <Link href="#" className="text-xs text-muted-foreground hover:text-foreground">
-              Forgot password?
-            </Link>
+            <span className="text-xs text-muted-foreground">
+              Contact admin to reset
+            </span>
           </div>
           <div className="relative">
             <Input
@@ -140,30 +144,15 @@ function LoginFormFields() {
         </Button>
       </form>
 
-      <div className="rounded-lg border border-dashed bg-muted/30 p-4">
-        <p className="mb-2 text-xs font-medium text-muted-foreground">Demo accounts (any password)</p>
-        <div className="flex flex-col gap-1.5">
-          {Object.entries(DEMO).map(([demoEmail, role]) => (
-            <button
-              key={demoEmail}
-              type="button"
-              onClick={() => {
-                setEmail(demoEmail)
-                setPassword("demo1234")
-                setError(null)
-              }}
-              className="flex items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted"
-            >
-              <span className="font-mono text-foreground">{demoEmail}</span>
-              <span className="capitalize text-muted-foreground">{ROLE_META[role].label}</span>
-            </button>
-          ))}
-        </div>
+      <div className="flex items-center justify-center gap-1.5 text-sm text-muted-foreground">
+        <span>Don&apos;t have an account?</span>
+        <Link
+          href={`/signup${redirectTo && redirectTo !== "/" ? `?redirectTo=${encodeURIComponent(redirectTo)}` : ""}`}
+          className="font-medium text-primary hover:underline"
+        >
+          Create account
+        </Link>
       </div>
-
-      <p className="text-center text-xs text-muted-foreground">
-        Accounts are provisioned by tournament administrators. Public registration is closed.
-      </p>
     </div>
   )
 }
@@ -181,3 +170,4 @@ export function LoginForm() {
     </Suspense>
   )
 }
+

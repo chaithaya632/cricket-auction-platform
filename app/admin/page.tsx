@@ -9,7 +9,6 @@ import { ActivityPanel } from "@/components/acc/admin/activity-panel"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Button } from "@/components/ui/button"
-import { mockUser } from "@/lib/acc/session"
 import { SEASON, CATEGORY_CONFIG, BUCKET_ORDER, formatCredits } from "@/lib/acc/config"
 import {
   PLAYERS,

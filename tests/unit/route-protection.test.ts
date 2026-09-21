@@ -8,6 +8,8 @@ describe('Route Classification & Protection Boundaries', () => {
   const publicRoutes = [
     '/',
     '/login',
+    '/signup',
+    '/onboarding',
     '/live',
     '/live/projector',
     '/api/health',
@@ -42,6 +44,7 @@ describe('Route Classification & Protection Boundaries', () => {
       expect(isRouteProtected(route), `Route should be protected: ${route}`).toBe(true);
     }
   });
+
 
   it('constructs safe redirect targets for unauthenticated requests', () => {
     function getLoginRedirect(pathname: string): string {
@@ -81,4 +84,19 @@ describe('Route Classification & Protection Boundaries', () => {
     expect(navSource).toContain('href="/franchise/squad"');
     expect(navSource).not.toMatch(/href="\/franchise"[^>]*>\s*My Squad/);
   });
+
+  it('guards redirect authenticated users without season role to onboarding pending access', () => {
+    function resolveUnauthorizedDestination(rolesCount: number, errorParam: string): string {
+      if (rolesCount === 0) {
+        return '/onboarding?reason=pending_access';
+      }
+      return `/?error=${errorParam}`;
+    }
+
+    expect(resolveUnauthorizedDestination(0, 'unauthorized_admin')).toBe('/onboarding?reason=pending_access');
+    expect(resolveUnauthorizedDestination(0, 'unauthorized_franchise')).toBe('/onboarding?reason=pending_access');
+    expect(resolveUnauthorizedDestination(0, 'unauthorized_player')).toBe('/onboarding?reason=pending_access');
+    expect(resolveUnauthorizedDestination(1, 'unauthorized_admin')).toBe('/?error=unauthorized_admin');
+  });
 });
+

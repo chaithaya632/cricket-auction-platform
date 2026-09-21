@@ -32,7 +32,8 @@ export function mockUser(role: Role): SessionUser {
   }
   return {
     name: "Auction Admin",
-    sub: "admin@avanthi.edu",
+    sub: "admin@auction.local",
     avatarUrl: "https://api.dicebear.com/7.x/adventurer/svg?seed=admin&backgroundColor=1e293b",
   }
 }
+

@@ -10,6 +10,13 @@ export interface LoginInput {
   password: string;
 }
 
+export interface SignupInput {
+  fullName: string;
+  email: string;
+  password: string;
+  confirmPassword?: string;
+}
+
 export interface AuthState {
   isAuthenticated: boolean;
   authUser: SupabaseAuthUser | null;
@@ -21,4 +28,6 @@ export interface AuthActionResult {
   success: boolean;
   error?: string;
   redirectTo?: string;
+  emailConfirmationRequired?: boolean;
 }
+
