@@ -3,7 +3,7 @@ import { DashboardShell } from "@/components/acc/dashboard-shell"
 import { PageHeader } from "@/components/acc/page-header"
 import { UsersTable } from "@/components/acc/admin/users-table"
 import { getSessionUser } from "@/lib/acc/server-session"
-import { createClient } from "@/lib/supabase/server"
+import { createAdminClient } from "@/lib/supabase/admin"
 import { requireAdmin } from "@/lib/permissions/guards"
 import { getAdminUsersList } from "@/lib/users/queries"
 import { getAdminFranchisesList } from "@/lib/franchises/queries"
@@ -13,12 +13,12 @@ export const metadata: Metadata = { title: "Users & Roles · Admin" }
 export default async function AdminUsersPage() {
   const adminContext = await requireAdmin()
   const seasonId = adminContext.activeSeason?.id || ""
-  const supabase = await createClient()
+  const adminClient = createAdminClient()
 
   const [sessionUser, users, franchises] = await Promise.all([
     getSessionUser("admin"),
-    getAdminUsersList(supabase, seasonId),
-    getAdminFranchisesList(supabase, seasonId),
+    getAdminUsersList(adminClient, seasonId),
+    getAdminFranchisesList(adminClient, seasonId),
   ])
 
   return (

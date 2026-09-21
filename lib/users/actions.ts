@@ -39,14 +39,32 @@ export async function adminAssignRoleAction(
 
     const adminClient = createAdminClient();
 
-    // 1. Verify user exists in public.users
-    const { data: userRecord, error: userErr } = await adminClient
+    // 1. Verify user exists in public.users (or sync from auth.users)
+    let { data: userRecord, error: userErr } = await adminClient
       .from('users')
       .select('id, full_name, email')
       .eq('id', input.userId)
       .maybeSingle();
 
     if (userErr || !userRecord) {
+      try {
+        const { data: authUser } = await adminClient.auth.admin.getUserById(input.userId);
+        if (authUser?.user) {
+          const syncedUser = {
+            id: authUser.user.id,
+            email: authUser.user.email || '',
+            full_name: (authUser.user.user_metadata?.full_name as string) || authUser.user.email?.split('@')[0] || 'User',
+            is_active: true,
+          };
+          await adminClient.from('users').upsert(syncedUser);
+          userRecord = syncedUser;
+        }
+      } catch {
+        // Ignore fallback error
+      }
+    }
+
+    if (!userRecord) {
       return { success: false, error: 'Target user record not found.' };
     }
 

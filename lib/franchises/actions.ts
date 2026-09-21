@@ -152,7 +152,7 @@ export async function adminDeleteFranchiseAction(
 
     const hasAuctionHistory = (eventCount && eventCount > 0) || (lotCount && lotCount > 0);
 
-    // 3. Safe deactivation if auction history exists
+    // 3. Safe deactivation if auction history exists (Case B)
     if (hasAuctionHistory) {
       await adminClient
         .from('franchises')
@@ -161,6 +161,11 @@ export async function adminDeleteFranchiseAction(
 
       await adminClient
         .from('franchise_members')
+        .update({ is_active: false })
+        .eq('franchise_id', franchiseId);
+
+      await adminClient
+        .from('season_roles')
         .update({ is_active: false })
         .eq('franchise_id', franchiseId);
 
@@ -178,7 +183,12 @@ export async function adminDeleteFranchiseAction(
       };
     }
 
-    // 4. Safe hard deletion for unparticipating franchise
+    // 4. Safe hard deletion for unparticipating franchise (Case A)
+    // Clean up dependent roles and memberships to prevent check constraint violations
+    await adminClient.from('season_roles').delete().eq('franchise_id', franchiseId);
+    await adminClient.from('franchise_members').delete().eq('franchise_id', franchiseId);
+    await adminClient.from('franchise_referrals').delete().eq('franchise_id', franchiseId);
+
     const { error: deleteErr } = await adminClient
       .from('franchises')
       .delete()

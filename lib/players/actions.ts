@@ -536,7 +536,14 @@ export async function adminDeletePlayerAction(
       };
     }
 
-    // 5. Clean delete for unauctioned player
+    // 5. Clean delete for unauctioned player (Case A)
+    if (regIds.length > 0) {
+      await adminClient.from('player_skill_profiles').delete().in('registration_id', regIds);
+      await adminClient.from('franchise_referrals').delete().in('registration_id', regIds);
+      await adminClient.from('franchise_members').update({ player_registration_id: null }).in('player_registration_id', regIds);
+      await adminClient.from('player_season_registrations').delete().eq('player_id', playerId);
+    }
+
     const { error: deleteErr } = await adminClient.from('players').delete().eq('id', playerId);
     if (deleteErr) {
       return {

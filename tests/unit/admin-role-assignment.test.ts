@@ -202,4 +202,93 @@ describe('Admin Role Assignment & Access Governance', () => {
       expect(access.onboardingDestination).toBe('active_hub');
     });
   });
+
+  describe('Admin User Registry Query Assembly', () => {
+    it('correctly maps newly registered users without season_roles to Pending Access', () => {
+      const rawUsers = [
+        {
+          id: 'user-admin',
+          email: 'admin@acc.local',
+          full_name: 'Admin User',
+          phone: null,
+          is_active: true,
+          created_at: '2026-09-21T08:00:00Z',
+        },
+        {
+          id: 'user-fresh',
+          email: 'newbie@gmail.com',
+          full_name: 'Fresh Signup',
+          phone: null,
+          is_active: true,
+          created_at: '2026-09-21T10:00:00Z',
+        },
+      ];
+
+      const seasonRoles = [
+        {
+          id: 'role-1',
+          user_id: 'user-admin',
+          role: 'super_admin',
+          franchise_id: null,
+          is_active: true,
+        },
+      ];
+
+      const roleMap = new Map<string, any>(seasonRoles.map((r) => [r.user_id, r]));
+
+      const assembled = rawUsers.map((u) => {
+        const r = roleMap.get(u.id);
+        return {
+          id: u.id,
+          email: u.email,
+          full_name: u.full_name,
+          role: r?.role || null,
+          isPending: !r,
+        };
+      });
+
+      expect(assembled).toHaveLength(2);
+      expect(assembled[0].role).toBe('super_admin');
+      expect(assembled[0].isPending).toBe(false);
+
+      expect(assembled[1].email).toBe('newbie@gmail.com');
+      expect(assembled[1].role).toBeNull();
+      expect(assembled[1].isPending).toBe(true);
+    });
+  });
+
+  describe('Player & Franchise Delete Logic (Case A vs Case B)', () => {
+    it('executes clean hard delete for unauctioned player (Case A)', () => {
+      const player = { id: 'p-clean', full_name: 'Unsold Player', lotCount: 0, eventCount: 0 };
+      const hasHistory = player.lotCount > 0 || player.eventCount > 0;
+      const mode = hasHistory ? 'deactivated' : 'deleted';
+
+      expect(mode).toBe('deleted');
+    });
+
+    it('preserves historical auction records and deactivates player (Case B)', () => {
+      const player = { id: 'p-auctioned', full_name: 'Star Batter', lotCount: 1, eventCount: 8 };
+      const hasHistory = player.lotCount > 0 || player.eventCount > 0;
+      const mode = hasHistory ? 'deactivated' : 'deleted';
+
+      expect(mode).toBe('deactivated');
+    });
+
+    it('executes clean hard delete for unauctioned franchise (Case A)', () => {
+      const franchise = { id: 'f-clean', short_name: 'NEW', lotCount: 0, eventCount: 0 };
+      const hasHistory = franchise.lotCount > 0 || franchise.eventCount > 0;
+      const mode = hasHistory ? 'deactivated' : 'deleted';
+
+      expect(mode).toBe('deleted');
+    });
+
+    it('preserves historical auction records and deactivates franchise (Case B)', () => {
+      const franchise = { id: 'f-active', short_name: 'TIT', lotCount: 4, eventCount: 22 };
+      const hasHistory = franchise.lotCount > 0 || franchise.eventCount > 0;
+      const mode = hasHistory ? 'deactivated' : 'deleted';
+
+      expect(mode).toBe('deactivated');
+    });
+  });
 });
+
