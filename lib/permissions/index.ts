@@ -1,2 +1,7 @@
-// Role/permission checks — Implementation: Phase 3
-export {};
+// =============================================================================
+// ACC Auction Portal — Permissions Module Barrel Export
+// =============================================================================
+
+export * from './types';
+export * from './context';
+export * from './guards';
