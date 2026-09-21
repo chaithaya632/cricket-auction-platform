@@ -1,26 +1,99 @@
-export default function ProjectorPage() {
+// =============================================================================
+// ACC Auction Portal — Auditorium Projector View (/live/projector)
+// =============================================================================
+
+import React from 'react';
+import { createClient } from '@/lib/supabase/server';
+import {
+  getActiveLot,
+  getRecentAuctionEvents,
+  getSeasonAuctionConfig,
+} from '@/lib/auction/queries';
+import { ActiveLotCard } from '@/components/auction/active-lot-card';
+import { AuctionTimer } from '@/components/auction/auction-timer';
+
+export default async function ProjectorPage() {
+  const supabase = await createClient();
+  const seasonId = '00000000-0000-0000-0000-000000000001';
+
+  const [activeLot, recentEvents, config] = await Promise.all([
+    getActiveLot(supabase, seasonId),
+    getRecentAuctionEvents(supabase, seasonId, 8),
+    getSeasonAuctionConfig(supabase, seasonId),
+  ]);
+
+  const timerDuration = activeLot?.highest_bidder_franchise_id
+    ? config.subsequentBidTimerSeconds
+    : config.firstBidTimerSeconds;
+
   return (
-    <div
-      className="flex min-h-screen flex-col items-center justify-center gap-6"
-      style={{ backgroundColor: 'var(--background)' }}
-    >
-      <h1 className="text-5xl font-extrabold tracking-tight">
-        Avanthi Cricket Championship
-      </h1>
-      <p
-        className="text-2xl"
-        style={{ color: 'var(--muted-foreground)' }}
-      >
-        Projector Display
-      </p>
-      <div
-        className="mt-4 rounded-md px-6 py-3 text-lg"
-        style={{
-          backgroundColor: 'var(--muted)',
-          color: 'var(--muted-foreground)',
-        }}
-      >
-        Large-format auction display — Phase 9
+    <div className="min-h-screen bg-black text-white p-6 md:p-12 flex flex-col justify-between">
+      {/* Top Banner */}
+      <div className="flex items-center justify-between border-b border-zinc-800 pb-6">
+        <div className="flex items-center gap-4">
+          <span className="text-4xl">🏆</span>
+          <div>
+            <h1 className="text-3xl md:text-4xl font-black tracking-tight uppercase text-zinc-100">
+              Avanthi Cricket Championship
+            </h1>
+            <p className="text-sm font-semibold tracking-widest uppercase text-emerald-400">
+              Official Live Auction Floor
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 rounded-full bg-red-950/80 border border-red-800 px-4 py-1.5">
+            <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />
+            <span className="text-xs font-bold uppercase tracking-widest text-red-400">
+              LIVE BROADCAST
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Centerpiece: Active Lot & Stage Clock */}
+      <div className="my-8 max-w-6xl mx-auto w-full space-y-8">
+        <ActiveLotCard lot={activeLot} size="projector" />
+
+        {activeLot && (
+          <div className="rounded-3xl border border-zinc-800 bg-zinc-950/90 p-8 shadow-2xl">
+            <AuctionTimer
+              startedAt={activeLot.started_at}
+              durationSeconds={timerDuration}
+              isActive={activeLot.status === 'in_progress'}
+              size="lg"
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Bottom Ticker: Recent Bids */}
+      <div className="border-t border-zinc-800 pt-6">
+        <div className="flex items-center gap-4 overflow-x-auto pb-2">
+          <span className="text-xs font-bold uppercase tracking-widest text-zinc-500 shrink-0">
+            LATEST BIDS:
+          </span>
+          {recentEvents.length === 0 ? (
+            <span className="text-xs text-zinc-600">Awaiting floor opening...</span>
+          ) : (
+            recentEvents.slice(0, 5).map((e) => (
+              <div
+                key={e.id}
+                className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-3 py-1.5 text-xs border border-zinc-800 shrink-0"
+              >
+                <span className="font-semibold text-zinc-300">
+                  {e.franchise?.short_name || 'Floor'}
+                </span>
+                {e.price && (
+                  <span className="font-mono font-bold text-emerald-400">
+                    ₹{e.price}
+                  </span>
+                )}
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

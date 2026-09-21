@@ -1,9 +1,7 @@
 // =============================================================================
-// Domain: Auction Engine
-// =============================================================================
-// Lot management, bidding, timer, hammer, sale lifecycle.
-// Event-sourced auction state.
-// Implementation: Phase 6
+// ACC Auction Portal — Domain: Auction Engine
 // =============================================================================
 
-export {};
+export * from './bid-increment';
+export * from './auction-validation';
+export * from './event-applicator';
