@@ -6,10 +6,12 @@ import { requireFranchise } from '@/lib/permissions/guards';
 import { createClient } from '@/lib/supabase/server';
 import { getSeasonPlayerDiscovery } from '@/lib/franchises';
 import { PlayerDiscoveryView } from '@/components/franchise/player-discovery-view';
+import { DashboardShell } from '@/components/acc/dashboard-shell';
+import { getSessionUser } from '@/lib/acc/server-session';
 
 export default async function FranchisePlayersPage() {
   const permContext = await requireFranchise();
-  const { activeSeason } = permContext;
+  const { assignedFranchise, activeSeason } = permContext;
 
   const supabase = await createClient();
 
@@ -17,10 +19,15 @@ export default async function FranchisePlayersPage() {
     ? await getSeasonPlayerDiscovery(supabase, activeSeason.id)
     : [];
 
+  const sessionUser = await getSessionUser('franchise');
+  sessionUser.name = assignedFranchise.name;
+
   return (
-    <PlayerDiscoveryView
-      initialPlayers={players}
-      seasonName={activeSeason?.name || 'ACC 2026'}
-    />
+    <DashboardShell role="franchise" user={sessionUser} breadcrumb="Player Discovery">
+      <PlayerDiscoveryView
+        initialPlayers={players}
+        seasonName={activeSeason?.name || 'ACC 2026'}
+      />
+    </DashboardShell>
   );
 }

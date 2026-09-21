@@ -15,8 +15,12 @@ import { ActiveLotCard } from '@/components/auction/active-lot-card';
 import { AuctionTimer } from '@/components/auction/auction-timer';
 import { OperatorControls } from '@/components/auction/operator-controls';
 import { RecentActivityStream } from '@/components/auction/recent-activity-stream';
+import { DashboardShell } from '@/components/acc/dashboard-shell';
+import { getSessionUser } from '@/lib/acc/server-session';
+import { LiveIndicator } from '@/components/acc/status-badges';
 
 export default async function AdminAuctionPage() {
+  const sessionUser = await getSessionUser('admin');
   const adminContext = await requireAdmin();
   const supabase = await createClient();
   const seasonId =
@@ -48,8 +52,14 @@ export default async function AdminAuctionPage() {
     : config.firstBidTimerSeconds;
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto px-4 py-8">
-      {/* Page Header */}
+    <DashboardShell
+      role="admin"
+      user={sessionUser}
+      breadcrumb="Live Console"
+      actions={<LiveIndicator />}
+    >
+      <div className="space-y-8 max-w-7xl mx-auto">
+        {/* Page Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800 pb-6">
         <div>
           <div className="flex items-center gap-2">
@@ -152,6 +162,7 @@ export default async function AdminAuctionPage() {
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </DashboardShell>
   );
 }

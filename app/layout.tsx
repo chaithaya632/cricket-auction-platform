@@ -1,19 +1,39 @@
-import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import type { Metadata, Viewport } from 'next';
+import { GeistSans } from 'geist/font/sans';
+import { GeistMono } from 'geist/font/mono';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { Toaster } from '@/components/ui/sonner';
 import './globals.css';
-
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-inter',
-});
 
 export const metadata: Metadata = {
   title: {
-    default: 'Avanthi Cricket Championship',
-    template: '%s | ACC',
+    default: 'Avanthi Cricket Championship — Player Auction Portal',
+    template: '%s · ACC Auction',
   },
   description:
-    'Official auction portal for the Avanthi Cricket Championship. Player registration, franchise management, and live auction platform.',
+    'The official Avanthi Cricket Championship auction portal. Follow the live player auction, explore franchises, and track campus cricket talent in real time.',
+  icons: {
+    icon: [
+      {
+        url: '/icon-light-32x32.png',
+        media: '(prefers-color-scheme: light)',
+      },
+      {
+        url: '/icon-dark-32x32.png',
+        media: '(prefers-color-scheme: dark)',
+      },
+      {
+        url: '/icon.svg',
+        type: 'image/svg+xml',
+      },
+    ],
+    apple: '/apple-icon.png',
+  },
+};
+
+export const viewport: Viewport = {
+  colorScheme: 'dark',
+  themeColor: '#1a1f2e',
 };
 
 export default function RootLayout({
@@ -22,9 +42,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={inter.variable}>
-      <body className="min-h-screen antialiased">
-        {children}
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable} dark`}>
+      <body className="antialiased min-h-screen">
+        <TooltipProvider delay={200}>{children}</TooltipProvider>
+        <Toaster position="top-center" />
       </body>
     </html>
   );

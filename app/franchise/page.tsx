@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { requireFranchise } from '@/lib/permissions/guards';
 import { createClient } from '@/lib/supabase/server';
 import { getFranchiseSquadData } from '@/lib/franchises';
+import { DashboardShell } from '@/components/acc/dashboard-shell';
+import { getSessionUser } from '@/lib/acc/server-session';
 
 export default async function FranchiseDashboard() {
   const permContext = await requireFranchise();
@@ -22,8 +24,13 @@ export default async function FranchiseDashboard() {
   const squadConstraints = squadData?.squadConstraints;
   const squadPlayers = squadData?.squadPlayers || [];
 
+  const sessionUser = await getSessionUser('franchise');
+  sessionUser.name = assignedFranchise.name;
+  sessionUser.sub = `Purse: ₹${purseState?.remainingPurse ?? 1000}`;
+
   return (
-    <div className="space-y-8">
+    <DashboardShell role="franchise" user={sessionUser} breadcrumb="Dashboard">
+      <div className="space-y-8">
       {/* Header */}
       <div>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -287,5 +294,6 @@ export default async function FranchiseDashboard() {
         )}
       </div>
     </div>
+    </DashboardShell>
   );
 }
