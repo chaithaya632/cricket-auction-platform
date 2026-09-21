@@ -56,4 +56,23 @@ export interface PlayerActionResult<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
+  mode?: 'deleted' | 'deactivated';
+}
+
+export interface AdminCreatePlayerInput {
+  full_name: string;
+  roll_number: string;
+  mobile: string;
+  photo_url?: string | null;
+  base_price?: number;
+  player_type?: 'batter' | 'bowler' | 'all_rounder' | 'wicket_keeper' | 'wicket_keeper_batter' | 'fielder';
+  batting_style?: 'right_hand' | 'left_hand' | null;
+  bowling_style?: string | null;
+  cricheroes_url?: string | null;
+}
+
+export interface AdminDeletePlayerResult {
+  mode: 'deleted' | 'deactivated';
+  message: string;
+  playerId: string;
 }

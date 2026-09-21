@@ -37,12 +37,19 @@ export async function selectLotAction(
     const adminContext = await requireAdmin();
     const adminClient = createAdminClient();
 
-    // 2. Fetch targeted lot
-    const { data: lot, error: fetchErr } = await adminClient
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lotId);
+    if (!isUuid) {
+      return { success: false, error: 'Lot not found in active database queue.' };
+    }
+
+    // 2. Fetch targeted lot (by lot ID or registration ID)
+    const { data: lots, error: fetchErr } = await adminClient
       .from('auction_lots')
       .select('*')
-      .eq('id', lotId)
-      .single();
+      .or(`id.eq.${lotId},registration_id.eq.${lotId}`)
+      .limit(1);
+
+    const lot = lots?.[0];
 
     if (fetchErr || !lot) {
       return { success: false, error: 'Lot not found.' };
@@ -77,7 +84,7 @@ export async function selectLotAction(
       adminClient,
       lot,
       {
-        lotId,
+        lotId: lot.id,
         expectedStatus: 'pending',
         newStatus: 'in_progress',
         newPrice: null,
@@ -87,7 +94,7 @@ export async function selectLotAction(
       },
       {
         seasonId: lot.season_id,
-        lotId,
+        lotId: lot.id,
         eventType: 'PLAYER_SELECTED',
         actorUserId: adminContext.user.id,
         reason: 'Lot brought to floor by auction operator',
@@ -103,7 +110,7 @@ export async function selectLotAction(
     revalidatePath('/live');
     revalidatePath('/live/projector');
 
-    return { success: true, data: { lotId } };
+    return { success: true, data: { lotId: lot.id } };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to select lot.' };
   }

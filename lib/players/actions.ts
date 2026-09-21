@@ -6,15 +6,23 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
-import { requirePlayer } from '@/lib/permissions/guards';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { requirePlayer, requireAdmin } from '@/lib/permissions/guards';
 import { parseRollNumber, calculateAcademicYear, deriveBucket } from '@/domain/academic';
 import { validateSkills, derivePlayerType } from '@/domain/players';
-import { playerProfileSchema, playerRegistrationSchema, playerSkillSchema } from './validation';
+import {
+  playerProfileSchema,
+  playerRegistrationSchema,
+  playerSkillSchema,
+  adminCreatePlayerSchema,
+} from './validation';
 import type {
   PlayerProfileInput,
   PlayerRegistrationInput,
   PlayerSkillInput,
   PlayerActionResult,
+  AdminCreatePlayerInput,
+  AdminDeletePlayerResult,
 } from './types';
 import type { DbPlayer, DbPlayerSeasonRegistration, DbPlayerSkillProfile } from '@/lib/db/types';
 
@@ -308,6 +316,252 @@ export async function savePlayerSkillProfileAction(
     return {
       success: false,
       error: err instanceof Error ? err.message : 'An unexpected error occurred',
+    };
+  }
+}
+
+/**
+ * Privileged Admin Action to register a new player into the active season.
+ * Validates roll number, derives academic year & bucket, creates player,
+ * season registration, and initial skill profile.
+ */
+export async function adminCreatePlayerAction(
+  input: AdminCreatePlayerInput
+): Promise<PlayerActionResult<DbPlayer>> {
+  try {
+    const adminContext = await requireAdmin();
+    const activeSeason = adminContext.activeSeason;
+
+    if (!activeSeason) {
+      return { success: false, error: 'No active season found for player registration.' };
+    }
+
+    const validation = adminCreatePlayerSchema.safeParse(input);
+    if (!validation.success) {
+      return {
+        success: false,
+        error: validation.error.issues[0]?.message || 'Invalid player information',
+      };
+    }
+
+    const data = validation.data;
+
+    // Academic roll number derivation
+    const parsedRoll = parseRollNumber(data.roll_number);
+    if (!parsedRoll.isValid || !parsedRoll.programme || !parsedRoll.admissionYear) {
+      return {
+        success: false,
+        error: parsedRoll.error || 'Could not parse roll number for academic derivation',
+      };
+    }
+
+    const calculatedYear = calculateAcademicYear(
+      parsedRoll.admissionYear,
+      parsedRoll.programme,
+      new Date()
+    );
+    const derivedPlayerBucket = deriveBucket(parsedRoll.programme, calculatedYear);
+
+    const adminClient = createAdminClient();
+
+    // Check duplicate roll number
+    const { data: existingPlayer } = await adminClient
+      .from('players')
+      .select('id, roll_number')
+      .eq('roll_number', parsedRoll.rawRollNumber)
+      .maybeSingle();
+
+    if (existingPlayer) {
+      return {
+        success: false,
+        error: `A player with roll number ${parsedRoll.rawRollNumber} already exists in the registry.`,
+      };
+    }
+
+    // 1. Insert permanent player identity
+    const { data: newPlayer, error: playerError } = await adminClient
+      .from('players')
+      .insert({
+        roll_number: parsedRoll.rawRollNumber,
+        full_name: data.full_name,
+        mobile: data.mobile,
+        photo_url: data.photo_url || null,
+        is_active: true,
+      })
+      .select('*')
+      .single();
+
+    if (playerError || !newPlayer) {
+      return {
+        success: false,
+        error: playerError?.message || 'Failed to create permanent player record.',
+      };
+    }
+
+    // 2. Insert season registration
+    const { data: newReg, error: regError } = await adminClient
+      .from('player_season_registrations')
+      .insert({
+        player_id: newPlayer.id,
+        season_id: activeSeason.id,
+        registration_status: 'eligible',
+        programme: parsedRoll.programme,
+        academic_year: calculatedYear,
+        branch: parsedRoll.branchName || null,
+        bucket: derivedPlayerBucket,
+        base_price: data.base_price || 100,
+        cricheroes_url: data.cricheroes_url || null,
+        payment_status: 'paid',
+        is_auction_eligible: true,
+      })
+      .select('*')
+      .single();
+
+    if (regError || !newReg) {
+      // Rollback inserted player
+      await adminClient.from('players').delete().eq('id', newPlayer.id);
+      return {
+        success: false,
+        error: regError?.message || 'Failed to register player for active season.',
+      };
+    }
+
+    // 3. Insert skill profile
+    const isBatter =
+      data.player_type === 'batter' ||
+      data.player_type === 'all_rounder' ||
+      data.player_type === 'wicket_keeper_batter';
+    const isBowler = data.player_type === 'bowler' || data.player_type === 'all_rounder';
+    const isWk =
+      data.player_type === 'wicket_keeper' || data.player_type === 'wicket_keeper_batter';
+
+    await adminClient.from('player_skill_profiles').insert({
+      registration_id: newReg.id,
+      is_batter: isBatter,
+      is_bowler: isBowler,
+      is_wicket_keeper: isWk,
+      is_fielder_only: data.player_type === 'fielder',
+      derived_player_type: data.player_type,
+      batting_style: data.batting_style || 'right_hand',
+      bowling_style: data.bowling_style || null,
+    });
+
+    revalidatePath('/admin/players');
+    revalidatePath('/admin');
+    revalidatePath('/players');
+
+    return { success: true, data: newPlayer as DbPlayer };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to create player',
+    };
+  }
+}
+
+/**
+ * Privileged Admin Action to delete or deactivate a player.
+ * Protects immutable auction history:
+ * - If player has auction lots or events, safely deactivates player instead of destroying logs.
+ * - If player has never participated in an auction, permanently removes records.
+ */
+export async function adminDeletePlayerAction(
+  playerId: string
+): Promise<PlayerActionResult<AdminDeletePlayerResult>> {
+  try {
+    await requireAdmin();
+    const adminClient = createAdminClient();
+
+    // 1. Fetch targeted player
+    const { data: player, error: fetchErr } = await adminClient
+      .from('players')
+      .select('id, full_name, roll_number')
+      .eq('id', playerId)
+      .maybeSingle();
+
+    if (fetchErr || !player) {
+      return { success: false, error: 'Player not found.' };
+    }
+
+    // 2. Fetch registrations
+    const { data: registrations } = await adminClient
+      .from('player_season_registrations')
+      .select('id')
+      .eq('player_id', playerId);
+
+    const regIds = registrations?.map((r) => r.id) || [];
+
+    // 3. Inspect auction participation
+    let hasAuctionHistory = false;
+    if (regIds.length > 0) {
+      const { count: lotCount } = await adminClient
+        .from('auction_lots')
+        .select('id', { count: 'exact', head: true })
+        .in('registration_id', regIds);
+
+      if (lotCount && lotCount > 0) {
+        hasAuctionHistory = true;
+      }
+    }
+
+    // 4. Protect referential integrity & auction history
+    if (hasAuctionHistory) {
+      // Deactivate without deleting historical records
+      await adminClient
+        .from('players')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', playerId);
+
+      await adminClient
+        .from('player_season_registrations')
+        .update({
+          registration_status: 'ineligible',
+          is_auction_eligible: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('player_id', playerId);
+
+      revalidatePath('/admin/players');
+      revalidatePath('/admin');
+      revalidatePath('/players');
+
+      return {
+        success: true,
+        mode: 'deactivated',
+        data: {
+          playerId,
+          mode: 'deactivated',
+          message: `Player ${player.full_name} (${player.roll_number}) has auction records and has been deactivated. Historical auction logs were preserved.`,
+        },
+      };
+    }
+
+    // 5. Clean delete for unauctioned player
+    const { error: deleteErr } = await adminClient.from('players').delete().eq('id', playerId);
+    if (deleteErr) {
+      return {
+        success: false,
+        error: `Could not delete player: ${deleteErr.message}`,
+      };
+    }
+
+    revalidatePath('/admin/players');
+    revalidatePath('/admin');
+    revalidatePath('/players');
+
+    return {
+      success: true,
+      mode: 'deleted',
+      data: {
+        playerId,
+        mode: 'deleted',
+        message: `Player ${player.full_name} (${player.roll_number}) was successfully deleted.`,
+      },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to delete player',
     };
   }
 }

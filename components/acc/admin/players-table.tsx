@@ -25,7 +25,9 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { formatCredits, BUCKET_ORDER, STATUS_CONFIG } from "@/lib/acc/config"
 import { getFranchise } from "@/lib/acc/mock-data"
 import type { Player, PlayerStatus } from "@/lib/acc/types"
-import { Search, Users } from "lucide-react"
+import { Search, Users, Trash2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { DeletePlayerDialog } from "./delete-player-dialog"
 
 function initials(name: string) {
   return name.split(" ").map((n) => n[0]).slice(0, 2).join("")
@@ -37,6 +39,7 @@ export function PlayersTable({ players }: { players: Player[] }) {
   const [query, setQuery] = useState("")
   const [bucket, setBucket] = useState<string>("all")
   const [status, setStatus] = useState<string>("all")
+  const [playerToDelete, setPlayerToDelete] = useState<Player | null>(null)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -99,6 +102,7 @@ export function PlayersTable({ players }: { players: Player[] }) {
               <TableHead className="text-right">Base</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="hidden lg:table-cell">Franchise</TableHead>
+              <TableHead className="w-12 text-right">Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -143,6 +147,18 @@ export function PlayersTable({ players }: { players: Player[] }) {
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() => setPlayerToDelete(p)}
+                      title={`Remove ${p.fullName}`}
+                    >
+                      <Trash2 className="size-3.5" />
+                      <span className="sr-only">Remove {p.fullName}</span>
+                    </Button>
+                  </TableCell>
                 </TableRow>
               )
             })}
@@ -165,6 +181,12 @@ export function PlayersTable({ players }: { players: Player[] }) {
       <p className="text-xs text-muted-foreground">
         Showing {filtered.length} of {players.length} players
       </p>
+
+      <DeletePlayerDialog
+        player={playerToDelete}
+        open={!!playerToDelete}
+        onOpenChange={(open) => !open && setPlayerToDelete(null)}
+      />
     </div>
   )
 }

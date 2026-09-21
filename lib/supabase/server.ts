@@ -1,12 +1,13 @@
+import { cache } from 'react';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
 /**
  * Server-side Supabase client for Server Components and Server Actions.
  * Uses the anon key with cookie-based auth.
- * Each request gets its own client instance.
+ * Memoized per server render cycle with React cache().
  */
-export async function createClient() {
+export const createClient = cache(async () => {
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -30,7 +31,7 @@ export async function createClient() {
       },
     }
   );
-}
+});
 
 // Phase 3: createAdminClient (service-role key) will be added here
 // when elevated-privilege server-side operations are needed.

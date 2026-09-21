@@ -4,6 +4,8 @@ import { Separator } from "@/components/ui/separator"
 import { FranchiseCrest } from "@/components/acc/franchise-crest"
 import { PurseBar } from "@/components/acc/purse-bar"
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { Trash2 } from "lucide-react"
 import type { Franchise } from "@/lib/acc/types"
 
 export function FranchiseSummaryCard({
@@ -12,24 +14,43 @@ export function FranchiseSummaryCard({
   spent,
   href,
   className,
+  onDelete,
 }: {
   franchise: Franchise
   squadSize: number
   spent: number
   href?: string
   className?: string
+  onDelete?: (franchise: Franchise) => void
 }) {
   const body = (
     <Card className={cn("h-full gap-0 overflow-hidden py-0 transition-colors hover:border-primary/40", className)}>
       <div className="h-1.5 w-full" style={{ backgroundColor: franchise.colorHex }} />
-      <CardHeader className="flex-row items-center gap-3 pt-4">
-        <FranchiseCrest franchise={franchise} size="lg" />
-        <div className="flex min-w-0 flex-col">
-          <span className="truncate font-semibold leading-tight">{franchise.teamName}</span>
-          <span className="truncate text-xs text-muted-foreground">
-            {franchise.coordinatorName} · {franchise.coordinatorDept}
-          </span>
+      <CardHeader className="flex-row items-center justify-between gap-3 pt-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <FranchiseCrest franchise={franchise} size="lg" />
+          <div className="flex min-w-0 flex-col">
+            <span className="truncate font-semibold leading-tight">{franchise.teamName}</span>
+            <span className="truncate text-xs text-muted-foreground">
+              {franchise.coordinatorName} · {franchise.coordinatorDept}
+            </span>
+          </div>
         </div>
+        {onDelete && (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            className="text-muted-foreground hover:text-destructive shrink-0"
+            title={`Delete ${franchise.teamName}`}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onDelete(franchise)
+            }}
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="pb-4 pt-3">
         <div className="mb-3 grid grid-cols-3 gap-2 text-center">

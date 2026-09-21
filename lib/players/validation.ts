@@ -64,3 +64,24 @@ export const playerSkillSchema = z.object({
   experience_years: z.number().int().min(0).max(30).nullable().optional(),
   experience_description: z.string().trim().max(500).nullable().optional(),
 });
+
+export const adminCreatePlayerSchema = z.object({
+  full_name: z.string().trim().min(2, 'Full name must be at least 2 characters'),
+  roll_number: z.string().trim().min(5, 'Roll number is required'),
+  mobile: z
+    .string()
+    .trim()
+    .regex(mobilePattern, 'Mobile must be a valid 10-digit phone number starting with 6-9'),
+  photo_url: z.string().trim().url('Photo must be a valid URL').optional().or(z.literal('')),
+  base_price: z
+    .number()
+    .int()
+    .positive('Base price must be positive')
+    .default(100),
+  player_type: z
+    .enum(['batter', 'bowler', 'all_rounder', 'wicket_keeper', 'wicket_keeper_batter', 'fielder'])
+    .default('all_rounder'),
+  batting_style: z.enum(['right_hand', 'left_hand']).optional().default('right_hand'),
+  bowling_style: z.string().optional(),
+  cricheroes_url: z.string().trim().url('CricHeroes URL must be valid').optional().or(z.literal('')),
+});

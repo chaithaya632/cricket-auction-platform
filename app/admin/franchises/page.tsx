@@ -1,43 +1,32 @@
 import type { Metadata } from "next"
 import { DashboardShell } from "@/components/acc/dashboard-shell"
 import { PageHeader } from "@/components/acc/page-header"
-import { FranchiseSummaryCard } from "@/components/acc/franchise-summary-card"
-import { Button } from "@/components/ui/button"
+import { AdminFranchisesGrid } from "@/components/acc/admin/franchises-grid"
+import { NewFranchiseDialog } from "@/components/acc/admin/new-franchise-dialog"
 import { getSessionUser } from "@/lib/acc/server-session"
-import { FRANCHISES, franchiseSquad, franchiseSpend } from "@/lib/acc/mock-data"
-import { Plus } from "lucide-react"
+import { createClient } from "@/lib/supabase/server"
+import { getAdminFranchisesList } from "@/lib/franchises/queries"
 
 export const metadata: Metadata = { title: "Franchises · Admin" }
 
 export default async function AdminFranchisesPage() {
   const sessionUser = await getSessionUser("admin")
+  const supabase = await createClient()
+  const franchises = await getAdminFranchisesList(supabase)
+
   return (
     <DashboardShell
       role="admin"
       user={sessionUser}
       breadcrumb="Franchises"
-      actions={
-        <Button size="sm">
-          <Plus className="size-4" />
-          New franchise
-        </Button>
-      }
+      actions={<NewFranchiseDialog />}
     >
       <PageHeader
         eyebrow="Registry"
         title="Franchises"
-        description="All participating teams with live squad counts and purse utilisation."
+        description="All participating teams with live squad counts, purse utilisation, and franchise management."
       />
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {FRANCHISES.map((f) => (
-          <FranchiseSummaryCard
-            key={f.id}
-            franchise={f}
-            squadSize={franchiseSquad(f.id).length}
-            spent={franchiseSpend(f.id)}
-          />
-        ))}
-      </div>
+      <AdminFranchisesGrid initialFranchises={franchises} />
     </DashboardShell>
   )
 }

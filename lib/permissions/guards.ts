@@ -1,7 +1,4 @@
-// =============================================================================
-// ACC Auction Portal — Server Component & Action Guards
-// =============================================================================
-
+import { cache } from 'react';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getCurrentUser } from '@/lib/auth/session';
@@ -12,8 +9,9 @@ import type { DbFranchise } from '@/lib/db/types';
 /**
  * Requires that the user is authenticated.
  * If not authenticated, redirects to /login with the optional redirect target.
+ * Memoized per request with React cache().
  */
-export async function requireAuth(redirectTo?: string): Promise<UserPermissionContext> {
+export const requireAuth = cache(async (redirectTo?: string): Promise<UserPermissionContext> => {
   const { authUser, appUser } = await getCurrentUser();
 
   if (!authUser || !appUser) {
@@ -23,14 +21,15 @@ export async function requireAuth(redirectTo?: string): Promise<UserPermissionCo
 
   const supabase = await createClient();
   return await getUserPermissionContext(supabase, appUser);
-}
+});
 
 /**
  * Requires that the user has an admin role (super_admin or operator)
  * in the active ACC season.
  * If unauthorized, redirects to the home page.
+ * Memoized per request with React cache().
  */
-export async function requireAdmin(seasonId?: string): Promise<UserPermissionContext> {
+export const requireAdmin = cache(async (seasonId?: string): Promise<UserPermissionContext> => {
   const { authUser, appUser } = await getCurrentUser();
 
   if (!authUser || !appUser) {
@@ -48,17 +47,18 @@ export async function requireAdmin(seasonId?: string): Promise<UserPermissionCon
   }
 
   return context;
-}
+});
 
 /**
  * Requires that the user is a verified franchise representative/member
  * for a franchise in the active ACC season.
  *
  * Enforces that franchise identity is bound strictly to the database.
+ * Memoized per request with React cache().
  */
-export async function requireFranchise(
+export const requireFranchise = cache(async (
   seasonId?: string
-): Promise<UserPermissionContext & { assignedFranchise: DbFranchise }> {
+): Promise<UserPermissionContext & { assignedFranchise: DbFranchise }> => {
   const { authUser, appUser } = await getCurrentUser();
 
   if (!authUser || !appUser) {
@@ -76,12 +76,13 @@ export async function requireFranchise(
   }
 
   return context as UserPermissionContext & { assignedFranchise: DbFranchise };
-}
+});
 
 /**
  * Requires that the user has a player role in the active ACC season.
+ * Memoized per request with React cache().
  */
-export async function requirePlayer(seasonId?: string): Promise<UserPermissionContext> {
+export const requirePlayer = cache(async (seasonId?: string): Promise<UserPermissionContext> => {
   const { authUser, appUser } = await getCurrentUser();
 
   if (!authUser || !appUser) {
@@ -98,6 +99,5 @@ export async function requirePlayer(seasonId?: string): Promise<UserPermissionCo
     redirect('/?error=unauthorized_player');
   }
 
-
   return context;
-}
+});

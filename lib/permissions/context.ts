@@ -2,6 +2,7 @@
 // ACC Auction Portal — Season-aware Permission Resolution
 // =============================================================================
 
+import { cache } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DbSeason, DbSeasonRole, DbFranchise, DbUser } from '@/lib/db/types';
 import type { Role } from '@/lib/constants';
@@ -9,10 +10,11 @@ import type { UserPermissionContext } from './types';
 
 /**
  * Retrieves the currently active ACC season.
+ * Memoized per server render cycle with React cache().
  */
-export async function getActiveSeason(
+export const getActiveSeason = cache(async (
   supabase: SupabaseClient
-): Promise<DbSeason | null> {
+): Promise<DbSeason | null> => {
   const { data: season, error } = await supabase
     .from('seasons')
     .select('*')
@@ -24,21 +26,22 @@ export async function getActiveSeason(
   }
 
   return season as DbSeason;
-}
+});
 
 /**
  * Resolves full season-specific permissions for an application user.
+ * Memoized per server render cycle with React cache().
  *
  * CRITICAL SECURITY INVARIANT:
  * Franchise identity and admin status are ALWAYS derived from authenticated
  * database records (public.users -> season_roles -> franchises).
  * Client-supplied URL parameters (?role=..., ?franchiseId=...) are ignored.
  */
-export async function getUserPermissionContext(
+export const getUserPermissionContext = cache(async (
   supabase: SupabaseClient,
   user: DbUser,
   seasonId?: string
-): Promise<UserPermissionContext> {
+): Promise<UserPermissionContext> => {
   // 1. Resolve target season
   let targetSeason: DbSeason | null = null;
   if (seasonId) {
@@ -113,7 +116,7 @@ export async function getUserPermissionContext(
     isPlayer,
     isViewer,
   };
-}
+});
 
 /**
  * Pure helper function to verify if a role exists in an array of season roles.

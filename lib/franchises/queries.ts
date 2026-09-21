@@ -252,3 +252,74 @@ export async function getSeasonPlayerDiscovery(
     experienceYears: p.experience_years,
   }));
 }
+
+import type { Franchise } from '@/lib/acc/types';
+import { FRANCHISES } from '@/lib/acc/mock-data';
+
+/**
+ * Retrieves the unified franchise list for admin and public consoles.
+ * Connects to PostgreSQL `franchises` table and maps team attributes.
+ */
+export async function getAdminFranchisesList(
+  supabase: SupabaseClient,
+  seasonId?: string
+): Promise<Franchise[]> {
+  try {
+    let query = supabase
+      .from('franchises')
+      .select(`
+        id,
+        name,
+        short_name,
+        logo_url,
+        color_primary,
+        color_secondary,
+        faculty_coordinator_name,
+        is_active,
+        franchise_members (
+          role,
+          is_active,
+          users (
+            full_name
+          )
+        )
+      `)
+      .eq('is_active', true);
+
+    if (seasonId) {
+      query = query.eq('season_id', seasonId);
+    }
+
+    const { data: dbFranchises, error } = await query;
+
+    if (error || !dbFranchises || dbFranchises.length === 0) {
+      return FRANCHISES;
+    }
+
+    const parsed: Franchise[] = dbFranchises.map((f: any) => {
+      const members = Array.isArray(f.franchise_members) ? f.franchise_members : [];
+      const captain = members.find((m: any) => m.role === 'captain' && m.is_active);
+      const vc = members.find((m: any) => m.role === 'vice_captain' && m.is_active);
+
+      return {
+        id: f.id,
+        teamName: f.name,
+        shortCode: f.short_name,
+        colorHex: f.color_primary || '#0284c7',
+        coordinatorName: f.faculty_coordinator_name || 'Faculty Coordinator',
+        coordinatorDept: 'Sports Committee',
+        captainName: captain?.users?.full_name || 'TBD',
+        viceCaptainName: vc?.users?.full_name || 'TBD',
+        startingPurse: 10000,
+        logoUrl: f.logo_url || undefined,
+      };
+    });
+
+    const dbCodes = new Set(parsed.map((f) => f.shortCode.toLowerCase()));
+    const remainingMocks = FRANCHISES.filter((f) => !dbCodes.has(f.shortCode.toLowerCase()));
+
+    return [...parsed, ...remainingMocks];
+  } catch {
+    return FRANCHISES;
+  }
+}
