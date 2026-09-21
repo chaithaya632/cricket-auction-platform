@@ -12,6 +12,7 @@ export function FranchiseNav() {
 
   const isDashboard = pathname === '/franchise';
   const isSquad = pathname === '/franchise/squad' || pathname.startsWith('/franchise/squad');
+  const isPlayers = pathname === '/franchise/players' || pathname.startsWith('/franchise/players');
 
   return (
     <nav className="flex flex-col gap-1 text-sm">
@@ -34,6 +35,16 @@ export function FranchiseNav() {
         }`}
       >
         My Squad
+      </Link>
+      <Link
+        href="/franchise/players"
+        className={`rounded-md px-3 py-2 font-medium transition-colors ${
+          isPlayers
+            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 font-semibold'
+            : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
+        }`}
+      >
+        Player Catalog
       </Link>
       <Link
         href="/live"

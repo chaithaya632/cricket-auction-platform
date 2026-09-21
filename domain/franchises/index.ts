@@ -1,8 +1,8 @@
 // =============================================================================
-// Domain: Franchises
-// =============================================================================
-// Franchise creation, squad management, captain/VC rules.
-// Implementation: Phase 5
+// ACC Auction Portal — Domain: Franchises Barrel Export
 // =============================================================================
 
-export {};
+export * from './max-bid';
+export * from './purse';
+export * from './bucket-progress';
+export * from './squad-rules';
