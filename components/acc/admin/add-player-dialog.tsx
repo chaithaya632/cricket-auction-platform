@@ -22,8 +22,10 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { adminCreatePlayerAction } from "@/lib/players/actions"
+import { parseRollNumber, calculateAcademicYear, deriveBucket } from "@/domain/academic"
+import { BASE_PRICE_LADDER } from "@/lib/constants"
 import { toast } from "sonner"
-import { UserPlus, Loader2, AlertCircle } from "lucide-react"
+import { UserPlus, Loader2, AlertCircle, Award } from "lucide-react"
 
 export function AddPlayerDialog() {
   const [open, setOpen] = useState(false)
@@ -34,6 +36,11 @@ export function AddPlayerDialog() {
   const [fullName, setFullName] = useState("")
   const [rollNumber, setRollNumber] = useState("")
   const [mobile, setMobile] = useState("")
+  const [programme, setProgramme] = useState<
+    "btech_regular" | "btech_lateral" | "diploma" | "pg"
+  >("btech_regular")
+  const [academicYear, setAcademicYear] = useState("1")
+  const [branch, setBranch] = useState("CSE")
   const [playerType, setPlayerType] = useState<
     "batter" | "bowler" | "all_rounder" | "wicket_keeper" | "wicket_keeper_batter" | "fielder"
   >("all_rounder")
@@ -41,6 +48,24 @@ export function AddPlayerDialog() {
   const [bowlingStyle, setBowlingStyle] = useState<string>("right_arm_medium")
   const [basePrice, setBasePrice] = useState("100")
   const [cricheroesUrl, setCricheroesUrl] = useState("")
+
+  const derivedBucket = deriveBucket(programme, parseInt(academicYear, 10) || 1)
+
+  const handleRollChange = (val: string) => {
+    const upper = val.toUpperCase()
+    setRollNumber(upper)
+    const parsed = parseRollNumber(upper)
+    if (parsed.isValid && parsed.programme) {
+      setProgramme(parsed.programme)
+      if (parsed.admissionYear) {
+        const yr = calculateAcademicYear(parsed.admissionYear, parsed.programme)
+        setAcademicYear(String(yr))
+      }
+      if (parsed.branchName) {
+        setBranch(parsed.branchName)
+      }
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -52,6 +77,9 @@ export function AddPlayerDialog() {
         full_name: fullName.trim(),
         roll_number: rollNumber.trim().toUpperCase(),
         mobile: mobile.trim(),
+        programme,
+        academic_year: parseInt(academicYear, 10) || 1,
+        branch: branch.trim() || null,
         player_type: playerType,
         batting_style: battingStyle,
         bowling_style: bowlingStyle === "none" ? null : bowlingStyle,
@@ -71,6 +99,9 @@ export function AddPlayerDialog() {
       setFullName("")
       setRollNumber("")
       setMobile("")
+      setProgramme("btech_regular")
+      setAcademicYear("1")
+      setBranch("CSE")
       setCricheroesUrl("")
       setBasePrice("100")
       router.refresh()
@@ -96,7 +127,7 @@ export function AddPlayerDialog() {
           <DialogHeader>
             <DialogTitle>Register New Player</DialogTitle>
             <DialogDescription>
-              Add a student to the active tournament registry. Academic tier and category bucket will be computed authoritatively from the roll number.
+              Add a student to the active tournament registry. Academic tier and category bucket will be authoritatively derived from the explicit academic selections below.
             </DialogDescription>
           </DialogHeader>
 
@@ -125,12 +156,80 @@ export function AddPlayerDialog() {
                 <Label htmlFor="roll_number">Roll Number *</Label>
                 <Input
                   id="roll_number"
-                  placeholder="e.g. 21KD1A0501"
+                  placeholder="e.g. 24811A05F2, 23811A0501, or custom"
                   required
                   value={rollNumber}
-                  onChange={(e) => setRollNumber(e.target.value.toUpperCase())}
+                  onChange={(e) => handleRollChange(e.target.value)}
                   disabled={loading}
                 />
+                <p className="text-[11px] text-muted-foreground">Standard ACC or custom roll numbers accepted</p>
+              </div>
+            </div>
+
+            {/* Academic Information (Explicit Fields) */}
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                  <Award className="size-3.5" />
+                  Academic Classification & Bucket
+                </span>
+                <span className="rounded-full bg-emerald-600 text-white font-black text-xs px-2.5 py-0.5 shadow-sm">
+                  Bucket {derivedBucket}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Programme *</Label>
+                  <Select
+                    value={programme}
+                    onValueChange={(val) => val && setProgramme(val as any)}
+                    disabled={loading}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue placeholder="Programme" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="btech_regular">B.Tech (Regular)</SelectItem>
+                      <SelectItem value="btech_lateral">B.Tech (Lateral)</SelectItem>
+                      <SelectItem value="diploma">Diploma</SelectItem>
+                      <SelectItem value="pg">Post Graduate (PG)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs">Academic Year *</Label>
+                  <Select
+                    value={academicYear}
+                    onValueChange={(val) => val && setAcademicYear(val)}
+                    disabled={loading}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue placeholder="Year" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1st Year</SelectItem>
+                      <SelectItem value="2">2nd Year</SelectItem>
+                      <SelectItem value="3">3rd Year</SelectItem>
+                      <SelectItem value="4">4th Year</SelectItem>
+                      <SelectItem value="5">5th Year</SelectItem>
+                      <SelectItem value="6">6th Year</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="branch" className="text-xs">Branch / Group</Label>
+                  <Input
+                    id="branch"
+                    placeholder="e.g. CSE"
+                    value={branch}
+                    onChange={(e) => setBranch(e.target.value.toUpperCase())}
+                    disabled={loading}
+                    className="h-8 text-xs uppercase"
+                  />
+                </div>
               </div>
             </div>
 
@@ -151,15 +250,22 @@ export function AddPlayerDialog() {
 
               <div className="space-y-1.5">
                 <Label htmlFor="base_price">Base Price (Credits)</Label>
-                <Input
-                  id="base_price"
-                  type="number"
-                  min="50"
-                  step="50"
+                <Select
                   value={basePrice}
-                  onChange={(e) => setBasePrice(e.target.value)}
+                  onValueChange={(val) => val && setBasePrice(val)}
                   disabled={loading}
-                />
+                >
+                  <SelectTrigger id="base_price">
+                    <SelectValue placeholder="Select base price" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BASE_PRICE_LADDER.map((tier) => (
+                      <SelectItem key={tier} value={String(tier)}>
+                        ₹{tier} Credits
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 

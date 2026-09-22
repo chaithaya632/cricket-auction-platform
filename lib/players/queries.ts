@@ -5,8 +5,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DbPlayer, DbPlayerSeasonRegistration, DbPlayerSkillProfile } from '@/lib/db/types';
 import type { Player, PlayerType, PlayerStatus, Bucket } from '@/lib/acc/types';
-import { PLAYERS } from '@/lib/acc/mock-data';
 import type { PlayerFullData, PlayerCareerStats } from './types';
+import { evaluatePlayerEligibility } from '@/domain/players/eligibility';
 
 /**
  * Safely parses structured career statistics from player_skill_profiles.experience_description.
@@ -200,6 +200,7 @@ export async function getAdminPlayersList(
         id,
         roll_number,
         full_name,
+        mobile,
         photo_url,
         is_active,
         created_at,
@@ -212,11 +213,23 @@ export async function getAdminPlayersList(
           bucket,
           base_price,
           registration_status,
+          payment_status,
+          cricheroes_url,
+          cricheroes_registered_mobile,
           cricheroes_status,
           is_auction_eligible,
+          year_override,
+          year_override_reason,
           created_at,
           player_skill_profiles (
-            derived_player_type
+            derived_player_type,
+            is_batter,
+            is_bowler,
+            is_wicket_keeper,
+            batting_style,
+            bowling_style,
+            batting_order,
+            experience_description
           ),
           auction_lots (
             status,
@@ -224,12 +237,17 @@ export async function getAdminPlayersList(
             highest_bidder_franchise_id
           )
         )
-      `)
-      .eq('is_active', true);
+      `);
 
-    if (error || !dbPlayers || dbPlayers.length === 0) {
-      return PLAYERS;
-    }
+    const targetSeasonId = seasonId || '00000000-0000-0000-0000-000000000001';
+
+    // 2. Fetch users assigned the player role in this season who may not have finished profile
+    const { data: roleAssignedUsers } = await supabase
+      .from('season_roles')
+      .select('user_id, users(id, full_name, email, created_at)')
+      .eq('season_id', targetSeasonId)
+      .eq('role', 'player')
+      .eq('is_active', true);
 
     const typeMap: Record<string, PlayerType> = {
       batter: 'Batter',
@@ -240,7 +258,7 @@ export async function getAdminPlayersList(
       fielder: 'Batter',
     };
 
-    const parsedDbPlayers: Player[] = dbPlayers.map((p) => {
+    const parsedDbPlayers: Player[] = (dbPlayers || []).map((p) => {
       const regList = (p as any).player_season_registrations;
       const reg = Array.isArray(regList)
         ? (seasonId ? regList.find((r: any) => r.season_id === seasonId) : regList[0])
@@ -252,11 +270,15 @@ export async function getAdminPlayersList(
       const lotList = reg?.auction_lots;
       const lot = Array.isArray(lotList) ? lotList[0] : lotList;
 
-      let status: PlayerStatus = 'APPROVED';
+      let status: PlayerStatus = 'UNDER_REVIEW';
       if (lot) {
         if (lot.status === 'sold') status = 'SOLD';
         else if (lot.status === 'unsold') status = 'UNSOLD';
         else if (lot.status === 'in_progress') status = 'IN_AUCTION';
+      } else if (p.is_active === false) {
+        status = 'UNDER_REVIEW';
+      } else if (reg?.is_auction_eligible) {
+        status = 'APPROVED';
       } else if (reg?.registration_status === 'pending_verification') {
         status = 'UNDER_REVIEW';
       } else if (reg?.registration_status === 'draft') {
@@ -271,6 +293,26 @@ export async function getAdminPlayersList(
           : 'UG';
 
       const dType = skill?.derived_player_type as string | undefined;
+
+      // Evaluate detailed eligibility
+      const eligibilityBreakdown = evaluatePlayerEligibility({
+        hasProfile: true,
+        fullName: p.full_name,
+        rollNumber: p.roll_number,
+        mobile: p.mobile,
+        photoUrl: p.photo_url,
+        hasRegistration: Boolean(reg),
+        programme: reg?.programme,
+        academicYear: reg?.academic_year,
+        branch: reg?.branch,
+        bucket: reg?.bucket,
+        hasSkillProfile: Boolean(skill),
+        paymentStatus: (reg?.payment_status as 'paid' | 'unpaid') || 'unpaid',
+        cricHeroesStatus: reg?.cricheroes_status || 'unverified',
+        cricHeroesUrl: reg?.cricheroes_url,
+        registrationStatus: reg?.registration_status || 'draft',
+        isActive: p.is_active !== false,
+      });
 
       return {
         id: p.id,
@@ -290,26 +332,83 @@ export async function getAdminPlayersList(
         cricheroesVerified: reg?.cricheroes_status === 'verified',
         soldTo: lot?.highest_bidder_franchise_id || undefined,
         soldPrice: lot?.current_price || undefined,
-        stats: {
-          matches: 0,
-          runs: 0,
-          battingAvg: 0,
-          strikeRate: 0,
-          highestScore: 0,
-          wickets: 0,
-          bowlingAvg: 0,
-          economy: 0,
-          catches: 0,
-          stumpings: 0,
+        registrationId: reg?.id,
+        registrationStatus: reg?.registration_status || 'draft',
+        paymentStatus: reg?.payment_status || 'unpaid',
+        cricheroesStatus: reg?.cricheroes_status || 'unverified',
+        cricheroesUrl: reg?.cricheroes_url || null,
+        cricheroesMobile: reg?.cricheroes_registered_mobile || null,
+        mobile: p.mobile || null,
+        isAuctionEligible: reg?.is_auction_eligible ?? false,
+        isActive: p.is_active !== false,
+        hasSkillProfile: Boolean(skill),
+        hasRegistration: Boolean(reg),
+        yearOverride: reg?.year_override || null,
+        yearOverrideReason: reg?.year_override_reason || null,
+        eligibilityReasons: eligibilityBreakdown.missingRequirements,
+        skillDetails: {
+          battingStyle: skill?.batting_style || null,
+          bowlingStyle: skill?.bowling_style || null,
+          battingOrder: skill?.batting_order || null,
+          isWk: Boolean(skill?.is_wicket_keeper),
         },
+        stats: parseCareerStats(skill?.experience_description),
       };
     });
 
-    const dbRolls = new Set(parsedDbPlayers.map((p) => p.rollNumber.toLowerCase()));
-    const remainingMocks = PLAYERS.filter((p) => !dbRolls.has(p.rollNumber.toLowerCase()));
+    // 3. Map pending role-assigned accounts that have not created players record yet
+    const existingPlayerIds = new Set(parsedDbPlayers.map((p) => p.id));
+    const pendingPlayers: Player[] = [];
 
-    return [...parsedDbPlayers, ...remainingMocks];
+    if (roleAssignedUsers) {
+      for (const rau of roleAssignedUsers) {
+        const u = (rau as any).users;
+        if (u && !existingPlayerIds.has(u.id)) {
+          pendingPlayers.push({
+            id: u.id,
+            rollNumber: 'PENDING',
+            fullName: u.full_name || u.email?.split('@')[0] || 'Registered Player',
+            photoUrl: '/placeholder.svg',
+            course: 'UG',
+            program: 'BTECH',
+            branch: 'PENDING',
+            yearOfStudy: 1,
+            isLateral: false,
+            bucket: 'B1',
+            playerType: 'All-rounder',
+            basePrice: 100,
+            status: 'UNDER_REVIEW',
+            registeredAt: u.created_at || new Date().toISOString(),
+            cricheroesVerified: false,
+            registrationStatus: 'pending_profile',
+            paymentStatus: 'unpaid',
+            cricheroesStatus: 'unverified',
+            isAuctionEligible: false,
+            isActive: true,
+            hasSkillProfile: false,
+            hasRegistration: false,
+            eligibilityReasons: [
+              'Student has not completed personal profile or registration at /player/registration',
+            ],
+            stats: {
+              matches: 0,
+              runs: 0,
+              battingAvg: 0,
+              strikeRate: 0,
+              highestScore: 0,
+              wickets: 0,
+              bowlingAvg: 0,
+              economy: 0,
+              catches: 0,
+              stumpings: 0,
+            },
+          });
+        }
+      }
+    }
+
+    return [...pendingPlayers, ...parsedDbPlayers];
   } catch {
-    return PLAYERS;
+    return [];
   }
 }

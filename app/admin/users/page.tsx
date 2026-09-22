@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: "Users & Roles · Admin" }
 
 export default async function AdminUsersPage() {
   const adminContext = await requireAdmin()
-  const seasonId = adminContext.activeSeason?.id || ""
+  const seasonId = adminContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001'
   const adminClient = createAdminClient()
 
   const [sessionUser, users, franchises] = await Promise.all([

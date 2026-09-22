@@ -95,6 +95,24 @@ export function SettingsForm() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Tournament Dataset Export (§16, §49)</CardTitle>
+          <CardDescription>
+            Download the authoritative tournament spreadsheet containing players, franchises, squads, auction lots, and the complete audit event ledger.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <a
+            href="/api/admin/export"
+            download
+            className="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-emerald-600 text-white hover:bg-emerald-700 h-9 px-4 py-2 cursor-pointer shadow-sm"
+          >
+            📊 Download Tournament Spreadsheet (.CSV)
+          </a>
+        </CardContent>
+      </Card>
+
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline">
           Reset

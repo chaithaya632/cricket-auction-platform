@@ -102,13 +102,13 @@ export const ACADEMIC_ROLLOVER_DAY = 1;
 // ---------------------------------------------------------------------------
 // Roll Number Patterns (spec §9)
 // ---------------------------------------------------------------------------
-// B.Tech regular: YY811Abbnn
+// B.Tech regular: YY811Abbnn (supports alphanumeric sequences e.g. 24811A05F2)
 // B.Tech lateral:  YY815Abbnn
 // Diploma:         YY597-BB-nnn
 export const ROLL_PATTERNS = {
-  BTECH_REGULAR: /^(\d{2})811A(\d{2})(\d{2})$/,
-  BTECH_LATERAL: /^(\d{2})815A(\d{2})(\d{2})$/,
-  DIPLOMA: /^(\d{2})597-([A-Z]{1,2})-(\d{3})$/,
+  BTECH_REGULAR: /^(\d{2})811A(\d{2})([0-9A-Z]{2})$/i,
+  BTECH_LATERAL: /^(\d{2})815A(\d{2})([0-9A-Z]{2})$/i,
+  DIPLOMA: /^(\d{2})597-([A-Z]{1,2})-([0-9A-Z]{3})$/i,
 } as const;
 
 // ---------------------------------------------------------------------------

@@ -4,10 +4,11 @@
 // ACC Auction Portal — Components: Operator Control Console
 // =============================================================================
 
-import React, { useState, useTransition } from 'react';
+import React, { useState, useTransition, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   startAuctionAction,
+  startAuctionAgainAction,
   pauseAuctionAction,
   resumeAuctionAction,
   endAuctionAction,
@@ -15,35 +16,87 @@ import {
   confirmSaleAction,
   markUnsoldAction,
   undoSaleAction,
+  adminProxyBidAction,
+  adminStartRoundTwoAction,
+  adminAutoAllotLotAction,
+  adminRelaxBucketMinimumAction,
 } from '@/lib/auction/actions';
 import type {
   AuctionLotWithDetails,
   AuctionSessionState,
   RestoreToMode,
 } from '@/lib/auction/types';
-import { Play, Pause, Square, Loader2, AlertCircle } from 'lucide-react';
+import type { BucketScarcityReport } from '@/domain/scarcity';
+import { Play, Pause, Square, Loader2, AlertCircle, ShieldAlert, Users, RotateCcw, Award } from 'lucide-react';
+
+export interface OperatorSoldLotItem {
+  id: string;
+  draw_number: number;
+  player_name: string;
+  franchise_name: string;
+  price: number;
+  bucket: string;
+}
+
+export interface OperatorFranchiseOption {
+  id: string;
+  name: string;
+  short_name: string;
+}
 
 interface OperatorControlsProps {
   activeLot: AuctionLotWithDetails | null;
   upcomingLots: AuctionLotWithDetails[];
   lastSoldLotId?: string | null;
+  soldLots?: OperatorSoldLotItem[];
+  franchises?: OperatorFranchiseOption[];
   sessionState: AuctionSessionState;
+  isSuperAdmin?: boolean;
+  scarcityReport?: BucketScarcityReport | null;
 }
 
 export function OperatorControls({
   activeLot,
   upcomingLots,
   lastSoldLotId,
+  soldLots = [],
+  franchises = [],
   sessionState,
+  isSuperAdmin = false,
+  scarcityReport = null,
 }: OperatorControlsProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showUndoModal, setShowUndoModal] = useState(false);
+  const [selectedUndoLotId, setSelectedUndoLotId] = useState<string>(
+    lastSoldLotId || (soldLots[0]?.id ?? '')
+  );
   const [undoMode, setUndoMode] = useState<RestoreToMode>('resume_bidding');
   const [showEndModal, setShowEndModal] = useState(false);
   const [endLotMode, setEndLotMode] = useState<'hammer' | 'unsold'>('hammer');
+
+  // Super Admin Action states
+  const [showProxyModal, setShowProxyModal] = useState(false);
+  const [proxyFranchiseId, setProxyFranchiseId] = useState<string>(franchises[0]?.id || '');
+  const [proxyBidAmount, setProxyBidAmount] = useState<number>(0);
+
+  const [showRoundTwoModal, setShowRoundTwoModal] = useState(false);
+  const [showRelaxBucketModal, setShowRelaxBucketModal] = useState(false);
+  const [relaxBucket, setRelaxBucket] = useState<string>('B1');
+  const [relaxMinimum, setRelaxMinimum] = useState<number>(1);
+  const [relaxReason, setRelaxReason] = useState<string>(
+    'Uniform bucket relaxation under §13 endgame procedures'
+  );
+
+  useEffect(() => {
+    if (lastSoldLotId) {
+      setSelectedUndoLotId(lastSoldLotId);
+    } else if (soldLots.length > 0) {
+      setSelectedUndoLotId(soldLots[0].id);
+    }
+  }, [lastSoldLotId, soldLots]);
 
   const handleStartAuction = () => {
     setErrorMsg(null);
@@ -54,6 +107,20 @@ export function OperatorControls({
         setErrorMsg(res.error || 'Failed to start auction.');
       } else {
         setSuccessMsg('Auction is now LIVE! Bidding floor is open.');
+        router.refresh();
+      }
+    });
+  };
+
+  const handleStartAuctionAgain = () => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    startTransition(async () => {
+      const res = await startAuctionAgainAction();
+      if (!res.success) {
+        setErrorMsg(res.error || 'Failed to restart auction session.');
+      } else {
+        setSuccessMsg('Auction session RESTARTED and LIVE! Bidding floor is reopened.');
         router.refresh();
       }
     });
@@ -147,16 +214,95 @@ export function OperatorControls({
   };
 
   const handleUndoSale = () => {
-    if (!lastSoldLotId) return;
+    const targetLotId = selectedUndoLotId || lastSoldLotId;
+    if (!targetLotId) return;
     setErrorMsg(null);
     setSuccessMsg(null);
     startTransition(async () => {
-      const res = await undoSaleAction(lastSoldLotId, undoMode);
+      const res = await undoSaleAction(targetLotId, undoMode);
       if (!res.success) {
         setErrorMsg(res.error || 'Failed to undo sale.');
       } else {
         setSuccessMsg(`Sale successfully undone (Mode: ${undoMode}).`);
         setShowUndoModal(false);
+        router.refresh();
+      }
+    });
+  };
+
+  const handleOpenProxyModal = () => {
+    if (!activeLot) return;
+    const defaultNextBid =
+      activeLot.current_price !== null
+        ? activeLot.current_price + 5
+        : activeLot.base_price;
+    setProxyBidAmount(defaultNextBid);
+    if (!proxyFranchiseId && franchises.length > 0) {
+      setProxyFranchiseId(franchises[0].id);
+    }
+    setShowProxyModal(true);
+  };
+
+  const handleProxyBid = () => {
+    if (!activeLot || !proxyFranchiseId || !proxyBidAmount) return;
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    startTransition(async () => {
+      const res = await adminProxyBidAction(
+        activeLot.id,
+        proxyFranchiseId,
+        proxyBidAmount
+      );
+      if (!res.success) {
+        setErrorMsg(res.error || 'Proxy bid failed.');
+      } else {
+        setSuccessMsg(`Proxy bid of ₹${proxyBidAmount} placed successfully (§16).`);
+        setShowProxyModal(false);
+        router.refresh();
+      }
+    });
+  };
+
+  const handleStartRoundTwo = () => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    startTransition(async () => {
+      const res = await adminStartRoundTwoAction();
+      if (!res.success) {
+        setErrorMsg(res.error || 'Failed to start Round 2.');
+      } else {
+        setSuccessMsg(`Round 2 activated! Reopened ${res.data?.reopenedCount} unsold player(s) at base price 20 credits (§13).`);
+        setShowRoundTwoModal(false);
+        router.refresh();
+      }
+    });
+  };
+
+  const handleAutoAllot = () => {
+    if (!activeLot) return;
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    startTransition(async () => {
+      const res = await adminAutoAllotLotAction(activeLot.id);
+      if (!res.success) {
+        setErrorMsg(res.error || 'Auto-allotment failed.');
+      } else {
+        setSuccessMsg(`Player ALLOTTED to ${res.data?.franchiseName} at 20 credits under §13 endgame rules.`);
+        router.refresh();
+      }
+    });
+  };
+
+  const handleRelaxBucket = () => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    startTransition(async () => {
+      const res = await adminRelaxBucketMinimumAction(relaxBucket, relaxMinimum, relaxReason);
+      if (!res.success) {
+        setErrorMsg(res.error || 'Failed to relax bucket quota.');
+      } else {
+        setSuccessMsg(`Bucket ${res.data?.bucket} quota relaxed to ${res.data?.newMinimum} uniformly across all franchises (§13, §40).`);
+        setShowRelaxBucketModal(false);
         router.refresh();
       }
     });
@@ -174,6 +320,29 @@ export function OperatorControls({
 
   return (
     <div className="space-y-6">
+      {/* SCARCITY WARNING BANNER (§12.3) */}
+      {scarcityReport?.isWarningActive && (
+        <div className="rounded-2xl border-2 border-amber-500 bg-amber-950/80 p-5 text-xs text-amber-200 shadow-2xl flex flex-wrap items-center justify-between gap-4 animate-pulse">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <span className="font-black uppercase tracking-wider text-amber-300 block text-sm">
+                SCARCITY WARNING: Bucket {scarcityReport.bucket} (§12.3)
+              </span>
+              <p className="text-[11px] text-amber-200/90 mt-0.5">
+                {scarcityReport.unsoldSupply} unsold player(s) remaining for {scarcityReport.totalPlayersNeeded} player need(s) across {scarcityReport.franchisesNeedingCount} franchise(s).
+                Threshold: <strong>{scarcityReport.threshold}</strong>. Bidding is not blocked (§12.3).
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="px-3 py-1 rounded-lg bg-amber-500/20 text-amber-400 font-bold border border-amber-500/40 text-xs font-mono">
+              SUPPLY: {scarcityReport.unsoldSupply} / NEED: {scarcityReport.totalPlayersNeeded}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Feedback Messages */}
       {errorMsg && (
         <div className="rounded-xl bg-red-950/80 border border-red-800/80 p-4 text-xs text-red-200 flex items-center gap-2">
@@ -193,16 +362,38 @@ export function OperatorControls({
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-5 shadow-xl flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <span className="size-3 rounded-full bg-blue-500" />
-            <span className="text-xs font-bold uppercase tracking-wider text-zinc-300">
-              Session Status:
-            </span>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider bg-blue-500/20 text-blue-400 border border-blue-500/30">
-              AUCTION SESSION COMPLETED
-            </span>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-zinc-300">
+                  Session Status:
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                  AUCTION SESSION COMPLETED
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-400 mt-1">
+                Official hammer floor was closed. You can restart the auction session to continue bidding on remaining lots.
+              </p>
+            </div>
           </div>
-          <span className="text-xs text-zinc-400">
-            Official hammer floor is closed. Rosters finalized.
-          </span>
+          <button
+            type="button"
+            onClick={handleStartAuctionAgain}
+            disabled={isPending}
+            className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-950/50 transition-all duration-150 cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isPending ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <span>REOPENING FLOOR...</span>
+              </>
+            ) : (
+              <>
+                <Play className="size-3.5 fill-current" />
+                <span>START AUCTION AGAIN</span>
+              </>
+            )}
+          </button>
         </div>
       ) : sessionState.isNotStarted ? (
         <div className="rounded-2xl border-2 border-dashed border-amber-500/40 bg-zinc-900/90 p-8 text-center space-y-5 shadow-2xl">
@@ -436,38 +627,124 @@ export function OperatorControls({
             </span>
           </button>
 
-          {/* UNDO LAST SALE */}
+          {/* UNDO SALE */}
           <button
             type="button"
             onClick={() => setShowUndoModal(true)}
-            disabled={!lastSoldLotId || isPending || !isFloorActive}
+            disabled={(!lastSoldLotId && soldLots.length === 0) || isPending || !isFloorActive}
             className={`py-4 px-4 rounded-xl font-bold text-sm transition-all duration-150 flex flex-col items-center justify-center gap-1 ${
-              lastSoldLotId && !isPending && isFloorActive
+              (lastSoldLotId || soldLots.length > 0) && !isPending && isFloorActive
                 ? 'bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-amber-500/40 shadow-lg cursor-pointer active:scale-95'
                 : 'bg-zinc-800/50 text-zinc-600 cursor-not-allowed border border-zinc-800'
             }`}
           >
             <span className="text-xl">↩</span>
-            <span>UNDO LAST SALE</span>
+            <span>UNDO SALE</span>
             <span className="text-[10px] font-normal opacity-80">
-              Deterministic recovery
+              Deterministic recovery (§12.4)
             </span>
           </button>
         </div>
       </div>
+
+      {/* 2.5 SUPER ADMIN GOVERNANCE CONTROLS (§12.4, §13, §16, §40) */}
+      {isSuperAdmin && (
+        <div className="rounded-2xl border border-amber-500/40 bg-zinc-900/90 p-5 shadow-xl space-y-3">
+          <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="size-4 text-amber-400" />
+              <h3 className="text-xs font-black uppercase tracking-wider text-amber-400">
+                Super Admin Governance Suite (§12.4, §13, §16, §40)
+              </h3>
+            </div>
+            <span className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-400 border border-amber-500/30 uppercase">
+              Full Authority
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+            {/* Proxy Bid on Active Lot */}
+            <button
+              type="button"
+              onClick={handleOpenProxyModal}
+              disabled={!activeLot || activeLot.status !== 'in_progress' || isPending || !isFloorActive}
+              className="p-3 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 text-zinc-200 font-bold text-xs border border-zinc-700 transition flex flex-col items-center justify-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Users className="size-4 text-blue-400" />
+              <span>Proxy Bid</span>
+              <span className="text-[10px] font-normal text-zinc-400">On behalf of team (§16)</span>
+            </button>
+
+            {/* Auto-Allot Active Lot */}
+            <button
+              type="button"
+              onClick={handleAutoAllot}
+              disabled={!activeLot || isPending}
+              className="p-3 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 text-zinc-200 font-bold text-xs border border-zinc-700 transition flex flex-col items-center justify-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Award className="size-4 text-emerald-400" />
+              <span>Auto-Allot</span>
+              <span className="text-[10px] font-normal text-zinc-400">Endgame priority (§13)</span>
+            </button>
+
+            {/* Start Round 2 */}
+            <button
+              type="button"
+              onClick={() => setShowRoundTwoModal(true)}
+              disabled={isPending}
+              className="p-3 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 text-amber-300 font-bold text-xs border border-amber-500/30 transition flex flex-col items-center justify-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <RotateCcw className="size-4 text-amber-400" />
+              <span>Start Round 2</span>
+              <span className="text-[10px] font-normal text-zinc-400">Reopen unsold at ₹20 (§13)</span>
+            </button>
+
+            {/* Uniform Bucket Relaxation */}
+            <button
+              type="button"
+              onClick={() => setShowRelaxBucketModal(true)}
+              disabled={isPending}
+              className="p-3 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 text-purple-300 font-bold text-xs border border-purple-500/30 transition flex flex-col items-center justify-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <span className="text-sm">⚖</span>
+              <span>Relax Bucket</span>
+              <span className="text-[10px] font-normal text-zinc-400">Lower quota (§7, §40)</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Undo Modal */}
       {showUndoModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="rounded-2xl border border-zinc-700 bg-zinc-900 p-6 max-w-md w-full shadow-2xl space-y-4">
             <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
-              <span className="text-amber-400">⚠</span> Confirm Undo Last Sale
+              <span className="text-amber-400">⚠</span> Confirm Undo Sale (§12.4)
             </h3>
 
             <p className="text-xs text-zinc-400 leading-relaxed">
               This will create an immutable <code>UNDO_SALE</code> event and restore
-              the winning franchise&apos;s purse, bucket quota, and squad count.
+              the winning franchise&apos;s purse, bucket quota, and squad count without cascading rollbacks.
             </p>
+
+            {soldLots.length > 0 && (
+              <div className="space-y-1 text-xs">
+                <label className="text-zinc-300 font-semibold block">
+                  Select Target Sale to Undo:
+                </label>
+                <select
+                  value={selectedUndoLotId}
+                  onChange={(e) => setSelectedUndoLotId(e.target.value)}
+                  className="w-full rounded-lg bg-zinc-950 border border-zinc-700 px-3 py-2 text-xs text-zinc-200"
+                >
+                  {soldLots.map((sl) => (
+                    <option key={sl.id} value={sl.id}>
+                      Lot #{sl.draw_number} — {sl.player_name} (₹{sl.price} to {sl.franchise_name})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="space-y-2 text-xs">
               <label className="text-zinc-300 font-semibold block">
@@ -530,6 +807,183 @@ export function OperatorControls({
                 className="px-4 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow cursor-pointer"
               >
                 {isPending ? 'Processing Undo...' : 'Confirm Undo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Proxy Bid Modal (§16) */}
+      {showProxyModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="rounded-2xl border border-zinc-700 bg-zinc-900 p-6 max-w-md w-full shadow-2xl space-y-4">
+            <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+              <span className="text-blue-400">🛡</span> Submit Proxy Bid (§16)
+            </h3>
+
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Place a bid on behalf of a franchise that has experienced network disconnection or technical failure on the floor.
+            </p>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">
+                  Select Franchise:
+                </label>
+                <select
+                  value={proxyFranchiseId}
+                  onChange={(e) => setProxyFranchiseId(e.target.value)}
+                  className="w-full rounded-lg bg-zinc-950 border border-zinc-700 px-3 py-2 text-xs text-zinc-200"
+                >
+                  {franchises.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name} ({f.short_name})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">
+                  Bid Amount (₹ Credits):
+                </label>
+                <input
+                  type="number"
+                  min="20"
+                  step="5"
+                  value={proxyBidAmount}
+                  onChange={(e) => setProxyBidAmount(Number(e.target.value))}
+                  className="w-full rounded-lg bg-zinc-950 border border-zinc-700 px-3 py-2 text-xs text-zinc-100 font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setShowProxyModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-zinc-400 hover:text-zinc-200 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleProxyBid}
+                disabled={isPending}
+                className="px-4 py-2 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white shadow cursor-pointer"
+              >
+                {isPending ? 'Submitting Proxy...' : 'Submit Proxy Bid'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Start Round 2 Confirmation Modal (§13) */}
+      {showRoundTwoModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="rounded-2xl border border-amber-500/60 bg-zinc-900 p-6 max-w-md w-full shadow-2xl space-y-4">
+            <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+              <span className="text-amber-400">🔄</span> Start Round 2 (§13)
+            </h3>
+
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              This will reopen all <strong>unsold</strong> and un-recalled <strong>skipped</strong> players from Round 1 and reset their base price to exactly <strong>20 credits</strong>.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setShowRoundTwoModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-zinc-400 hover:text-zinc-200 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleStartRoundTwo}
+                disabled={isPending}
+                className="px-4 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow cursor-pointer"
+              >
+                {isPending ? 'Reopening Lots...' : 'Activate Round 2'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Uniform Bucket Relaxation Modal (§7, §13, §40) */}
+      {showRelaxBucketModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="rounded-2xl border border-purple-500/60 bg-zinc-900 p-6 max-w-md w-full shadow-2xl space-y-4">
+            <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+              <span className="text-purple-400">⚖</span> Relax Bucket Minimum (§7, §13, §40)
+            </h3>
+
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              If player supply in a bucket is genuinely insufficient, Super Admin may relax the required quota (e.g. from 2 to 1) uniformly for all franchises.
+            </p>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">
+                  Bucket:
+                </label>
+                <select
+                  value={relaxBucket}
+                  onChange={(e) => setRelaxBucket(e.target.value)}
+                  className="w-full rounded-lg bg-zinc-950 border border-zinc-700 px-3 py-2 text-xs text-zinc-200"
+                >
+                  {['B1', 'B2', 'B3', 'B4', 'B5'].map((b) => (
+                    <option key={b} value={b}>
+                      Bucket {b}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">
+                  New Required Minimum:
+                </label>
+                <select
+                  value={relaxMinimum}
+                  onChange={(e) => setRelaxMinimum(Number(e.target.value))}
+                  className="w-full rounded-lg bg-zinc-950 border border-zinc-700 px-3 py-2 text-xs text-zinc-200 font-mono"
+                >
+                  <option value={1}>1 Player (Relax from 2)</option>
+                  <option value={0}>0 Players (Full Exemption)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">
+                  Administrative Reason (Logged to Audit Trail):
+                </label>
+                <input
+                  type="text"
+                  value={relaxReason}
+                  onChange={(e) => setRelaxReason(e.target.value)}
+                  className="w-full rounded-lg bg-zinc-950 border border-zinc-700 px-3 py-2 text-xs text-zinc-100"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setShowRelaxBucketModal(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-zinc-400 hover:text-zinc-200 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleRelaxBucket}
+                disabled={isPending}
+                className="px-4 py-2 rounded-lg text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white shadow cursor-pointer"
+              >
+                {isPending ? 'Applying Relaxation...' : 'Apply Uniform Relaxation'}
               </button>
             </div>
           </div>

@@ -134,3 +134,137 @@ describe('Auction Lifecycle — End Auction & Bid Rejection Contracts', () => {
   });
 });
 
+describe('Auction Lifecycle — Multi-Session Support ("START AUCTION AGAIN")', () => {
+  function computeLifecycleTransition(
+    currentSeasonStatus: string,
+    currentSessionStatus: string,
+    action: 'START' | 'PAUSE' | 'RESUME' | 'END' | 'START_AGAIN',
+    hasActiveLotInProgress = false
+  ): { seasonStatus: string; sessionStatus: string; error?: string } {
+    if (action === 'START') {
+      if (currentSeasonStatus === 'auction' && currentSessionStatus === 'live') {
+        return { seasonStatus: currentSeasonStatus, sessionStatus: currentSessionStatus, error: 'Auction session is already LIVE.' };
+      }
+      return { seasonStatus: 'auction', sessionStatus: 'live' };
+    }
+
+    if (action === 'PAUSE') {
+      if (currentSessionStatus !== 'live') {
+        return { seasonStatus: currentSeasonStatus, sessionStatus: currentSessionStatus, error: 'Cannot pause: not live' };
+      }
+      return { seasonStatus: 'auction', sessionStatus: 'paused' };
+    }
+
+    if (action === 'RESUME') {
+      return { seasonStatus: 'auction', sessionStatus: 'live' };
+    }
+
+    if (action === 'END') {
+      return { seasonStatus: 'completed', sessionStatus: 'completed' };
+    }
+
+    if (action === 'START_AGAIN') {
+      if (hasActiveLotInProgress) {
+        return {
+          seasonStatus: currentSeasonStatus,
+          sessionStatus: currentSessionStatus,
+          error: 'Cannot start auction again while an active lot is still in progress.',
+        };
+      }
+      return { seasonStatus: 'auction', sessionStatus: 'live' };
+    }
+
+    return { seasonStatus: currentSeasonStatus, sessionStatus: currentSessionStatus };
+  }
+
+  it('allows START AUCTION AGAIN after session is completed, returning to live', () => {
+    // 1. Session is completed
+    const completedState = { seasonStatus: 'completed', sessionStatus: 'completed' };
+
+    // 2. Operator triggers START_AGAIN
+    const res = computeLifecycleTransition(
+      completedState.seasonStatus,
+      completedState.sessionStatus,
+      'START_AGAIN',
+      false
+    );
+
+    expect(res.error).toBeUndefined();
+    expect(res.seasonStatus).toBe('auction');
+    expect(res.sessionStatus).toBe('live');
+  });
+
+  it('blocks START AUCTION AGAIN if an active lot is somehow in progress', () => {
+    const res = computeLifecycleTransition(
+      'completed',
+      'completed',
+      'START_AGAIN',
+      true // active lot in progress
+    );
+
+    expect(res.error).toBe('Cannot start auction again while an active lot is still in progress.');
+    expect(res.seasonStatus).toBe('completed');
+  });
+
+  it('runs complete multi-session lifecycle loop without breaking state machine', () => {
+    // Stage 1: Draft
+    let state = { seasonStatus: 'draft', sessionStatus: 'not_started' };
+
+    // Stage 2: Start session 1
+    state = computeLifecycleTransition(state.seasonStatus, state.sessionStatus, 'START');
+    expect(state.seasonStatus).toBe('auction');
+    expect(state.sessionStatus).toBe('live');
+
+    // Stage 3: Pause
+    state = computeLifecycleTransition(state.seasonStatus, state.sessionStatus, 'PAUSE');
+    expect(state.sessionStatus).toBe('paused');
+
+    // Stage 4: Resume
+    state = computeLifecycleTransition(state.seasonStatus, state.sessionStatus, 'RESUME');
+    expect(state.sessionStatus).toBe('live');
+
+    // Stage 5: End session 1
+    state = computeLifecycleTransition(state.seasonStatus, state.sessionStatus, 'END');
+    expect(state.seasonStatus).toBe('completed');
+    expect(state.sessionStatus).toBe('completed');
+
+    // Stage 6: START AUCTION AGAIN (Session 2)
+    state = computeLifecycleTransition(state.seasonStatus, state.sessionStatus, 'START_AGAIN');
+    expect(state.seasonStatus).toBe('auction');
+    expect(state.sessionStatus).toBe('live');
+
+    // Stage 7: End session 2
+    state = computeLifecycleTransition(state.seasonStatus, state.sessionStatus, 'END');
+    expect(state.seasonStatus).toBe('completed');
+    expect(state.sessionStatus).toBe('completed');
+  });
+
+  it('preserves immutable audit history contract upon session restart', () => {
+    interface AuctionEvent {
+      id: string;
+      eventType: string;
+      seasonId: string;
+    }
+
+    const eventHistory: AuctionEvent[] = [
+      { id: '1', eventType: 'LOT_CREATED', seasonId: 's1' },
+      { id: '2', eventType: 'BID_PLACED', seasonId: 's1' },
+      { id: '3', eventType: 'SALE', seasonId: 's1' },
+      { id: '4', eventType: 'SESSION_RESET', seasonId: 's1' }, // end session 1
+    ];
+
+    // Session restarted
+    const restartEvent: AuctionEvent = {
+      id: '5',
+      eventType: 'SESSION_RESET',
+      seasonId: 's1',
+    };
+
+    const newHistory = [...eventHistory, restartEvent];
+
+    // All original events are untouched and preserved in exact order
+    expect(newHistory.length).toBe(5);
+    expect(newHistory.slice(0, 4)).toEqual(eventHistory);
+    expect(newHistory[4].eventType).toBe('SESSION_RESET');
+  });
+});

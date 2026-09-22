@@ -19,7 +19,7 @@ export interface PlayerRegistrationInput {
   // Overrides for manual adjustment if authorized
   programme?: 'btech_regular' | 'btech_lateral' | 'diploma' | 'pg';
   academic_year?: number;
-  branch?: string;
+  branch?: string | null;
   year_override?: number | null;
   year_override_reason?: string | null;
 }
@@ -78,6 +78,9 @@ export interface AdminCreatePlayerInput {
   roll_number: string;
   mobile: string;
   photo_url?: string | null;
+  programme?: 'btech_regular' | 'btech_lateral' | 'diploma' | 'pg';
+  academic_year?: number;
+  branch?: string | null;
   base_price?: number;
   player_type?: 'batter' | 'bowler' | 'all_rounder' | 'wicket_keeper' | 'wicket_keeper_batter' | 'fielder';
   batting_style?: 'right_hand' | 'left_hand' | null;

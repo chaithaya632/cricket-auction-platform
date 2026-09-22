@@ -69,9 +69,20 @@ export const STATUS_CONFIG: Record<
   PlayerStatus,
   { label: string; variant: "default" | "secondary" | "outline" | "destructive"; className: string }
 > = {
-  REGISTERED: { label: "Registered", variant: "outline", className: "" },
+  REGISTERED: { label: "Registered", variant: "outline", className: "border-muted-foreground/30 text-muted-foreground bg-muted/20" },
+  DRAFT: { label: "Draft", variant: "outline", className: "border-muted-foreground/30 text-muted-foreground bg-muted/20" },
   UNDER_REVIEW: {
     label: "Under Review",
+    variant: "outline",
+    className: "border-warning/40 text-warning bg-warning/10",
+  },
+  PENDING_VERIFICATION: {
+    label: "Under Review",
+    variant: "outline",
+    className: "border-warning/40 text-warning bg-warning/10",
+  },
+  PENDING: {
+    label: "Pending",
     variant: "outline",
     className: "border-warning/40 text-warning bg-warning/10",
   },
@@ -80,8 +91,18 @@ export const STATUS_CONFIG: Record<
     variant: "outline",
     className: "border-accent/40 text-accent bg-accent/10",
   },
+  ELIGIBLE: {
+    label: "Eligible",
+    variant: "outline",
+    className: "border-emerald-500/40 text-emerald-500 bg-emerald-500/10",
+  },
   IN_AUCTION: {
     label: "In Auction",
+    variant: "outline",
+    className: "border-primary/40 text-primary bg-primary/10",
+  },
+  UPCOMING: {
+    label: "In Queue",
     variant: "outline",
     className: "border-primary/40 text-primary bg-primary/10",
   },
@@ -92,6 +113,16 @@ export const STATUS_CONFIG: Record<
   },
   UNSOLD: {
     label: "Unsold",
+    variant: "outline",
+    className: "border-destructive/40 text-destructive bg-destructive/10",
+  },
+  REJECTED: {
+    label: "Rejected",
+    variant: "outline",
+    className: "border-destructive/40 text-destructive bg-destructive/10",
+  },
+  BLOCKED: {
+    label: "Blocked",
     variant: "outline",
     className: "border-destructive/40 text-destructive bg-destructive/10",
   },

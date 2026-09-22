@@ -12,6 +12,8 @@ import {
   getRecentAuctionEvents,
   getSeasonAuctionConfig,
   getAuctionSessionState,
+  getActiveLotScarcity,
+  getAllFranchisesLiveSummary,
 } from '@/lib/auction/queries';
 import { getFranchiseSquadData } from '@/lib/franchises/queries';
 import { ActiveLotCard } from '@/components/auction/active-lot-card';
@@ -20,6 +22,7 @@ import { BiddingControl } from '@/components/auction/bidding-control';
 import { RecentActivityStream } from '@/components/auction/recent-activity-stream';
 import { LiveExitBar } from '@/components/auction/live-exit-bar';
 import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
+import { FranchiseLeaderboardTable } from '@/components/auction/franchise-status-bar';
 
 export default async function LiveAuctionPage() {
   const { appUser } = await getCurrentUser();
@@ -38,6 +41,11 @@ export default async function LiveAuctionPage() {
     getRecentAuctionEvents(supabase, seasonId, 20),
     getSeasonAuctionConfig(supabase, seasonId),
     getAuctionSessionState(supabase, seasonId),
+  ]);
+
+  const [scarcityReport, franchiseSummaries] = await Promise.all([
+    activeLot?.bucket ? getActiveLotScarcity(supabase, seasonId, activeLot.bucket) : null,
+    getAllFranchisesLiveSummary(supabase, seasonId, activeLot),
   ]);
 
   // 2. If user is an authorized franchise rep, load squad and max-bid state
@@ -142,6 +150,17 @@ export default async function LiveAuctionPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Left Column: Active Floor & Bidding */}
         <div className="lg:col-span-8 space-y-6">
+          {scarcityReport?.isWarningActive && (
+            <div className="rounded-2xl border-2 border-amber-500 bg-amber-950/80 px-5 py-3.5 text-center shadow-lg animate-pulse">
+              <p className="text-amber-300 font-bold text-sm">
+                ⚠️ SCARCITY WARNING: Only {scarcityReport.unsoldSupply} player(s) remaining for {scarcityReport.totalPlayersNeeded} needed slots across franchises in Bucket {scarcityReport.bucket}!
+              </p>
+              <p className="text-[11px] text-amber-200/70 mt-0.5">
+                Bidding is not blocked (§12.3). Teams with quotas met may still place bids.
+              </p>
+            </div>
+          )}
+
           <ActiveLotCard lot={activeLot} />
 
           {/* Countdown Clock */}
@@ -178,6 +197,9 @@ export default async function LiveAuctionPage() {
           <RecentActivityStream events={recentEvents} />
         </div>
       </div>
+
+      {/* Franchise Live Leaderboard & Quotas Table (§15) */}
+      <FranchiseLeaderboardTable franchises={franchiseSummaries} />
     </div>
     </div>
   );

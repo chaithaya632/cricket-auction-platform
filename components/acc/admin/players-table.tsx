@@ -1,5 +1,9 @@
 "use client"
 
+// =============================================================================
+// ACC Auction Portal — Admin Players Table with Review & Eligibility Workflow
+// =============================================================================
+
 import { useMemo, useState } from "react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
@@ -25,12 +29,17 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { formatCredits, BUCKET_ORDER, STATUS_CONFIG } from "@/lib/acc/config"
 import { getFranchise } from "@/lib/acc/mock-data"
 import type { Player, PlayerStatus } from "@/lib/acc/types"
-import { Search, Users, Trash2 } from "lucide-react"
+import { Search, Users, Trash2, ShieldCheck, CheckCircle2, AlertTriangle, Eye, ShieldAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { DeletePlayerDialog } from "./delete-player-dialog"
+import { PlayerReviewDialog } from "./player-review-dialog"
 
 function initials(name: string) {
-  return name.split(" ").map((n) => n[0]).slice(0, 2).join("")
+  return name
+    .split(" ")
+    .map((n) => n[0])
+    .slice(0, 2)
+    .join("")
 }
 
 const STATUSES = Object.keys(STATUS_CONFIG) as PlayerStatus[]
@@ -39,22 +48,35 @@ export function PlayersTable({ players }: { players: Player[] }) {
   const [query, setQuery] = useState("")
   const [bucket, setBucket] = useState<string>("all")
   const [status, setStatus] = useState<string>("all")
+  const [paymentFilter, setPaymentFilter] = useState<string>("all")
+  const [eligibilityFilter, setEligibilityFilter] = useState<string>("all")
   const [playerToDelete, setPlayerToDelete] = useState<Player | null>(null)
+  const [playerToReview, setPlayerToReview] = useState<Player | null>(null)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return players.filter((p) => {
       if (bucket !== "all" && p.bucket !== bucket) return false
       if (status !== "all" && p.status !== status) return false
-      if (q && !p.fullName.toLowerCase().includes(q) && !p.rollNumber.toLowerCase().includes(q)) return false
+      if (paymentFilter !== "all" && (p.paymentStatus || "unpaid") !== paymentFilter) return false
+      if (eligibilityFilter === "eligible" && !p.isAuctionEligible) return false
+      if (eligibilityFilter === "ineligible" && p.isAuctionEligible) return false
+      if (
+        q &&
+        !p.fullName.toLowerCase().includes(q) &&
+        !p.rollNumber.toLowerCase().includes(q)
+      ) {
+        return false
+      }
       return true
     })
-  }, [players, query, bucket, status])
+  }, [players, query, bucket, status, paymentFilter, eligibilityFilter])
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="relative flex-1">
+      {/* Search and Filters Bar */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search by name or roll number…"
@@ -63,8 +85,9 @@ export function PlayersTable({ players }: { players: Player[] }) {
             className="pl-9"
           />
         </div>
+
         <Select value={bucket} onValueChange={(val) => setBucket(val ?? "all")}>
-          <SelectTrigger className="w-full sm:w-40">
+          <SelectTrigger className="w-full sm:w-36">
             <SelectValue placeholder="Category" />
           </SelectTrigger>
           <SelectContent>
@@ -76,8 +99,9 @@ export function PlayersTable({ players }: { players: Player[] }) {
             ))}
           </SelectContent>
         </Select>
+
         <Select value={status} onValueChange={(val) => setStatus(val ?? "all")}>
-          <SelectTrigger className="w-full sm:w-44">
+          <SelectTrigger className="w-full sm:w-40">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
@@ -89,75 +113,166 @@ export function PlayersTable({ players }: { players: Player[] }) {
             ))}
           </SelectContent>
         </Select>
+
+        <Select value={paymentFilter} onValueChange={(val) => setPaymentFilter(val ?? "all")}>
+          <SelectTrigger className="w-full sm:w-36">
+            <SelectValue placeholder="Payment" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All payments</SelectItem>
+            <SelectItem value="paid">Paid</SelectItem>
+            <SelectItem value="unpaid">Unpaid</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={eligibilityFilter} onValueChange={(val) => setEligibilityFilter(val ?? "all")}>
+          <SelectTrigger className="w-full sm:w-40">
+            <SelectValue placeholder="Eligibility" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All eligibility</SelectItem>
+            <SelectItem value="eligible">Auction Eligible</SelectItem>
+            <SelectItem value="ineligible">Not Eligible</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
-      <div className="rounded-xl border">
+      {/* Main Players Table */}
+      <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
         <Table>
           <TableHeader>
-            <TableRow>
-              <TableHead>Player</TableHead>
-              <TableHead className="hidden md:table-cell">Program</TableHead>
-              <TableHead>Category</TableHead>
-              <TableHead className="hidden sm:table-cell">Type</TableHead>
-              <TableHead className="text-right">Base</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="hidden lg:table-cell">Franchise</TableHead>
-              <TableHead className="w-12 text-right">Action</TableHead>
+            <TableRow className="bg-muted/40">
+              <TableHead className="min-w-[220px]">Player</TableHead>
+              <TableHead className="hidden md:table-cell">Category / Base</TableHead>
+              <TableHead>Registration</TableHead>
+              <TableHead>Payment</TableHead>
+              <TableHead className="hidden lg:table-cell">CricHeroes</TableHead>
+              <TableHead>Eligibility</TableHead>
+              <TableHead className="text-right">Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filtered.map((p) => {
-              const franchise = getFranchise(p.soldTo)
+              const isPaid = p.paymentStatus === "paid"
+              const isEligible = p.isAuctionEligible ?? false
+              const isBlocked = p.isActive === false
+              const cricheroesStatus = p.cricheroesStatus || "unverified"
+
               return (
-                <TableRow key={p.id}>
+                <TableRow key={p.id} className={isBlocked ? "opacity-60 bg-muted/20" : undefined}>
+                  {/* Player column */}
                   <TableCell>
                     <div className="flex items-center gap-3">
-                      <Avatar className="size-9 rounded-md border">
+                      <Avatar className="size-10 rounded-md border">
                         <AvatarImage src={p.photoUrl || "/placeholder.svg"} alt={p.fullName} />
                         <AvatarFallback className="rounded-md text-xs">{initials(p.fullName)}</AvatarFallback>
                       </Avatar>
-                      <div className="flex flex-col">
-                        <span className="font-medium leading-tight">{p.fullName}</span>
-                        <span className="font-mono text-xs text-muted-foreground">{p.rollNumber}</span>
+                      <div className="flex flex-col min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-sm truncate leading-tight">{p.fullName}</span>
+                          {isBlocked && (
+                            <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-4">
+                              Blocked
+                            </Badge>
+                          )}
+                        </div>
+                        <span className="font-mono text-xs text-muted-foreground mt-0.5">
+                          {p.rollNumber} · {p.program} {p.branch ? `· ${p.branch}` : ""}
+                        </span>
                       </div>
                     </div>
                   </TableCell>
+
+                  {/* Category & Base Price */}
                   <TableCell className="hidden md:table-cell">
-                    <span className="text-sm">{p.program}</span>
-                    <span className="block text-xs text-muted-foreground">{p.branch}</span>
+                    <div className="flex items-center gap-2">
+                      <CategoryBadge bucket={p.bucket} />
+                      <span className="font-mono text-xs font-semibold tabular-nums text-foreground">
+                        {formatCredits(p.status === "SOLD" ? p.soldPrice ?? p.basePrice : p.basePrice)}
+                      </span>
+                    </div>
                   </TableCell>
+
+                  {/* Registration Status */}
                   <TableCell>
-                    <CategoryBadge bucket={p.bucket} />
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">
-                    <span className="text-sm text-muted-foreground">{p.playerType}</span>
-                  </TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">
-                    {formatCredits(p.status === "SOLD" ? p.soldPrice ?? p.basePrice : p.basePrice)}
-                  </TableCell>
-                  <TableCell>
-                    <PlayerStatusBadge status={p.status} />
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell">
-                    {franchise ? (
-                      <Badge variant="outline" style={{ borderColor: `${franchise.colorHex}66` }}>
-                        {franchise.shortCode}
+                    {p.registrationStatus === "pending_profile" ? (
+                      <Badge variant="secondary" className="text-[11px] font-medium">
+                        Profile Pending
                       </Badge>
                     ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
+                      <PlayerStatusBadge status={p.status} />
                     )}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="text-muted-foreground hover:text-destructive"
-                      onClick={() => setPlayerToDelete(p)}
-                      title={`Remove ${p.fullName}`}
+
+                  {/* Payment Status */}
+                  <TableCell>
+                    <Badge
+                      variant={isPaid ? "default" : "outline"}
+                      className={`text-[11px] font-bold ${
+                        isPaid
+                          ? "bg-emerald-600 hover:bg-emerald-600 text-white"
+                          : "border-amber-500/50 text-amber-600 dark:text-amber-400 bg-amber-500/10"
+                      }`}
                     >
-                      <Trash2 className="size-3.5" />
-                      <span className="sr-only">Remove {p.fullName}</span>
-                    </Button>
+                      {isPaid ? "Paid" : "Pending"}
+                    </Badge>
+                  </TableCell>
+
+                  {/* CricHeroes Status */}
+                  <TableCell className="hidden lg:table-cell">
+                    <Badge
+                      variant="outline"
+                      className={`text-[11px] font-medium capitalize ${
+                        cricheroesStatus === "verified"
+                          ? "border-emerald-500/50 text-emerald-600 bg-emerald-500/10"
+                          : cricheroesStatus === "profile_creation_pending"
+                          ? "border-purple-500/50 text-purple-600 bg-purple-500/10"
+                          : "border-muted-foreground/30 text-muted-foreground"
+                      }`}
+                    >
+                      {cricheroesStatus.replace(/_/g, " ")}
+                    </Badge>
+                  </TableCell>
+
+                  {/* Auction Eligibility */}
+                  <TableCell>
+                    {isEligible ? (
+                      <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="size-3.5" />
+                        <span>Eligible</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground">
+                        <AlertTriangle className="size-3.5 text-amber-500" />
+                        <span>Not Eligible</span>
+                      </span>
+                    )}
+                  </TableCell>
+
+                  {/* Action Column: Review + Delete */}
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 px-2.5 text-xs font-semibold gap-1"
+                        onClick={() => setPlayerToReview(p)}
+                      >
+                        <Eye className="size-3.5" />
+                        <span>Review</span>
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="text-muted-foreground hover:text-destructive size-8"
+                        onClick={() => setPlayerToDelete(p)}
+                        title={`Remove ${p.fullName}`}
+                      >
+                        <Trash2 className="size-3.5" />
+                        <span className="sr-only">Remove {p.fullName}</span>
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               )
@@ -172,15 +287,27 @@ export function PlayersTable({ players }: { players: Player[] }) {
                 <Users />
               </EmptyMedia>
               <EmptyTitle>No players found</EmptyTitle>
-              <EmptyDescription>Adjust your filters or search to see more players.</EmptyDescription>
+              <EmptyDescription>
+                {players.length === 0
+                  ? "No tournament participants have registered yet. Use \"Add Player\" above or invite students to register."
+                  : "Adjust your filters or search query to view participants."}
+              </EmptyDescription>
             </EmptyHeader>
           </Empty>
         )}
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        Showing {filtered.length} of {players.length} players
-      </p>
+      <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+        <span>Showing {filtered.length} of {players.length} players</span>
+        <span className="text-[11px]">Click &ldquo;Review&rdquo; on any row to verify payment, credentials, and auction eligibility.</span>
+      </div>
+
+      {/* Dialogs */}
+      <PlayerReviewDialog
+        player={playerToReview}
+        open={!!playerToReview}
+        onOpenChange={(open) => !open && setPlayerToReview(null)}
+      />
 
       <DeletePlayerDialog
         player={playerToDelete}

@@ -47,6 +47,15 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
   const [regRollNumber, setRegRollNumber] = useState(
     initialData.registration ? rollNumber : rollNumber
   );
+  const [programme, setProgramme] = useState<
+    'btech_regular' | 'btech_lateral' | 'diploma' | 'pg'
+  >((initialData.registration?.programme as any) || 'btech_regular');
+  const [academicYear, setAcademicYear] = useState<number>(
+    initialData.registration?.academic_year || 1
+  );
+  const [branch, setBranch] = useState<string>(
+    initialData.registration?.branch || 'CSE'
+  );
   const [basePrice, setBasePrice] = useState<BasePrice>(
     (initialData.registration?.base_price as BasePrice) || 20
   );
@@ -57,31 +66,66 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
     initialData.registration?.cricheroes_registered_mobile || ''
   );
 
+  const derivedBucket = useMemo(() => {
+    return deriveBucket(programme, academicYear);
+  }, [programme, academicYear]);
+
+  const handleRegRollChange = (val: string) => {
+    const upper = val.toUpperCase();
+    setRegRollNumber(upper);
+    const parsed = parseRollNumber(upper);
+    if (parsed.isValid && parsed.programme) {
+      setProgramme(parsed.programme);
+      if (parsed.admissionYear) {
+        setAcademicYear(calculateAcademicYear(parsed.admissionYear, parsed.programme));
+      }
+      if (parsed.branchName) {
+        setBranch(parsed.branchName);
+      }
+    }
+  };
+
   // ---------------------------------------------------------------------------
-  // 3. Skill Profile State
+  // 3. Registration Extras (CricHeroes Pending, Discrepancy, Referral)
+  // ---------------------------------------------------------------------------
+  const [isCricheroesPending, setIsCricheroesPending] = useState(false);
+  const [hasYearDiscrepancy, setHasYearDiscrepancy] = useState(false);
+  const [discrepancyNote, setDiscrepancyNote] = useState('');
+  const [isAccReferred, setIsAccReferred] = useState(false);
+  const [referredFranchise, setReferredFranchise] = useState('');
+
+  // ---------------------------------------------------------------------------
+  // 4. Skill Profile & Branching Questionnaire State (§5.1)
   // ---------------------------------------------------------------------------
   const [isBatter, setIsBatter] = useState(initialData.skillProfile?.is_batter ?? false);
-  const [battingStyle, setBattingStyle] = useState<string>(
-    initialData.skillProfile?.batting_style || 'right_hand'
-  );
-  const [battingOrder, setBattingOrder] = useState<string>(
-    initialData.skillProfile?.batting_order || 'top_order'
-  );
+  const [battingArm, setBattingArm] = useState<'right' | 'left'>('right');
+  const [battingStyleCustom, setBattingStyleCustom] = useState<string>('aggressive');
+  const [battingOrderCustom, setBattingOrderCustom] = useState<string>('top_order');
 
   const [isBowler, setIsBowler] = useState(initialData.skillProfile?.is_bowler ?? false);
-  const [bowlingStyle, setBowlingStyle] = useState<string>(
-    initialData.skillProfile?.bowling_style || 'right_arm_medium'
-  );
+  const [bowlingArm, setBowlingArm] = useState<'right' | 'left'>('right');
+  const [bowlingType, setBowlingType] = useState<'fast' | 'spin'>('fast');
+  const [paceVariety, setPaceVariety] = useState<string>('seam');
+  const [spinVariety, setSpinVariety] = useState<string>('off_spin');
+  const [bowlingRoles, setBowlingRoles] = useState<string[]>(['Economical bowler']);
 
   const [isWicketKeeper, setIsWicketKeeper] = useState(
     initialData.skillProfile?.is_wicket_keeper ?? false
   );
+  const [fieldingZone, setFieldingZone] = useState<'infield' | 'outfield'>('infield');
+  const [preferredFieldingPosition, setPreferredFieldingPosition] = useState<string>('Cover');
+
+  const [highestLevelPlayed, setHighestLevelPlayed] = useState<string>('inter_college');
+  const [playedPreviousAcc, setPlayedPreviousAcc] = useState<boolean>(false);
+  const [previousAccTeam, setPreviousAccTeam] = useState<string>('');
+
   const [isFielderOnly, setIsFielderOnly] = useState(
     initialData.skillProfile?.is_fielder_only ?? false
   );
-  const [fieldingPosition, setFieldingPosition] = useState(
-    initialData.skillProfile?.fielding_position || ''
+  const [confirmedFielderOnly, setConfirmedFielderOnly] = useState(
+    initialData.skillProfile?.is_fielder_only ?? false
   );
+
   const [experienceYears, setExperienceYears] = useState<number | ''>(
     initialData.skillProfile?.experience_years ?? ''
   );
@@ -152,6 +196,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
     startTransition(async () => {
       const res = await registerPlayerSeasonAction({
         roll_number: regRollNumber || rollNumber,
+        programme,
+        academic_year: academicYear,
+        branch: branch.trim() || null,
         base_price: basePrice,
         cricheroes_url: cricheroesUrl,
         cricheroes_registered_mobile: cricheroesMobile,
@@ -179,11 +226,20 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
       return;
     }
 
+    const effectiveFielderOnly = !isBatter && !isBowler && !isWicketKeeper;
+    if (effectiveFielderOnly && !confirmedFielderOnly) {
+      setMessage({
+        type: 'error',
+        text: 'You have not selected batting, bowling, or wicket-keeping. Please confirm registration as a Fielder only before saving (§5.1).',
+      });
+      return;
+    }
+
     const validation = validateSkills({
       is_batter: isBatter,
       is_bowler: isBowler,
       is_wicket_keeper: isWicketKeeper,
-      is_fielder_only: isFielderOnly,
+      is_fielder_only: effectiveFielderOnly,
     });
 
     if (!validation.isValid) {
@@ -191,18 +247,56 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
       return;
     }
 
+    const structuredProfile = {
+      batting: isBatter ? {
+        arm: battingArm,
+        style: battingStyleCustom,
+        position: battingOrderCustom,
+      } : null,
+      bowling: isBowler ? {
+        arm: bowlingArm,
+        type: bowlingType,
+        paceVariety: bowlingType === 'fast' ? paceVariety : null,
+        spinVariety: bowlingType === 'spin' ? spinVariety : null,
+        roles: bowlingRoles,
+      } : null,
+      fielding: !isWicketKeeper ? {
+        zone: fieldingZone,
+        position: preferredFieldingPosition,
+      } : { zone: 'wicket_keeper', position: 'Wicket-Keeper' },
+      experience: {
+        highestLevel: highestLevelPlayed,
+        playedPreviousAcc,
+        previousAccTeam: playedPreviousAcc ? previousAccTeam : null,
+        notes: experienceDesc,
+      },
+      referral: isAccReferred ? {
+        referredByFranchise: referredFranchise,
+      } : null,
+      discrepancy: hasYearDiscrepancy ? discrepancyNote : null,
+      cricHeroesPending: isCricheroesPending,
+    };
+
+    const mappedBattingStyle = isBatter ? (battingArm === 'left' ? 'left_hand' : 'right_hand') : null;
+    const mappedBattingOrder = isBatter ? (battingOrderCustom === 'finisher' ? 'lower_order' : (battingOrderCustom as any)) : null;
+    const mappedBowlingStyle = isBowler
+      ? (bowlingArm === 'left'
+          ? (bowlingType === 'fast' ? 'left_arm_fast' : 'left_arm_orthodox')
+          : (bowlingType === 'fast' ? 'right_arm_medium' : 'right_arm_off_spin'))
+      : null;
+
     startTransition(async () => {
       const res = await savePlayerSkillProfileAction(initialData.registration!.id, {
         is_batter: isBatter,
-        batting_style: isBatter ? (battingStyle as any) : null,
-        batting_order: isBatter ? (battingOrder as any) : null,
+        batting_style: mappedBattingStyle,
+        batting_order: mappedBattingOrder,
         is_bowler: isBowler,
-        bowling_style: isBowler ? (bowlingStyle as any) : null,
+        bowling_style: mappedBowlingStyle,
         is_wicket_keeper: isWicketKeeper,
-        is_fielder_only: isFielderOnly,
-        fielding_position: fieldingPosition,
+        is_fielder_only: effectiveFielderOnly,
+        fielding_position: !isWicketKeeper ? preferredFieldingPosition : 'Wicket-Keeper',
         experience_years: typeof experienceYears === 'number' ? experienceYears : null,
-        experience_description: experienceDesc,
+        experience_description: JSON.stringify(structuredProfile),
       });
 
       if (!res.success) {
@@ -405,34 +499,74 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
             )}
           </div>
 
-          {/* Academic Derivation Banner */}
-          {rollPreview && (
-            <div className="mb-6 rounded-md bg-gray-50 dark:bg-gray-800/60 p-4 border text-xs">
-              <p className="font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Automated Academic Classification:
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <div>
-                  <span className="text-gray-500">Programme:</span>
-                  <p className="font-bold">{rollPreview.programme.replace('_', ' ').toUpperCase()}</p>
-                </div>
-                <div>
-                  <span className="text-gray-500">Branch:</span>
-                  <p className="font-bold">{rollPreview.branch || 'General'}</p>
-                </div>
-                <div>
-                  <span className="text-gray-500">Academic Year:</span>
-                  <p className="font-bold">Year {rollPreview.academicYear}</p>
-                </div>
-                <div>
-                  <span className="text-gray-500">Assigned Bucket:</span>
-                  <p className="font-bold text-emerald-600 dark:text-emerald-400">
-                    {rollPreview.bucket}
-                  </p>
-                </div>
+          {/* Academic Derivation Banner & Controls */}
+          <div className="mb-6 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold text-gray-800 dark:text-gray-200 text-xs">
+                  Academic Classification & Auction Bucket
+                </p>
+                <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                  Your tournament auction tier is derived strictly from your course and academic year.
+                </p>
+              </div>
+              <span className="rounded-full bg-emerald-600 text-white font-black text-xs px-3 py-1 shadow-sm">
+                Bucket {derivedBucket}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+              <div>
+                <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                  Course / Programme *
+                </label>
+                <select
+                  disabled={Boolean(initialData.registration)}
+                  value={programme}
+                  onChange={(e) => setProgramme(e.target.value as any)}
+                  className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700"
+                >
+                  <option value="btech_regular">B.Tech (Regular)</option>
+                  <option value="btech_lateral">B.Tech (Lateral Entry)</option>
+                  <option value="diploma">Diploma</option>
+                  <option value="pg">Post Graduate (PG)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                  Academic Year *
+                </label>
+                <select
+                  disabled={Boolean(initialData.registration)}
+                  value={academicYear}
+                  onChange={(e) => setAcademicYear(Number(e.target.value))}
+                  className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700"
+                >
+                  <option value={1}>1st Year</option>
+                  <option value={2}>2nd Year</option>
+                  <option value={3}>3rd Year</option>
+                  <option value={4}>4th Year</option>
+                  <option value={5}>5th Year</option>
+                  <option value={6}>6th Year</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                  Branch / Group
+                </label>
+                <input
+                  type="text"
+                  disabled={Boolean(initialData.registration)}
+                  value={branch}
+                  onChange={(e) => setBranch(e.target.value.toUpperCase())}
+                  placeholder="e.g. CSE"
+                  className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm uppercase bg-white dark:bg-gray-800 dark:border-gray-700"
+                />
               </div>
             </div>
-          )}
+          </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -445,8 +579,8 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 required
                 disabled={Boolean(initialData.registration)}
                 value={regRollNumber}
-                onChange={(e) => setRegRollNumber(e.target.value.toUpperCase())}
-                placeholder="e.g. 23811A0501"
+                onChange={(e) => handleRegRollChange(e.target.value)}
+                placeholder="e.g. 24811A05F2, 23811A0501, or custom"
                 className="w-full rounded-md border px-3 py-2 text-sm shadow-sm uppercase disabled:bg-gray-100 dark:disabled:bg-gray-800 dark:bg-gray-800 dark:border-gray-700"
               />
             </div>
@@ -499,6 +633,99 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 placeholder="10-digit mobile registered in CricHeroes"
                 className="w-full rounded-md border px-3 py-2 text-sm shadow-sm disabled:bg-gray-100 dark:disabled:bg-gray-800 dark:bg-gray-800 dark:border-gray-700"
               />
+            </div>
+
+            {/* CricHeroes Pending Flow (§5.2) */}
+            <div className="sm:col-span-2 p-3 rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
+              <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                <input
+                  type="checkbox"
+                  disabled={Boolean(initialData.registration)}
+                  checked={isCricheroesPending}
+                  onChange={(e) => setIsCricheroesPending(e.target.checked)}
+                  className="rounded text-amber-600 h-4 w-4"
+                />
+                My CricHeroes profile is not created yet (Profile Creation Pending)
+              </label>
+              {isCricheroesPending && (
+                <div className="mt-2 text-xs text-amber-800 dark:text-amber-300 space-y-1 pl-6">
+                  <p className="font-semibold">How to create your CricHeroes profile (§5.2):</p>
+                  <ol className="list-decimal pl-4 space-y-0.5 text-[11px]">
+                    <li>Download the <strong>CricHeroes</strong> app from Google Play Store or Apple App Store.</li>
+                    <li>Sign up with your phone number and create your player profile.</li>
+                    <li>You can register now; update your profile link before Super Admin auction verification.</li>
+                  </ol>
+                </div>
+              )}
+            </div>
+
+            {/* Detained Student / Discrepancy Flag (§4.1) */}
+            <div className="sm:col-span-2 p-3 rounded-md bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800">
+              <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                <input
+                  type="checkbox"
+                  disabled={Boolean(initialData.registration)}
+                  checked={hasYearDiscrepancy}
+                  onChange={(e) => setHasYearDiscrepancy(e.target.checked)}
+                  className="rounded text-blue-600 h-4 w-4"
+                />
+                My current study year is different from my roll number (e.g. detained or re-admitted student)
+              </label>
+              {hasYearDiscrepancy && (
+                <div className="mt-2 pl-6 space-y-2">
+                  <p className="text-[11px] text-blue-800 dark:text-blue-300">
+                    Students with academic discrepancies are not blocked from registering (§4.1). Select your actual current year in the dropdown above, and provide a note below. Super Admin will verify and apply the official academic year override.
+                  </p>
+                  <input
+                    type="text"
+                    disabled={Boolean(initialData.registration)}
+                    value={discrepancyNote}
+                    onChange={(e) => setDiscrepancyNote(e.target.value)}
+                    placeholder="Reason for discrepancy (e.g. Year-back in 2024, re-admitted to 2nd year)"
+                    className="w-full rounded border px-2 py-1 text-xs bg-white dark:bg-gray-800 dark:border-gray-700"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* ACC Reference Program (§5.2, §6, Case 24) */}
+            <div className="sm:col-span-2 p-3 rounded-md bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800">
+              <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                <input
+                  type="checkbox"
+                  disabled={Boolean(initialData.registration)}
+                  checked={isAccReferred}
+                  onChange={(e) => setIsAccReferred(e.target.checked)}
+                  className="rounded text-purple-600 h-4 w-4"
+                />
+                Did you join Avanthi through the ACC Reference Program? (§5.2, Case 24)
+              </label>
+              {isAccReferred && (
+                <div className="mt-2 pl-6 space-y-2">
+                  <label className="block text-[11px] font-semibold text-purple-900 dark:text-purple-300">
+                    Select Referring Franchise:
+                  </label>
+                  <select
+                    disabled={Boolean(initialData.registration)}
+                    value={referredFranchise}
+                    onChange={(e) => setReferredFranchise(e.target.value)}
+                    className="w-full rounded-md border px-2.5 py-1.5 text-xs bg-white dark:bg-gray-800 dark:border-gray-700"
+                  >
+                    <option value="">-- Choose Referring Team --</option>
+                    <option value="Titans">Titans</option>
+                    <option value="Dominators">Dominators</option>
+                    <option value="Super Kings">Super Kings</option>
+                    <option value="Challengers">Challengers</option>
+                    <option value="Warriors">Warriors</option>
+                    <option value="Royal Challengers">Royal Challengers</option>
+                    <option value="Strikers">Strikers</option>
+                    <option value="Daredevils">Daredevils</option>
+                    <option value="Rising Stars">Rising Stars</option>
+                    <option value="Blasters">Blasters</option>
+                    <option value="Champions">Champions</option>
+                  </select>
+                </div>
+              )}
             </div>
           </div>
 
@@ -589,114 +816,303 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
             </label>
           </div>
 
-          {/* Conditional Detail Fields */}
-          <div className="space-y-4">
+          {/* Conditional Detail Fields (§5.1 Branching Questionnaire) */}
+          <div className="space-y-5">
+            {/* 1. BATTING BRANCH */}
             {isBatter && (
-              <div className="grid gap-4 sm:grid-cols-2 p-4 rounded-md border border-emerald-100 bg-emerald-50/20 dark:border-emerald-900/40 dark:bg-emerald-950/20">
-                <div>
-                  <label htmlFor="batting_style" className="block text-xs font-semibold mb-1">
-                    Batting Style
-                  </label>
-                  <select
-                    id="batting_style"
-                    value={battingStyle}
-                    onChange={(e) => setBattingStyle(e.target.value)}
-                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
-                  >
-                    <option value="right_hand">Right Hand Bat</option>
-                    <option value="left_hand">Left Hand Bat</option>
-                  </select>
-                </div>
+              <div className="p-4 rounded-lg border border-emerald-200 bg-emerald-50/30 dark:border-emerald-900/50 dark:bg-emerald-950/20 space-y-4">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                  Batting Profile (§5.1)
+                </h3>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Batting Arm *</label>
+                    <select
+                      value={battingArm}
+                      onChange={(e) => setBattingArm(e.target.value as any)}
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                    >
+                      <option value="right">Right-hand bat</option>
+                      <option value="left">Left-hand bat</option>
+                    </select>
+                  </div>
 
-                <div>
-                  <label htmlFor="batting_order" className="block text-xs font-semibold mb-1">
-                    Preferred Batting Order
-                  </label>
-                  <select
-                    id="batting_order"
-                    value={battingOrder}
-                    onChange={(e) => setBattingOrder(e.target.value)}
-                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
-                  >
-                    <option value="opener">Opener</option>
-                    <option value="top_order">Top Order (3-4)</option>
-                    <option value="middle_order">Middle Order (5-6)</option>
-                    <option value="lower_order">Lower Order (7+)</option>
-                  </select>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Batting Style *</label>
+                    <select
+                      value={battingStyleCustom}
+                      onChange={(e) => setBattingStyleCustom(e.target.value)}
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                    >
+                      <option value="strike_rotator">Strike Rotator</option>
+                      <option value="aggressive">Aggressive Batter</option>
+                      <option value="big_hitter">Big Hitter</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Preferred Position *</label>
+                    <select
+                      value={battingOrderCustom}
+                      onChange={(e) => setBattingOrderCustom(e.target.value)}
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                    >
+                      <option value="opener">Opener</option>
+                      <option value="top_order">Top Order (3-4)</option>
+                      <option value="middle_order">Middle Order (5-6)</option>
+                      <option value="finisher">Finisher</option>
+                    </select>
+                  </div>
                 </div>
               </div>
             )}
 
+            {/* 2. BOWLING BRANCH */}
             {isBowler && (
-              <div className="p-4 rounded-md border border-emerald-100 bg-emerald-50/20 dark:border-emerald-900/40 dark:bg-emerald-950/20">
-                <label htmlFor="bowling_style" className="block text-xs font-semibold mb-1">
-                  Bowling Style
-                </label>
-                <select
-                  id="bowling_style"
-                  value={bowlingStyle}
-                  onChange={(e) => setBowlingStyle(e.target.value)}
-                  className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
-                >
-                  <option value="right_arm_fast">Right Arm Fast</option>
-                  <option value="right_arm_medium">Right Arm Medium</option>
-                  <option value="left_arm_fast">Left Arm Fast</option>
-                  <option value="left_arm_medium">Left Arm Medium</option>
-                  <option value="right_arm_off_spin">Right Arm Off Spin</option>
-                  <option value="right_arm_leg_spin">Right Arm Leg Spin</option>
-                  <option value="left_arm_orthodox">Left Arm Orthodox</option>
-                  <option value="left_arm_chinaman">Left Arm Chinaman</option>
-                </select>
+              <div className="p-4 rounded-lg border border-blue-200 bg-blue-50/30 dark:border-blue-900/50 dark:bg-blue-950/20 space-y-4">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-blue-800 dark:text-blue-300">
+                  Bowling Profile (§5.1)
+                </h3>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Bowling Arm *</label>
+                    <select
+                      value={bowlingArm}
+                      onChange={(e) => setBowlingArm(e.target.value as any)}
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                    >
+                      <option value="right">Right-arm</option>
+                      <option value="left">Left-arm</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Bowling Type *</label>
+                    <select
+                      value={bowlingType}
+                      onChange={(e) => setBowlingType(e.target.value as any)}
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                    >
+                      <option value="fast">Fast / Medium-Pace</option>
+                      <option value="spin">Spin</option>
+                    </select>
+                  </div>
+
+                  {bowlingType === 'fast' ? (
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">Pace Variety *</label>
+                      <select
+                        value={paceVariety}
+                        onChange={(e) => setPaceVariety(e.target.value)}
+                        className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                      >
+                        <option value="swing">Swing Bowler</option>
+                        <option value="seam">Seam Bowler</option>
+                        <option value="express_pace">Express Pace</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">Spin Variety *</label>
+                      <select
+                        value={spinVariety}
+                        onChange={(e) => setSpinVariety(e.target.value)}
+                        className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                      >
+                        <option value="off_spin">Off-Spin</option>
+                        <option value="leg_spin">Leg-Spin</option>
+                        <option value="left_arm_orthodox">Left-Arm Orthodox</option>
+                        <option value="left_arm_wrist_spin">Left-Arm Wrist-Spin / Chinaman</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {/* Bowling Roles Multi-select */}
+                <div>
+                  <label className="block text-xs font-semibold mb-2">Bowling Roles (Multi-select) *</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      'Powerplay specialist',
+                      'Economical bowler',
+                      'Death-over specialist',
+                      'Wicket-taking bowler',
+                    ].map((role) => (
+                      <label key={role} className="flex items-center gap-2 text-xs cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={bowlingRoles.includes(role)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setBowlingRoles([...bowlingRoles, role]);
+                            } else {
+                              setBowlingRoles(bowlingRoles.filter((r) => r !== role));
+                            }
+                          }}
+                          className="rounded text-blue-600 h-3.5 w-3.5"
+                        />
+                        {role}
+                      </label>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label htmlFor="fielding_pos" className="block text-xs font-semibold mb-1">
-                  Preferred Fielding Position
-                </label>
-                <input
-                  id="fielding_pos"
-                  type="text"
-                  value={fieldingPosition}
-                  onChange={(e) => setFieldingPosition(e.target.value)}
-                  placeholder="e.g. Slips, Cover, Long-on"
-                  className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
-                />
+            {/* 3. FIELDING BRANCH */}
+            {!isWicketKeeper ? (
+              <div className="p-4 rounded-lg border border-purple-200 bg-purple-50/30 dark:border-purple-900/50 dark:bg-purple-950/20 space-y-4">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-purple-800 dark:text-purple-300">
+                  Fielding Preferences (§5.1)
+                </h3>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Fielding Zone *</label>
+                    <select
+                      value={fieldingZone}
+                      onChange={(e) => setFieldingZone(e.target.value as any)}
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                    >
+                      <option value="infield">Infield</option>
+                      <option value="outfield">Outfield</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Preferred Position *</label>
+                    <select
+                      value={preferredFieldingPosition}
+                      onChange={(e) => setPreferredFieldingPosition(e.target.value)}
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                    >
+                      {[
+                        'Slip',
+                        'Point',
+                        'Cover',
+                        'Mid-off',
+                        'Mid-on',
+                        'Mid-wicket',
+                        'Square leg',
+                        'Fine leg',
+                        'Third man',
+                        'Long-on',
+                        'Long-off',
+                        'Deep mid-wicket',
+                      ].map((pos) => (
+                        <option key={pos} value={pos}>
+                          {pos}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
+                <strong>Primary Keeper:</strong> Your designated fielding assignment is behind the stumps as Wicket-Keeper.
+              </div>
+            )}
+
+            {/* 4. EXPERIENCE & CAREER HIGHLIGHTS */}
+            <div className="p-4 rounded-lg border bg-gray-50/50 dark:bg-gray-800/30 space-y-4">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300">
+                Playing Experience &amp; Highlights (§5.1)
+              </h3>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Highest Level Played *</label>
+                  <select
+                    value={highestLevelPlayed}
+                    onChange={(e) => setHighestLevelPlayed(e.target.value)}
+                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                  >
+                    <option value="district_above">District or above</option>
+                    <option value="inter_college">Inter-college</option>
+                    <option value="school_intra">School or intra-college</option>
+                    <option value="recreational">Recreational</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Experience (Years)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="30"
+                    value={experienceYears}
+                    onChange={(e) =>
+                      setExperienceYears(e.target.value === '' ? '' : Number(e.target.value))
+                    }
+                    placeholder="e.g. 3"
+                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Played Previous ACC Edition?</label>
+                  <select
+                    value={playedPreviousAcc ? 'yes' : 'no'}
+                    onChange={(e) => setPlayedPreviousAcc(e.target.value === 'yes')}
+                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                  >
+                    <option value="no">No</option>
+                    <option value="yes">Yes</option>
+                  </select>
+                </div>
               </div>
 
+              {playedPreviousAcc && (
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Previous ACC Team Name</label>
+                  <input
+                    type="text"
+                    value={previousAccTeam}
+                    onChange={(e) => setPreviousAccTeam(e.target.value)}
+                    placeholder="e.g. Titans, Dominators"
+                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                  />
+                </div>
+              )}
+
               <div>
-                <label htmlFor="exp_years" className="block text-xs font-semibold mb-1">
-                  Cricket Experience (Years)
+                <label className="block text-xs font-semibold mb-1">
+                  Additional Notes / Highlights (Optional)
                 </label>
-                <input
-                  id="exp_years"
-                  type="number"
-                  min="0"
-                  max="30"
-                  value={experienceYears}
-                  onChange={(e) =>
-                    setExperienceYears(e.target.value === '' ? '' : Number(e.target.value))
-                  }
-                  placeholder="e.g. 3"
+                <textarea
+                  rows={2}
+                  value={experienceDesc}
+                  onChange={(e) => setExperienceDesc(e.target.value)}
+                  placeholder="Mention awards, CricHeroes records, or match-winning performances..."
                   className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
                 />
               </div>
             </div>
 
-            <div>
-              <label htmlFor="exp_desc" className="block text-xs font-semibold mb-1">
-                Cricket Background / Highlights (Optional)
-              </label>
-              <textarea
-                id="exp_desc"
-                rows={3}
-                value={experienceDesc}
-                onChange={(e) => setExperienceDesc(e.target.value)}
-                placeholder="Mention tournaments played, awards, CricHeroes milestones, or club achievements..."
-                className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
-              />
-            </div>
+            {/* 5. FIELDER-ONLY CONFIRMATION (§5.1) */}
+            {!isBatter && !isBowler && !isWicketKeeper && (
+              <div className="p-4 rounded-lg border-2 border-amber-500 bg-amber-50 dark:bg-amber-950/30 space-y-2">
+                <div className="flex items-start gap-2">
+                  <span className="text-amber-600 font-bold text-base">⚠️</span>
+                  <div>
+                    <h4 className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                      Fielder-Only Classification (§5.1)
+                    </h4>
+                    <p className="text-xs text-amber-800 dark:text-amber-300 mt-0.5">
+                      You have selected &quot;No&quot; for batting, bowling, and wicket-keeping. Under tournament rules, you will be auctioned strictly as a <strong>Fielder only</strong>.
+                    </p>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-xs font-bold text-amber-950 dark:text-amber-100 cursor-pointer pt-2 pl-6">
+                  <input
+                    type="checkbox"
+                    checked={confirmedFielderOnly}
+                    onChange={(e) => setConfirmedFielderOnly(e.target.checked)}
+                    className="rounded text-amber-600 h-4 w-4"
+                  />
+                  I explicitly confirm my registration as a Fielder only.
+                </label>
+              </div>
+            )}
           </div>
 
           <div className="mt-6 flex justify-end">

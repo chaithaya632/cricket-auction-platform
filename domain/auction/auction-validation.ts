@@ -19,6 +19,7 @@ import {
   type BidIncrementRule,
   type BidValidationResult,
 } from './bid-increment';
+import { validateBucketEligibility } from './bucket-eligibility';
 
 export interface LotForBidValidation {
   id: string;
@@ -120,6 +121,30 @@ export function validateBidEligibility(
       maxPermissibleBid: maxBidDetails.maxBid,
       maxBidDetails,
       reason: `Bid of ₹${proposedBid} exceeds your maximum permissible bid of ₹${maxBidDetails.maxBid}. ₹${maxBidDetails.reservedPurse} must be reserved for remaining mandatory squad acquisitions.`,
+    };
+  }
+
+  // 6. Mandatory Bucket Eligibility Check (§12.2, Appendix A Cases 7-10)
+  const remainingSlots = (franchise.minAuctionPurchases ?? 15) - franchise.auctionPurchasesSoFar;
+  const bucketEligibility = validateBucketEligibility({
+    remainingSlots,
+    unfilledMandatoryDeficits: franchise.mandatoryBucketDeficits.map((d) => ({
+      bucket: d.bucket,
+      remainingNeeded: Math.max(0, d.minRequired - d.acquiredCount),
+    })),
+    targetBucket: lot.bucket,
+    remainingPurse: franchise.remainingPurse,
+    proposedBid,
+    minBasePrice: franchise.minBasePrice ?? 20,
+  });
+
+  if (!bucketEligibility.isEligible) {
+    return {
+      eligible: false,
+      expectedBid: incrementCheck.expectedBid,
+      maxPermissibleBid: maxBidDetails.maxBid,
+      maxBidDetails,
+      reason: bucketEligibility.reason || 'Bid rejected: would strand mandatory bucket requirements (§12.2).',
     };
   }
 

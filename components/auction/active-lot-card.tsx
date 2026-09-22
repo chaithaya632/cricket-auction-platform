@@ -93,10 +93,46 @@ export function ActiveLotCard({ lot, size = 'normal' }: ActiveLotCardProps) {
             {lot.player.full_name}
           </h2>
 
+          <div className="flex flex-wrap items-center justify-center gap-1.5 mt-2">
+            {lot.skills?.derived_player_type && (
+              <span className="rounded-full bg-blue-500/20 px-3 py-0.5 text-xs font-black uppercase tracking-wider text-blue-300 border border-blue-500/40">
+                {lot.skills.derived_player_type.replace(/_/g, ' ')}
+              </span>
+            )}
+            {lot.skills?.is_wicket_keeper && (
+              <span className="rounded-full bg-purple-500/20 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-purple-300 border border-purple-500/30">
+                WK
+              </span>
+            )}
+            {lot.skills?.experience_years ? (
+              <span className="rounded-full bg-zinc-800 px-2.5 py-0.5 text-[11px] text-zinc-400">
+                {lot.skills.experience_years} yrs exp
+              </span>
+            ) : null}
+          </div>
+
           <p className="text-xs text-zinc-400 mt-1">
             {lot.registration.branch ? `${lot.registration.branch} • ` : ''}
             Year {lot.registration.academic_year} ({lot.registration.programme.toUpperCase()})
           </p>
+
+          {(lot.skills?.batting_style || lot.skills?.bowling_style) && (
+            <div className="mt-2 text-[11px] text-zinc-400 space-y-0.5">
+              {lot.skills.batting_style && (
+                <div>
+                  🏏 <span className="capitalize">{lot.skills.batting_style.replace(/_/g, ' ')}</span>
+                  {lot.skills.batting_order && (
+                    <span className="text-zinc-500"> ({lot.skills.batting_order.replace(/_/g, ' ')})</span>
+                  )}
+                </div>
+              )}
+              {lot.skills.bowling_style && (
+                <div>
+                  🎯 <span className="capitalize">{lot.skills.bowling_style.replace(/_/g, ' ')}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {lot.registration.cricheroes_profile_url && (
             <a
@@ -111,7 +147,7 @@ export function ActiveLotCard({ lot, size = 'normal' }: ActiveLotCardProps) {
         </div>
 
         {/* Pricing & Highest Bidder Column */}
-        <div className="md:col-span-8 flex flex-col justify-center space-y-6">
+        <div className="md:col-span-8 flex flex-col justify-center space-y-4">
           {/* Current Price Display */}
           <div className="rounded-xl bg-zinc-950/80 border border-zinc-800/80 p-5">
             <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
@@ -160,6 +196,45 @@ export function ActiveLotCard({ lot, size = 'normal' }: ActiveLotCardProps) {
               </div>
             )}
           </div>
+
+          {/* Self-Declared Career Stats / Questionnaire Summary (§14) */}
+          {lot.skills?.parsed_stats && (
+            <div className="rounded-xl bg-zinc-950/90 border border-zinc-800/80 p-4 space-y-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 block">
+                Player Profile Details (§14)
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                {lot.skills.parsed_stats.bowlingRoles && Array.isArray(lot.skills.parsed_stats.bowlingRoles) && (
+                  <div className="col-span-2 sm:col-span-4 rounded bg-zinc-900/80 p-2 text-xs text-left">
+                    <span className="text-zinc-500 block text-[10px] uppercase font-bold">Specialist Roles</span>
+                    <span className="text-zinc-300">{lot.skills.parsed_stats.bowlingRoles.join(' • ')}</span>
+                  </div>
+                )}
+                {lot.skills.parsed_stats.fieldingZone && (
+                  <div className="rounded bg-zinc-900/80 p-2 text-xs">
+                    <span className="text-zinc-500 block text-[10px] uppercase font-bold">Zone</span>
+                    <span className="text-zinc-200 capitalize font-mono">{lot.skills.parsed_stats.fieldingZone}</span>
+                  </div>
+                )}
+                {lot.skills.parsed_stats.highestLevelPlayed && (
+                  <div className="rounded bg-zinc-900/80 p-2 text-xs">
+                    <span className="text-zinc-500 block text-[10px] uppercase font-bold">Level</span>
+                    <span className="text-zinc-200 capitalize font-mono">
+                      {lot.skills.parsed_stats.highestLevelPlayed.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                )}
+                {lot.skills.parsed_stats.playedPreviousAcc && (
+                  <div className="rounded bg-zinc-900/80 p-2 text-xs">
+                    <span className="text-zinc-500 block text-[10px] uppercase font-bold">ACC Veteran</span>
+                    <span className="text-amber-400 font-bold">
+                      {lot.skills.parsed_stats.previousAccTeam || 'Yes'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

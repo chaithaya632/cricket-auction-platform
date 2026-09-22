@@ -397,10 +397,7 @@ export async function getAdminFranchisesList(
       };
     });
 
-    const dbCodes = new Set(parsed.map((f) => f.shortCode.toLowerCase()));
-    const remainingMocks = FRANCHISES.filter((f) => !dbCodes.has(f.shortCode.toLowerCase()));
-
-    return [...parsed, ...remainingMocks];
+    return parsed;
   } catch {
     return FRANCHISES;
   }

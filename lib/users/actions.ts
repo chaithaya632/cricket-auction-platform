@@ -19,10 +19,7 @@ export async function adminAssignRoleAction(
   try {
     const adminContext = await requireAdmin();
     const activeSeason = adminContext.activeSeason;
-
-    if (!activeSeason) {
-      return { success: false, error: 'No active season found for role assignment.' };
-    }
+    const targetSeasonId = activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 
     if (!input.userId) {
       return { success: false, error: 'User ID is required.' };
@@ -31,6 +28,10 @@ export async function adminAssignRoleAction(
     const permittedRoles = ['super_admin', 'operator', 'franchise', 'player', 'viewer'] as const;
     if (!permittedRoles.includes(input.role as any)) {
       return { success: false, error: `Invalid role: ${input.role}` };
+    }
+
+    if ((input.role === 'super_admin' || input.role === 'operator') && !adminContext.isSuperAdmin) {
+      return { success: false, error: 'Unauthorized: Only Super Admin can assign administrative roles.' };
     }
 
     if (input.role === 'franchise' && !input.franchiseId) {
@@ -68,13 +69,18 @@ export async function adminAssignRoleAction(
       return { success: false, error: 'Target user record not found.' };
     }
 
-    // 2. If franchise role, verify franchise exists in active season
+    // 2. If franchise role, verify franchise exists and is active (decoupled from season status)
     if (input.role === 'franchise' && input.franchiseId) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.franchiseId);
+      if (!isUuid) {
+        return { success: false, error: 'Selected franchise was not found. Invalid franchise identifier.' };
+      }
+
       const { data: franchiseRecord, error: franchiseErr } = await adminClient
         .from('franchises')
-        .select('id, name')
+        .select('id, name, season_id, is_active')
         .eq('id', input.franchiseId)
-        .eq('season_id', activeSeason.id)
+        .eq('is_active', true)
         .maybeSingle();
 
       if (franchiseErr || !franchiseRecord) {
@@ -87,14 +93,14 @@ export async function adminAssignRoleAction(
       .from('season_roles')
       .delete()
       .eq('user_id', input.userId)
-      .eq('season_id', activeSeason.id);
+      .eq('season_id', targetSeasonId);
 
     // 4. Insert new season_roles record
     const { error: insertErr } = await adminClient
       .from('season_roles')
       .insert({
         user_id: input.userId,
-        season_id: activeSeason.id,
+        season_id: targetSeasonId,
         role: input.role,
         franchise_id: input.role === 'franchise' ? input.franchiseId : null,
         is_active: true,

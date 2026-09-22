@@ -48,7 +48,19 @@ export default async function PlayerProfilePage() {
   const rollNumber = fullData.player?.roll_number || 'Pending Registration';
   const photoUrl = fullData.player?.photo_url || permContext.user.avatar_url || null;
   const bucket = (fullData.registration?.bucket || fallback.bucket) as Bucket;
-  const status = (fullData.registration?.registration_status?.toUpperCase() || fallback.status) as PlayerStatus;
+  const regStatus = fullData.registration?.registration_status;
+  let status: PlayerStatus = 'UNDER_REVIEW';
+  if (fullData.registration?.is_auction_eligible || regStatus === 'eligible') {
+    status = 'APPROVED';
+  } else if (regStatus === 'pending_verification' || regStatus === 'pending_payment') {
+    status = 'UNDER_REVIEW';
+  } else if (regStatus === 'draft') {
+    status = 'REGISTERED';
+  } else if (regStatus === 'ineligible') {
+    status = 'REJECTED';
+  } else if (fallback?.status) {
+    status = fallback.status;
+  }
   const playerType = (fullData.skillProfile
     ? fullData.skillProfile.is_wicket_keeper
       ? 'Wicket-keeper'

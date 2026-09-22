@@ -50,6 +50,28 @@ export const requireAdmin = cache(async (seasonId?: string): Promise<UserPermiss
 });
 
 /**
+ * Requires that the user has the super_admin role in the active ACC season.
+ * If unauthorized, redirects to /admin?error=unauthorized_super_admin.
+ * Memoized per request with React cache().
+ */
+export const requireSuperAdmin = cache(async (seasonId?: string): Promise<UserPermissionContext> => {
+  const { authUser, appUser } = await getCurrentUser();
+
+  if (!authUser || !appUser) {
+    redirect('/login?redirectTo=/admin');
+  }
+
+  const supabase = await createClient();
+  const context = await getUserPermissionContext(supabase, appUser, seasonId);
+
+  if (!context.isSuperAdmin) {
+    redirect('/admin?error=unauthorized_super_admin');
+  }
+
+  return context;
+});
+
+/**
  * Requires that the user is a verified franchise representative/member
  * for a franchise in the active ACC season.
  *

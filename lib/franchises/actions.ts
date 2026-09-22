@@ -125,7 +125,10 @@ export async function adminDeleteFranchiseAction(
   franchiseId: string
 ): Promise<AdminFranchiseActionResult<{ franchiseId: string; message: string }>> {
   try {
-    await requireAdmin();
+    const adminContext = await requireAdmin();
+    if (!adminContext.isSuperAdmin) {
+      return { success: false, error: 'Unauthorized: Only Super Admin has authority to delete or deactivate franchises.' };
+    }
     const adminClient = createAdminClient();
 
     // 1. Fetch targeted franchise

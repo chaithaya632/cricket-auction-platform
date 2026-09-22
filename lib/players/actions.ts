@@ -9,7 +9,10 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requirePlayer, requireAdmin } from '@/lib/permissions/guards';
 import { parseRollNumber, calculateAcademicYear, deriveBucket } from '@/domain/academic';
+import { writeAuditLog } from '@/lib/audit/logger';
 import { validateSkills, derivePlayerType } from '@/domain/players';
+import { evaluatePlayerEligibility } from '@/domain/players/eligibility';
+import type { CricHeroesStatus, RegistrationStatus } from '@/lib/constants';
 import {
   playerProfileSchema,
   playerRegistrationSchema,
@@ -127,25 +130,33 @@ export async function registerPlayerSeasonAction(
       };
     }
 
-    const { roll_number, base_price, cricheroes_url, cricheroes_registered_mobile } =
-      validation.data;
+    const {
+      roll_number,
+      base_price,
+      cricheroes_url,
+      cricheroes_registered_mobile,
+      programme: inputProgramme,
+      academic_year: inputYear,
+      branch: inputBranch,
+    } = validation.data;
 
-    // 1. Authoritative academic derivation
+    // 1. Authoritative academic derivation from explicit input or parsed metadata
     const parsedRoll = parseRollNumber(roll_number);
-    if (!parsedRoll.isValid || !parsedRoll.programme || !parsedRoll.admissionYear) {
+    if (!parsedRoll.isValid) {
       return {
         success: false,
-        error: parsedRoll.error || 'Could not parse roll number for academic derivation',
+        error: parsedRoll.error || 'Invalid roll number format',
       };
     }
 
-    const calculatedYear = calculateAcademicYear(
-      parsedRoll.admissionYear,
-      parsedRoll.programme,
-      new Date()
-    );
-
-    const derivedPlayerBucket = deriveBucket(parsedRoll.programme, calculatedYear);
+    const programme = inputProgramme || parsedRoll.programme || 'btech_regular';
+    const academicYear =
+      inputYear ||
+      (parsedRoll.admissionYear
+        ? calculateAcademicYear(parsedRoll.admissionYear, programme, new Date())
+        : 1);
+    const branch = inputBranch || parsedRoll.branchName || null;
+    const derivedPlayerBucket = deriveBucket(programme, academicYear);
 
     const supabase = await createClient();
 
@@ -185,9 +196,9 @@ export async function registerPlayerSeasonAction(
         player_id: userId,
         season_id: activeSeason.id,
         registration_status: 'draft',
-        programme: parsedRoll.programme,
-        academic_year: calculatedYear,
-        branch: parsedRoll.branchName || null,
+        programme,
+        academic_year: academicYear,
+        branch,
         bucket: derivedPlayerBucket,
         base_price,
         cricheroes_url: cricheroes_url || null,
@@ -311,12 +322,12 @@ export async function savePlayerSkillProfileAction(
       };
     }
 
-    // 4. Automatically evaluate & activate auction eligibility upon completion of profile + registration + skill questionnaire
+    // 4. Update registration status to pending_verification (requires admin approval, payment & CricHeroes verification)
     await supabase
       .from('player_season_registrations')
       .update({
-        registration_status: 'eligible',
-        is_auction_eligible: true,
+        registration_status: 'pending_verification',
+        is_auction_eligible: false,
         updated_at: new Date().toISOString(),
       })
       .eq('id', registrationId);
@@ -537,36 +548,36 @@ export async function adminCreatePlayerAction(
   try {
     const adminContext = await requireAdmin();
     const activeSeason = adminContext.activeSeason;
-
-    if (!activeSeason) {
-      return { success: false, error: 'No active season found for player registration.' };
-    }
+    const targetSeasonId = activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 
     const validation = adminCreatePlayerSchema.safeParse(input);
     if (!validation.success) {
+      const messages = validation.error.issues.map((i) => i.message).filter(Boolean);
       return {
         success: false,
-        error: validation.error.issues[0]?.message || 'Invalid player information',
+        error: messages.length > 0 ? messages.join(', ') : 'Invalid player information',
       };
     }
 
     const data = validation.data;
 
-    // Academic roll number derivation
+    // Academic roll number & explicit academic inputs
     const parsedRoll = parseRollNumber(data.roll_number);
-    if (!parsedRoll.isValid || !parsedRoll.programme || !parsedRoll.admissionYear) {
+    if (!parsedRoll.isValid) {
       return {
         success: false,
-        error: parsedRoll.error || 'Could not parse roll number for academic derivation',
+        error: parsedRoll.error || 'Invalid roll number format',
       };
     }
 
-    const calculatedYear = calculateAcademicYear(
-      parsedRoll.admissionYear,
-      parsedRoll.programme,
-      new Date()
-    );
-    const derivedPlayerBucket = deriveBucket(parsedRoll.programme, calculatedYear);
+    const programme = data.programme || parsedRoll.programme || 'btech_regular';
+    const academicYear =
+      data.academic_year ||
+      (parsedRoll.admissionYear
+        ? calculateAcademicYear(parsedRoll.admissionYear, programme, new Date())
+        : 1);
+    const branch = data.branch || parsedRoll.branchName || null;
+    const derivedPlayerBucket = deriveBucket(programme, academicYear);
 
     const adminClient = createAdminClient();
 
@@ -609,11 +620,11 @@ export async function adminCreatePlayerAction(
       .from('player_season_registrations')
       .insert({
         player_id: newPlayer.id,
-        season_id: activeSeason.id,
+        season_id: targetSeasonId,
         registration_status: 'eligible',
-        programme: parsedRoll.programme,
-        academic_year: calculatedYear,
-        branch: parsedRoll.branchName || null,
+        programme,
+        academic_year: academicYear,
+        branch,
         bucket: derivedPlayerBucket,
         base_price: data.base_price || 100,
         cricheroes_url: data.cricheroes_url || null,
@@ -775,6 +786,459 @@ export async function adminDeletePlayerAction(
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to delete player',
+    };
+  }
+}
+
+/**
+ * Super Admin Action to override a student's academic year (e.g. detained students, §4.1).
+ * Re-derives the auction bucket and writes an entry to audit_logs.
+ */
+export async function adminOverridePlayerAcademicYearAction(
+  registrationId: string,
+  newAcademicYear: number,
+  reason: string
+): Promise<PlayerActionResult<{ registrationId: string; newBucket: string }>> {
+  try {
+    const adminContext = await requireAdmin();
+    if (!adminContext.isSuperAdmin) {
+      return { success: false, error: 'Unauthorized: Only Super Admin can override student academic years (§4.1).' };
+    }
+
+    if (!reason || reason.trim().length < 5) {
+      return { success: false, error: 'A valid reason of at least 5 characters is required for year override.' };
+    }
+
+    if (newAcademicYear < 1 || newAcademicYear > 6) {
+      return { success: false, error: 'Academic year must be between 1 and 6.' };
+    }
+
+    const adminClient = createAdminClient();
+
+    // 1. Fetch current registration
+    const { data: reg, error: fetchErr } = await adminClient
+      .from('player_season_registrations')
+      .select('id, player_id, season_id, programme, academic_year, bucket')
+      .eq('id', registrationId)
+      .single();
+
+    if (fetchErr || !reg) {
+      return { success: false, error: 'Player registration not found.' };
+    }
+
+    // 2. Re-derive bucket based on programme and overridden year
+    const newBucket = deriveBucket(reg.programme as any, newAcademicYear);
+
+    // 3. Update registration record
+    const { error: updateErr } = await adminClient
+      .from('player_season_registrations')
+      .update({
+        year_override: newAcademicYear,
+        year_override_reason: reason.trim(),
+        academic_year: newAcademicYear,
+        bucket: newBucket,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', registrationId);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message };
+    }
+
+    // 4. Record in audit_logs
+    await writeAuditLog(
+      {
+        seasonId: reg.season_id,
+        actorUserId: adminContext.user.id,
+        action: 'YEAR_OVERRIDE',
+        entityType: 'player_season_registration',
+        entityId: registrationId,
+        reason: reason.trim(),
+        metadata: {
+          previous_year: reg.academic_year,
+          new_year: newAcademicYear,
+          previous_bucket: reg.bucket,
+          new_bucket: newBucket,
+        },
+      },
+      adminClient
+    );
+
+    revalidatePath('/admin/players');
+    revalidatePath('/admin');
+    revalidatePath('/players');
+
+    return { success: true, data: { registrationId, newBucket } };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to override academic year',
+    };
+  }
+}
+
+/**
+ * Internal helper to evaluate and synchronize a player's auction eligibility
+ * based on the authoritative rules: profile complete, academic data valid,
+ * skills submitted, payment verified, CricHeroes verified, and admin approval granted.
+ */
+async function syncPlayerEligibility(
+  adminClient: any,
+  registrationId: string
+): Promise<{ isEligible: boolean; missingRequirements: string[] }> {
+  const { data: reg, error } = await adminClient
+    .from('player_season_registrations')
+    .select(`
+      id,
+      player_id,
+      season_id,
+      programme,
+      academic_year,
+      branch,
+      bucket,
+      registration_status,
+      payment_status,
+      cricheroes_status,
+      cricheroes_url,
+      players (
+        id,
+        full_name,
+        roll_number,
+        mobile,
+        photo_url,
+        is_active
+      ),
+      player_skill_profiles (
+        id
+      )
+    `)
+    .eq('id', registrationId)
+    .single();
+
+  if (error || !reg) {
+    return { isEligible: false, missingRequirements: ['Registration record not found'] };
+  }
+
+  const p = Array.isArray(reg.players) ? reg.players[0] : reg.players;
+  const skills = Array.isArray(reg.player_skill_profiles)
+    ? reg.player_skill_profiles[0]
+    : reg.player_skill_profiles;
+
+  const breakdown = evaluatePlayerEligibility({
+    hasProfile: Boolean(p),
+    fullName: p?.full_name,
+    rollNumber: p?.roll_number,
+    mobile: p?.mobile,
+    photoUrl: p?.photo_url,
+    hasRegistration: true,
+    programme: reg.programme,
+    academicYear: reg.academic_year,
+    branch: reg.branch,
+    bucket: reg.bucket,
+    hasSkillProfile: Boolean(skills),
+    paymentStatus: (reg.payment_status as 'paid' | 'unpaid') || 'unpaid',
+    cricHeroesStatus: reg.cricheroes_status || 'unverified',
+    cricHeroesUrl: reg.cricheroes_url,
+    registrationStatus: reg.registration_status,
+    isActive: p?.is_active !== false,
+  });
+
+  const nextRegStatus = breakdown.isEligible
+    ? 'eligible'
+    : reg.registration_status === 'ineligible'
+    ? 'ineligible'
+    : reg.registration_status === 'draft'
+    ? 'draft'
+    : 'pending_verification';
+
+  await adminClient
+    .from('player_season_registrations')
+    .update({
+      is_auction_eligible: breakdown.isEligible,
+      registration_status: nextRegStatus,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', registrationId);
+
+  return {
+    isEligible: breakdown.isEligible,
+    missingRequirements: breakdown.missingRequirements,
+  };
+}
+
+/**
+ * Super Admin Action to verify payment and toggle auction eligibility (§5.2, §18).
+ * Unpaid players remain registered and visible, but cannot enter the auction.
+ * Eligibility is evaluated against all criteria (not blindly granted).
+ */
+export async function adminSetPlayerPaymentAction(
+  registrationId: string,
+  paymentStatus: 'paid' | 'unpaid'
+): Promise<PlayerActionResult<{ registrationId: string; paymentStatus: string; isEligible: boolean; missingRequirements: string[] }>> {
+  try {
+    const adminContext = await requireAdmin();
+    if (!adminContext.isSuperAdmin) {
+      return { success: false, error: 'Unauthorized: Only Super Admin can verify payment status.' };
+    }
+
+    const adminClient = createAdminClient();
+
+    const { error: updateErr } = await adminClient
+      .from('player_season_registrations')
+      .update({
+        payment_status: paymentStatus,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', registrationId);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message };
+    }
+
+    // Re-evaluate eligibility with payment updated
+    const syncResult = await syncPlayerEligibility(adminClient, registrationId);
+
+    revalidatePath('/admin/players');
+    revalidatePath('/admin/queue');
+    revalidatePath('/admin');
+    revalidatePath('/players');
+
+    return {
+      success: true,
+      data: {
+        registrationId,
+        paymentStatus,
+        isEligible: syncResult.isEligible,
+        missingRequirements: syncResult.missingRequirements,
+      },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to update payment status',
+    };
+  }
+}
+
+/**
+ * Super Admin / Operator Action to verify or update a player's CricHeroes status (§13).
+ */
+export async function adminSetCricHeroesStatusAction(
+  registrationId: string,
+  cricheroesStatus: CricHeroesStatus
+): Promise<PlayerActionResult<{ registrationId: string; cricheroesStatus: CricHeroesStatus; isEligible: boolean }>> {
+  try {
+    await requireAdmin();
+    const adminClient = createAdminClient();
+
+    const { error: updateErr } = await adminClient
+      .from('player_season_registrations')
+      .update({
+        cricheroes_status: cricheroesStatus,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', registrationId);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message };
+    }
+
+    const syncResult = await syncPlayerEligibility(adminClient, registrationId);
+
+    revalidatePath('/admin/players');
+    revalidatePath('/admin/queue');
+    revalidatePath('/admin');
+    revalidatePath('/players');
+
+    return {
+      success: true,
+      data: {
+        registrationId,
+        cricheroesStatus,
+        isEligible: syncResult.isEligible,
+      },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to update CricHeroes status',
+    };
+  }
+}
+
+/**
+ * Super Admin Action to block or unblock a player account (§13).
+ * Blocked players cannot become auction eligible or enter the queue.
+ */
+export async function adminTogglePlayerBlockAction(
+  playerId: string,
+  isBlocked: boolean,
+  reason?: string
+): Promise<PlayerActionResult<{ playerId: string; isBlocked: boolean }>> {
+  try {
+    const adminContext = await requireAdmin();
+    if (!adminContext.isSuperAdmin) {
+      return { success: false, error: 'Unauthorized: Only Super Admin can block or unblock players.' };
+    }
+
+    const adminClient = createAdminClient();
+    const now = new Date().toISOString();
+
+    // 1. Update player active state
+    const { error: playerErr } = await adminClient
+      .from('players')
+      .update({
+        is_active: !isBlocked,
+        updated_at: now,
+      })
+      .eq('id', playerId);
+
+    if (playerErr) {
+      return { success: false, error: playerErr.message };
+    }
+
+    // 2. If blocked, immediately revoke auction eligibility on all active registrations
+    if (isBlocked) {
+      await adminClient
+        .from('player_season_registrations')
+        .update({
+          is_auction_eligible: false,
+          updated_at: now,
+        })
+        .eq('player_id', playerId);
+    } else {
+      // If unblocked, re-sync eligibility for this player's registrations
+      const { data: regs } = await adminClient
+        .from('player_season_registrations')
+        .select('id')
+        .eq('player_id', playerId);
+
+      if (regs) {
+        for (const reg of regs) {
+          await syncPlayerEligibility(adminClient, reg.id);
+        }
+      }
+    }
+
+    // 3. Write audit log
+    await writeAuditLog(
+      {
+        seasonId: adminContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001',
+        actorUserId: adminContext.user.id,
+        action: isBlocked ? 'PLAYER_BLOCKED' : 'PLAYER_UNBLOCKED',
+        entityType: 'player',
+        entityId: playerId,
+        reason: reason?.trim() || (isBlocked ? 'Blocked by Super Admin' : 'Unblocked by Super Admin'),
+        metadata: { isBlocked },
+      },
+      adminClient
+    );
+
+    revalidatePath('/admin/players');
+    revalidatePath('/admin/queue');
+    revalidatePath('/admin');
+    revalidatePath('/players');
+
+    return { success: true, data: { playerId, isBlocked } };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to update player block state',
+    };
+  }
+}
+
+/**
+ * Super Admin / Operator Action to review and approve/reject a player's season registration.
+ * If all criteria are met upon approval, marks the player as auction eligible.
+ */
+export async function adminApprovePlayerRegistrationAction(
+  registrationId: string,
+  decision: 'approved' | 'rejected' | 'under_review'
+): Promise<PlayerActionResult<{ registrationId: string; registrationStatus: string; isEligible: boolean; missingRequirements: string[] }>> {
+  try {
+    await requireAdmin();
+    const adminClient = createAdminClient();
+    const now = new Date().toISOString();
+
+    if (decision === 'rejected') {
+      await adminClient
+        .from('player_season_registrations')
+        .update({
+          registration_status: 'ineligible',
+          is_auction_eligible: false,
+          updated_at: now,
+        })
+        .eq('id', registrationId);
+
+      revalidatePath('/admin/players');
+      revalidatePath('/admin/queue');
+
+      return {
+        success: true,
+        data: {
+          registrationId,
+          registrationStatus: 'ineligible',
+          isEligible: false,
+          missingRequirements: ['Registration rejected by administrator'],
+        },
+      };
+    }
+
+    if (decision === 'under_review') {
+      await adminClient
+        .from('player_season_registrations')
+        .update({
+          registration_status: 'pending_verification',
+          is_auction_eligible: false,
+          updated_at: now,
+        })
+        .eq('id', registrationId);
+
+      const syncResult = await syncPlayerEligibility(adminClient, registrationId);
+      revalidatePath('/admin/players');
+      revalidatePath('/admin/queue');
+
+      return {
+        success: true,
+        data: {
+          registrationId,
+          registrationStatus: 'pending_verification',
+          isEligible: syncResult.isEligible,
+          missingRequirements: syncResult.missingRequirements,
+        },
+      };
+    }
+
+    // decision === 'approved': set to eligible status provisionally, then re-evaluate all requirements
+    await adminClient
+      .from('player_season_registrations')
+      .update({
+        registration_status: 'eligible',
+        updated_at: now,
+      })
+      .eq('id', registrationId);
+
+    const syncResult = await syncPlayerEligibility(adminClient, registrationId);
+
+    revalidatePath('/admin/players');
+    revalidatePath('/admin/queue');
+    revalidatePath('/admin');
+    revalidatePath('/players');
+
+    return {
+      success: true,
+      data: {
+        registrationId,
+        registrationStatus: syncResult.isEligible ? 'eligible' : 'pending_verification',
+        isEligible: syncResult.isEligible,
+        missingRequirements: syncResult.missingRequirements,
+      },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to update player registration status',
     };
   }
 }

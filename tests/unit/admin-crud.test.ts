@@ -9,7 +9,7 @@ describe('Admin CRUD — Player Creation Validation', () => {
       full_name: 'Jasprit Bumrah',
       roll_number: '21KD1A0501',
       mobile: '9876543210',
-      base_price: 150,
+      base_price: 140,
       player_type: 'bowler' as const,
       batting_style: 'right_hand' as const,
       bowling_style: 'right_arm_fast',
@@ -21,7 +21,7 @@ describe('Admin CRUD — Player Creation Validation', () => {
     if (result.success) {
       expect(result.data.full_name).toBe('Jasprit Bumrah');
       expect(result.data.roll_number).toBe('21KD1A0501');
-      expect(result.data.base_price).toBe(150);
+      expect(result.data.base_price).toBe(140);
     }
   });
 
@@ -77,6 +77,46 @@ describe('Admin CRUD — Player Creation Validation', () => {
       expect(result.data.player_type).toBe('all_rounder');
       expect(result.data.batting_style).toBe('right_hand');
     }
+  });
+
+  it('accepts null and empty string for optional fields (cricheroes_url, bowling_style, photo_url)', () => {
+    const input = {
+      full_name: 'Rohit Sharma',
+      roll_number: '23811A0505',
+      mobile: '9848012345',
+      base_price: 100,
+      player_type: 'batter' as const,
+      batting_style: 'right_hand' as const,
+      bowling_style: null,
+      photo_url: null,
+      cricheroes_url: null,
+    };
+
+    const result = adminCreatePlayerSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cricheroes_url).toBeNull();
+      expect(result.data.bowling_style).toBeNull();
+      expect(result.data.photo_url).toBeNull();
+    }
+
+    const emptyResult = adminCreatePlayerSchema.safeParse({
+      ...input,
+      photo_url: '',
+      cricheroes_url: '',
+    });
+    expect(emptyResult.success).toBe(true);
+  });
+
+  it('rejects invalid URL for cricheroes_url when provided as non-empty non-URL', () => {
+    const result = adminCreatePlayerSchema.safeParse({
+      full_name: 'Rohit Sharma',
+      roll_number: '23811A0505',
+      mobile: '9848012345',
+      cricheroes_url: 'invalid-not-a-url',
+    });
+
+    expect(result.success).toBe(false);
   });
 });
 
@@ -192,6 +232,51 @@ describe('Admin CRUD — Academic & Category Bucket Assignment', () => {
       const bucket = deriveBucket(parsed.programme, year);
       expect(year).toBe(3);
       expect(bucket).toBe('B3');
+    }
+  });
+
+  it('supports flexible roll numbers with alphanumeric sequences and custom identifiers', () => {
+    const res1 = adminCreatePlayerSchema.safeParse({
+      full_name: 'Aditya Kumar',
+      roll_number: '24811A05F2',
+      mobile: '9848011223',
+    });
+    expect(res1.success).toBe(true);
+    if (res1.success) {
+      expect(res1.data.roll_number).toBe('24811A05F2');
+    }
+
+    const res2 = adminCreatePlayerSchema.safeParse({
+      full_name: 'Special Candidate',
+      roll_number: 'DIPLOMA-ME-045',
+      mobile: '9848011224',
+    });
+    expect(res2.success).toBe(true);
+    if (res2.success) {
+      expect(res2.data.roll_number).toBe('DIPLOMA-ME-045');
+    }
+  });
+
+  it('validates explicit academic fields and derives auction bucket independently of roll number', () => {
+    const input = {
+      full_name: 'Sai Kiran',
+      roll_number: '24811A05F2',
+      mobile: '9848011225',
+      programme: 'btech_regular' as const,
+      academic_year: 2,
+      branch: 'CSE',
+    };
+
+    const result = adminCreatePlayerSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.programme).toBe('btech_regular');
+      expect(result.data.academic_year).toBe(2);
+      expect(result.data.branch).toBe('CSE');
+
+      // Bucket is derived strictly from explicit inputs
+      const bucket = deriveBucket(result.data.programme!, result.data.academic_year!);
+      expect(bucket).toBe('B2');
     }
   });
 });

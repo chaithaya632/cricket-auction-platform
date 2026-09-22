@@ -56,11 +56,39 @@ describe('Academic Domain — Roll Number Parser (Spec §9)', () => {
     expect(res.sequenceNumber).toBe('001');
   });
 
-  it('rejects invalid roll numbers', () => {
+  it('parses regular B.Tech roll numbers with alphanumeric sequence codes (e.g. 24811A05F2)', () => {
+    const res = parseRollNumber('24811A05F2');
+    expect(res.isValid).toBe(true);
+    expect(res.programme).toBe('btech_regular');
+    expect(res.admissionYear).toBe(2024);
+    expect(res.branchCode).toBe('05');
+    expect(res.branchName).toBe('CSE');
+    expect(res.sequenceNumber).toBe('F2');
+  });
+
+  it('authoritatively rejects arbitrary non-standard roll numbers per Spec §9', () => {
+    const res1 = parseRollNumber('23811B0501');
+    expect(res1.isValid).toBe(false);
+    expect(res1.error).toContain('Invalid roll number format');
+
+    const res2 = parseRollNumber('CUSTOM-REG-99');
+    expect(res2.isValid).toBe(false);
+
+    const res3 = parseRollNumber('12345');
+    expect(res3.isValid).toBe(false);
+  });
+
+  it('records roll numbers for postgraduate (PG) students with programmeHint', () => {
+    const pgRes = parseRollNumber('24811D0501', 'pg');
+    expect(pgRes.isValid).toBe(true);
+    expect(pgRes.programme).toBe('pg');
+    expect(pgRes.branchCode).toBe('PG');
+  });
+
+  it('rejects empty or excessively long roll numbers', () => {
     expect(parseRollNumber('').isValid).toBe(false);
-    expect(parseRollNumber('INVALID123').isValid).toBe(false);
-    expect(parseRollNumber('23811B0501').isValid).toBe(false);
-    expect(parseRollNumber('12345').isValid).toBe(false);
+    expect(parseRollNumber('   ').isValid).toBe(false);
+    expect(parseRollNumber('A'.repeat(51)).isValid).toBe(false);
   });
 });
 

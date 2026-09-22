@@ -9,12 +9,15 @@ import {
   getRecentAuctionEvents,
   getSeasonAuctionConfig,
   getAuctionSessionState,
+  getActiveLotScarcity,
+  getAllFranchisesLiveSummary,
 } from '@/lib/auction/queries';
 import { getActiveSeason } from '@/lib/permissions/context';
 import { ActiveLotCard } from '@/components/auction/active-lot-card';
 import { AuctionTimer } from '@/components/auction/auction-timer';
 import { LiveExitBar } from '@/components/auction/live-exit-bar';
 import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
+import { FranchiseStatusBar } from '@/components/auction/franchise-status-bar';
 
 export default async function ProjectorPage() {
   const supabase = await createClient();
@@ -26,6 +29,11 @@ export default async function ProjectorPage() {
     getRecentAuctionEvents(supabase, seasonId, 8),
     getSeasonAuctionConfig(supabase, seasonId),
     getAuctionSessionState(supabase, seasonId),
+  ]);
+
+  const [scarcityReport, franchiseSummaries] = await Promise.all([
+    activeLot?.bucket ? getActiveLotScarcity(supabase, seasonId, activeLot.bucket) : null,
+    getAllFranchisesLiveSummary(supabase, seasonId, activeLot),
   ]);
 
   const timerDuration = activeLot?.highest_bidder_franchise_id
@@ -93,6 +101,17 @@ export default async function ProjectorPage() {
             </div>
           ) : (
             <>
+              {scarcityReport?.isWarningActive && (
+                <div className="rounded-2xl border-2 border-amber-500 bg-amber-950/80 px-6 py-4 text-center shadow-2xl animate-pulse">
+                  <p className="text-amber-300 font-black text-lg uppercase tracking-wider">
+                    ⚠️ SCARCITY WARNING: Only {scarcityReport.unsoldSupply} player(s) remaining for {scarcityReport.totalPlayersNeeded} needed slots across franchises in Bucket {scarcityReport.bucket}!
+                  </p>
+                  <p className="text-xs text-amber-200/80 mt-1">
+                    Free-market bidding remains open (§12.3). Franchises with satisfied quotas may continue bidding.
+                  </p>
+                </div>
+              )}
+
               <ActiveLotCard lot={activeLot} size="projector" />
 
               {activeLot && (
@@ -137,6 +156,12 @@ export default async function ProjectorPage() {
           </div>
         </div>
       </div>
+
+      {/* 11-Franchise Live Status Bar (§14) */}
+      <FranchiseStatusBar
+        franchises={franchiseSummaries}
+        activeLotDrawNumber={activeLot?.draw_number}
+      />
     </div>
   );
 }

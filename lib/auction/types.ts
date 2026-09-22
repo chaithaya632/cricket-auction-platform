@@ -26,6 +26,20 @@ export interface AuctionLotFranchiseInfo {
   secondary_color: string | null;
 }
 
+export interface AuctionLotSkillInfo {
+  derived_player_type?: string | null;
+  is_batter?: boolean;
+  is_bowler?: boolean;
+  is_wicket_keeper?: boolean;
+  batting_style?: string | null;
+  batting_order?: string | null;
+  bowling_style?: string | null;
+  fielding_position?: string | null;
+  experience_years?: number | null;
+  experience_description?: string | null;
+  parsed_stats?: Record<string, any> | null;
+}
+
 export interface AuctionLotWithDetails {
   id: string;
   season_id: string;
@@ -44,6 +58,7 @@ export interface AuctionLotWithDetails {
   player: AuctionLotPlayerInfo;
   registration: AuctionLotRegistrationInfo;
   highest_bidder: AuctionLotFranchiseInfo | null;
+  skills?: AuctionLotSkillInfo | null;
 }
 
 export interface AuctionEventDTO {
@@ -90,4 +105,21 @@ export interface AuctionSessionState {
   isCompleted: boolean;
   startedAt: string | null;
   activeLotId: string | null;
+}
+
+export interface FranchiseLiveSummaryItem {
+  id: string;
+  name: string;
+  shortName: string;
+  primaryColor: string | null;
+  secondaryColor: string | null;
+  remainingPurse: number;
+  maxPermissibleBid: number;
+  squadCount: number;
+  maxSquadSize: number;
+  minSquadSize: number;
+  bucketCounts: Record<string, number>;
+  mandatoryBucketDeficits: Record<string, number>;
+  status: 'leading' | 'in_play' | 'blocked';
+  blockReason?: string;
 }

@@ -11,10 +11,11 @@ import {
   getRecentAuctionEvents,
   getSeasonAuctionConfig,
   getAuctionSessionState,
+  getActiveLotScarcity,
 } from '@/lib/auction/queries';
 import { ActiveLotCard } from '@/components/auction/active-lot-card';
 import { AuctionTimer } from '@/components/auction/auction-timer';
-import { OperatorControls } from '@/components/auction/operator-controls';
+import { OperatorControls, type OperatorSoldLotItem } from '@/components/auction/operator-controls';
 import { RecentActivityStream } from '@/components/auction/recent-activity-stream';
 import { DashboardShell } from '@/components/acc/dashboard-shell';
 import { getSessionUser } from '@/lib/acc/server-session';
@@ -37,17 +38,35 @@ export default async function AdminAuctionPage() {
     getAuctionSessionState(supabase, seasonId),
   ]);
 
-  // 2. Fetch last sold lot for possible deterministic undo
-  const { data: lastSoldData } = await supabase
-    .from('auction_lots')
-    .select('id')
-    .eq('season_id', seasonId)
-    .eq('status', 'sold')
-    .order('ended_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // 2. Fetch scarcity report, recent sold lots, and active franchises
+  const [scarcityReport, soldLotsResult, franchisesResult] = await Promise.all([
+    activeLot?.bucket ? getActiveLotScarcity(supabase, seasonId, activeLot.bucket) : null,
+    supabase
+      .from('auction_lots')
+      .select('id, draw_number, current_price, bucket, highest_bidder:franchises(name), registration:player_season_registrations(player:players(full_name))')
+      .eq('season_id', seasonId)
+      .eq('status', 'sold')
+      .order('ended_at', { ascending: false })
+      .limit(25),
+    supabase
+      .from('franchises')
+      .select('id, name, short_name')
+      .eq('season_id', seasonId)
+      .eq('is_active', true)
+      .order('name', { ascending: true }),
+  ]);
 
-  const lastSoldLotId = lastSoldData?.id || null;
+  const soldLots: OperatorSoldLotItem[] = (soldLotsResult.data || []).map((l: any) => ({
+    id: l.id,
+    draw_number: l.draw_number,
+    player_name: l.registration?.player?.full_name || 'Player',
+    franchise_name: l.highest_bidder?.name || 'Franchise',
+    price: l.current_price || 20,
+    bucket: l.bucket,
+  }));
+
+  const lastSoldLotId = soldLots[0]?.id || null;
+  const franchises = franchisesResult.data || [];
 
   // Determine current timer duration based on whether first bid has occurred
   const timerDuration = activeLot?.highest_bidder_franchise_id
@@ -124,7 +143,11 @@ export default async function AdminAuctionPage() {
             activeLot={activeLot}
             upcomingLots={upcomingLots}
             lastSoldLotId={lastSoldLotId}
+            soldLots={soldLots}
+            franchises={franchises}
             sessionState={sessionState}
+            isSuperAdmin={adminContext.isSuperAdmin}
+            scarcityReport={scarcityReport}
           />
         </div>
 
