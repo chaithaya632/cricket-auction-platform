@@ -3,24 +3,25 @@
 // =============================================================================
 
 import { requireFranchise } from '@/lib/permissions/guards';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { getSeasonPlayerDiscovery } from '@/lib/franchises';
 import { PlayerDiscoveryView } from '@/components/franchise/player-discovery-view';
 import { DashboardShell } from '@/components/acc/dashboard-shell';
 import { getSessionUser } from '@/lib/acc/server-session';
 
 export default async function FranchisePlayersPage() {
-  const permContext = await requireFranchise();
+  const [permContext, sessionUser] = await Promise.all([
+    requireFranchise(),
+    getSessionUser('franchise'),
+  ]);
   const { assignedFranchise, activeSeason } = permContext;
+  sessionUser.name = assignedFranchise.name;
 
-  const supabase = await createClient();
+  const adminClient = createAdminClient();
 
   const players = activeSeason
-    ? await getSeasonPlayerDiscovery(supabase, activeSeason.id)
+    ? await getSeasonPlayerDiscovery(adminClient, activeSeason.id)
     : [];
-
-  const sessionUser = await getSessionUser('franchise');
-  sessionUser.name = assignedFranchise.name;
 
   return (
     <DashboardShell role="franchise" user={sessionUser} breadcrumb="Player Discovery">

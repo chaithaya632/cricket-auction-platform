@@ -1,7 +1,4 @@
-// =============================================================================
-// ACC Auction Portal — Player Queries
-// =============================================================================
-
+import { cache } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DbPlayer, DbPlayerSeasonRegistration, DbPlayerSkillProfile } from '@/lib/db/types';
 import type { Player, PlayerType, PlayerStatus, Bucket } from '@/lib/acc/types';
@@ -155,13 +152,18 @@ export async function getPlayerSkillProfile(
 
 /**
  * Aggregates player profile, season registration, and skill profile.
+ * Memoized per server render cycle with React cache().
  */
-export async function getPlayerFullData(
+export const getPlayerFullData = cache(async (
   supabase: SupabaseClient,
   playerId: string,
   seasonId: string
-): Promise<PlayerFullData> {
-  const player = await getPlayerProfile(supabase, playerId);
+): Promise<PlayerFullData> => {
+  const [player, registration] = await Promise.all([
+    getPlayerProfile(supabase, playerId),
+    getPlayerRegistration(supabase, playerId, seasonId),
+  ]);
+
   if (!player) {
     return {
       player: null,
@@ -170,9 +172,7 @@ export async function getPlayerFullData(
     };
   }
 
-  const registration = await getPlayerRegistration(supabase, playerId, seasonId);
   let skillProfile: DbPlayerSkillProfile | null = null;
-
   if (registration) {
     skillProfile = await getPlayerSkillProfile(supabase, registration.id);
   }
@@ -182,72 +182,76 @@ export async function getPlayerFullData(
     registration,
     skillProfile,
   };
-}
+});
 
 /**
  * Retrieves the unified player registry for admin consoles.
  * Reads real database records from players + registrations + skill profiles.
  * Merges seamlessly so newly registered players appear immediately.
+ * Memoized per server render cycle with React cache().
  */
-export async function getAdminPlayersList(
+export const getAdminPlayersList = cache(async (
   supabase: SupabaseClient,
   seasonId?: string
-): Promise<Player[]> {
+): Promise<Player[]> => {
   try {
-    const { data: dbPlayers, error } = await supabase
-      .from('players')
-      .select(`
-        id,
-        roll_number,
-        full_name,
-        mobile,
-        photo_url,
-        is_active,
-        created_at,
-        player_season_registrations (
-          id,
-          season_id,
-          programme,
-          academic_year,
-          branch,
-          bucket,
-          base_price,
-          registration_status,
-          payment_status,
-          cricheroes_url,
-          cricheroes_registered_mobile,
-          cricheroes_status,
-          is_auction_eligible,
-          year_override,
-          year_override_reason,
-          created_at,
-          player_skill_profiles (
-            derived_player_type,
-            is_batter,
-            is_bowler,
-            is_wicket_keeper,
-            batting_style,
-            bowling_style,
-            batting_order,
-            experience_description
-          ),
-          auction_lots (
-            status,
-            current_price,
-            highest_bidder_franchise_id
-          )
-        )
-      `);
-
     const targetSeasonId = seasonId || '00000000-0000-0000-0000-000000000001';
 
-    // 2. Fetch users assigned the player role in this season who may not have finished profile
-    const { data: roleAssignedUsers } = await supabase
-      .from('season_roles')
-      .select('user_id, users(id, full_name, email, created_at)')
-      .eq('season_id', targetSeasonId)
-      .eq('role', 'player')
-      .eq('is_active', true);
+    const [dbPlayersResult, roleAssignedUsersResult] = await Promise.all([
+      supabase
+        .from('players')
+        .select(`
+          id,
+          roll_number,
+          full_name,
+          mobile,
+          photo_url,
+          is_active,
+          created_at,
+          player_season_registrations (
+            id,
+            season_id,
+            programme,
+            academic_year,
+            branch,
+            bucket,
+            base_price,
+            registration_status,
+            payment_status,
+            cricheroes_url,
+            cricheroes_registered_mobile,
+            cricheroes_status,
+            is_auction_eligible,
+            year_override,
+            year_override_reason,
+            created_at,
+            player_skill_profiles (
+              derived_player_type,
+              is_batter,
+              is_bowler,
+              is_wicket_keeper,
+              batting_style,
+              bowling_style,
+              batting_order,
+              experience_description
+            ),
+            auction_lots (
+              status,
+              current_price,
+              highest_bidder_franchise_id
+            )
+          )
+        `),
+      supabase
+        .from('season_roles')
+        .select('user_id, users(id, full_name, email, created_at)')
+        .eq('season_id', targetSeasonId)
+        .eq('role', 'player')
+        .eq('is_active', true),
+    ]);
+
+    const dbPlayers = dbPlayersResult.data;
+    const roleAssignedUsers = roleAssignedUsersResult.data;
 
     const typeMap: Record<string, PlayerType> = {
       batter: 'Batter',
@@ -411,4 +415,4 @@ export async function getAdminPlayersList(
   } catch {
     return [];
   }
-}
+});

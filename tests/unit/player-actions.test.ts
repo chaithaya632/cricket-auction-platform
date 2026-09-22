@@ -192,5 +192,17 @@ describe('Player Application — Career Stats Parsing & Structure', () => {
     const emptyParsed = parseCareerStats('');
     expect(emptyParsed.matches).toBe(0);
   });
-});
 
+  it('gracefully handles structured questionnaire JSON without crashing', () => {
+    const questionnairePayload = {
+      batting: { arm: 'right', style: 'aggressive', position: 'top_order' },
+      bowling: { arm: 'right', type: 'fast', paceVariety: 'seam', roles: ['Opening bowler'] },
+      experience: { highestLevel: 'inter_college', years: 2, description: 'College player' },
+    };
+    const jsonStr = JSON.stringify(questionnairePayload);
+    const parsed = parseCareerStats(jsonStr);
+    expect(parsed.matches).toBe(0);
+    expect(parsed.runs).toBe(0);
+    expect(parsed.wickets).toBe(0);
+  });
+});

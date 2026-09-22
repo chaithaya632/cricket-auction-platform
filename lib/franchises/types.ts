@@ -63,9 +63,13 @@ export interface PlayerDiscoveryItem {
   battingStyle: string | null;
   bowlingStyle: string | null;
   experienceYears: number | null;
+  rollNumber?: string;
+  auctionStatus?: string;
+  fieldingPosition?: string | null;
+  highestBidderFranchiseId?: string | null;
   careerStats?: PlayerCareerStats;
   notes?: string | null;
-  // NOTE: Mobile numbers are strictly absent from public player view
+  // NOTE: Mobile numbers and private credentials are strictly absent
 }
 
 export interface PlayerDiscoveryFilters {

@@ -102,15 +102,27 @@ export function PlayerDiscoveryView({ initialPlayers, seasonName }: PlayerDiscov
 
       {/* Player Grid */}
       {filteredPlayers.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-12 text-center border-gray-300 dark:border-gray-700">
-          <div className="text-3xl mb-2">🔍</div>
-          <h3 className="text-base font-semibold text-gray-800 dark:text-gray-200">
-            No matching players found
-          </h3>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Try adjusting your search query or filters.
-          </p>
-        </div>
+        initialPlayers.length === 0 ? (
+          <div className="rounded-lg border border-dashed p-12 text-center border-gray-300 dark:border-gray-700">
+            <div className="text-4xl mb-2">🏏</div>
+            <h3 className="text-base font-semibold text-gray-800 dark:text-gray-200">
+              No eligible players available yet.
+            </h3>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Player registrations for this season have not been approved for the auction pool yet.
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed p-12 text-center border-gray-300 dark:border-gray-700">
+            <div className="text-3xl mb-2">🔍</div>
+            <h3 className="text-base font-semibold text-gray-800 dark:text-gray-200">
+              No matching players found
+            </h3>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Try adjusting your search query or filters.
+            </p>
+          </div>
+        )
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filteredPlayers.map((player) => (
@@ -134,9 +146,16 @@ export function PlayerDiscoveryView({ initialPlayers, seasonName }: PlayerDiscov
                       </div>
                     )}
                     <div>
-                      <h3 className="font-semibold text-gray-900 dark:text-gray-100 text-sm">
-                        {player.fullName}
-                      </h3>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h3 className="font-semibold text-gray-900 dark:text-gray-100 text-sm">
+                          {player.fullName}
+                        </h3>
+                        {player.rollNumber && (
+                          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700">
+                            {player.rollNumber}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-gray-500 dark:text-gray-400">
                         {player.programme === 'diploma'
                           ? 'Diploma'
@@ -146,7 +165,7 @@ export function PlayerDiscoveryView({ initialPlayers, seasonName }: PlayerDiscov
                     </div>
                   </div>
 
-                  <span className="rounded-full bg-emerald-50 dark:bg-emerald-950/50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                  <span className="rounded-full bg-emerald-50 dark:bg-emerald-950/50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 shrink-0">
                     {player.bucket}
                   </span>
                 </div>
@@ -166,6 +185,27 @@ export function PlayerDiscoveryView({ initialPlayers, seasonName }: PlayerDiscov
                   {player.bowlingStyle && (
                     <span className="rounded bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-gray-600 dark:text-gray-400 capitalize">
                       {player.bowlingStyle.replace(/_/g, ' ')}
+                    </span>
+                  )}
+                  {player.auctionStatus && (
+                    <span
+                      className={`rounded px-2 py-0.5 capitalize text-[11px] font-semibold border ${
+                        player.auctionStatus === 'sold'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800'
+                          : player.auctionStatus === 'in_progress'
+                          ? 'bg-amber-50 text-amber-700 border-amber-300 animate-pulse dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800'
+                          : player.auctionStatus === 'unsold'
+                          ? 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800'
+                          : player.auctionStatus === 'allotted'
+                          ? 'bg-purple-50 text-purple-700 border-purple-300 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800'
+                          : 'bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800'
+                      }`}
+                    >
+                      {player.auctionStatus === 'in_progress'
+                        ? 'Live on Block'
+                        : player.auctionStatus === 'available' || player.auctionStatus === 'pending'
+                        ? 'Available'
+                        : player.auctionStatus}
                     </span>
                   )}
                 </div>
@@ -195,8 +235,22 @@ export function PlayerDiscoveryView({ initialPlayers, seasonName }: PlayerDiscov
                       >
                         CricHeroes ↗
                       </a>
+                    ) : player.cricheroesStatus === 'verified' ? (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">
+                        Verified CricHeroes
+                      </span>
+                    ) : player.cricheroesStatus === 'profile_creation_pending' ? (
+                      <span className="text-amber-600 dark:text-amber-400 text-[11px] font-medium">
+                        Profile Pending
+                      </span>
+                    ) : player.cricheroesStatus === 'verification_pending' ? (
+                      <span className="text-sky-600 dark:text-sky-400 text-[11px] font-medium">
+                        Verification Pending
+                      </span>
                     ) : (
-                      <span className="text-gray-400 dark:text-gray-500">Unlinked</span>
+                      <span className="text-gray-400 dark:text-gray-500 text-[11px]">
+                        Not Linked
+                      </span>
                     )}
                   </div>
                 </div>
@@ -224,7 +278,14 @@ export function PlayerDiscoveryView({ initialPlayers, seasonName }: PlayerDiscov
                   </div>
                 )}
                 <div>
-                  <h3 className="text-base font-black text-zinc-100">{selectedPlayer.fullName}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-black text-zinc-100">{selectedPlayer.fullName}</h3>
+                    {selectedPlayer.rollNumber && (
+                      <span className="font-mono text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">
+                        {selectedPlayer.rollNumber}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-zinc-400">
                     {selectedPlayer.programme === 'diploma'
                       ? 'Diploma'
@@ -253,6 +314,16 @@ export function PlayerDiscoveryView({ initialPlayers, seasonName }: PlayerDiscov
               <span className="rounded-full bg-emerald-500/20 px-3 py-1 font-bold text-emerald-400 border border-emerald-500/30">
                 Base Price: ₹{selectedPlayer.basePrice}
               </span>
+              {selectedPlayer.auctionStatus && (
+                <span className="rounded-full bg-sky-500/20 px-3 py-1 font-bold text-sky-400 border border-sky-500/30 capitalize">
+                  Status: {selectedPlayer.auctionStatus}
+                </span>
+              )}
+              {selectedPlayer.fieldingPosition && (
+                <span className="rounded-full bg-zinc-800 px-3 py-1 font-semibold text-zinc-300">
+                  Pos: {selectedPlayer.fieldingPosition}
+                </span>
+              )}
             </div>
 
             {/* Career Stats Grid */}

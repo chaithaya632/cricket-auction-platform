@@ -15,15 +15,135 @@ import { parseRollNumber, calculateAcademicYear, deriveBucket } from '@/domain/a
 import { derivePlayerType, validateSkills } from '@/domain/players';
 import { BASE_PRICE_LADDER, type BasePrice } from '@/lib/constants';
 import type { PlayerFullData } from '@/lib/players/types';
+import type { DbPlayerSkillProfile } from '@/lib/db/types';
 
 interface PlayerPortalFormProps {
   initialData: PlayerFullData;
   activeSeasonName: string;
 }
 
+/**
+ * Safely parses pre-existing skills and questionnaire answers from the database.
+ */
+function parseInitialSkills(profile: DbPlayerSkillProfile | null) {
+  if (!profile) {
+    return {
+      isBatter: false,
+      battingArm: 'right' as 'right' | 'left',
+      battingStyleCustom: 'aggressive',
+      battingOrderCustom: 'top_order',
+      isBowler: false,
+      bowlingArm: 'right' as 'right' | 'left',
+      bowlingType: 'fast' as 'fast' | 'spin',
+      paceVariety: 'seam',
+      spinVariety: 'off_spin',
+      bowlingRoles: ['Economical bowler'],
+      isWicketKeeper: false,
+      fieldingZone: 'infield' as 'infield' | 'outfield',
+      preferredFieldingPosition: 'Cover',
+      highestLevelPlayed: 'inter_college',
+      playedPreviousAcc: false,
+      previousAccTeam: '',
+      isFielderOnly: false,
+      confirmedFielderOnly: false,
+      experienceYears: '' as number | '',
+      experienceDesc: '',
+      hasYearDiscrepancy: false,
+      discrepancyNote: '',
+      isAccReferred: false,
+      referredFranchise: '',
+      isCricheroesPending: false,
+    };
+  }
+
+  let parsed: any = null;
+  if (profile.experience_description) {
+    try {
+      parsed = JSON.parse(profile.experience_description);
+    } catch {
+      // plain text description
+    }
+  }
+
+  const isBatter = Boolean(profile.is_batter);
+  const isBowler = Boolean(profile.is_bowler);
+  const isWicketKeeper = Boolean(profile.is_wicket_keeper);
+  const isFielderOnly = Boolean(profile.is_fielder_only);
+
+  const battingArm: 'right' | 'left' =
+    parsed?.batting?.arm || (profile.batting_style?.includes('left') ? 'left' : 'right');
+  const battingStyleCustom: string = parsed?.batting?.style || 'aggressive';
+  const battingOrderCustom: string =
+    parsed?.batting?.position || profile.batting_order || 'top_order';
+
+  const bowlingArm: 'right' | 'left' =
+    parsed?.bowling?.arm || (profile.bowling_style?.includes('left') ? 'left' : 'right');
+  const bowlingType: 'fast' | 'spin' =
+    parsed?.bowling?.type ||
+    (profile.bowling_style?.includes('spin') || profile.bowling_style?.includes('orthodox')
+      ? 'spin'
+      : 'fast');
+  const paceVariety: string = parsed?.bowling?.paceVariety || 'seam';
+  const spinVariety: string = parsed?.bowling?.spinVariety || 'off_spin';
+  const bowlingRoles: string[] =
+    Array.isArray(parsed?.bowling?.roles) && parsed.bowling.roles.length > 0
+      ? parsed.bowling.roles
+      : ['Economical bowler'];
+
+  const fieldingZone: 'infield' | 'outfield' = parsed?.fielding?.zone || 'infield';
+  const preferredFieldingPosition: string =
+    parsed?.fielding?.position || profile.fielding_position || 'Cover';
+
+  const highestLevelPlayed: string = parsed?.experience?.highestLevel || 'inter_college';
+  const playedPreviousAcc: boolean = Boolean(parsed?.experience?.playedPreviousAcc);
+  const previousAccTeam: string = parsed?.experience?.previousAccTeam || '';
+  const experienceDesc: string =
+    typeof parsed?.experience?.notes === 'string'
+      ? parsed.experience.notes
+      : typeof profile.experience_description === 'string' && !parsed
+      ? profile.experience_description
+      : '';
+
+  return {
+    isBatter,
+    battingArm,
+    battingStyleCustom,
+    battingOrderCustom,
+    isBowler,
+    bowlingArm,
+    bowlingType,
+    paceVariety,
+    spinVariety,
+    bowlingRoles,
+    isWicketKeeper,
+    fieldingZone,
+    preferredFieldingPosition,
+    highestLevelPlayed,
+    playedPreviousAcc,
+    previousAccTeam,
+    isFielderOnly,
+    confirmedFielderOnly: isFielderOnly,
+    experienceYears:
+      typeof profile.experience_years === 'number'
+        ? profile.experience_years
+        : ('' as number | ''),
+    experienceDesc,
+    hasYearDiscrepancy: Boolean(parsed?.discrepancy),
+    discrepancyNote: parsed?.discrepancy || '',
+    isAccReferred: Boolean(parsed?.referral?.referredByFranchise),
+    referredFranchise: parsed?.referral?.referredByFranchise || '',
+    isCricheroesPending: Boolean(parsed?.cricHeroesPending),
+  };
+}
+
 export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortalFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  const isEligible = Boolean(
+    initialData.registration?.is_auction_eligible ||
+    initialData.registration?.registration_status === 'eligible'
+  );
 
   const [activeTab, setActiveTab] = useState<'profile' | 'registration' | 'skills'>(
     !initialData.player
@@ -34,18 +154,42 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
   );
 
   // ---------------------------------------------------------------------------
-  // 1. Personal Profile State
+  // 1. Personal Profile State & Snapshot
   // ---------------------------------------------------------------------------
+  const [isEditingProfile, setIsEditingProfile] = useState(!initialData.player);
   const [fullName, setFullName] = useState(initialData.player?.full_name || '');
   const [rollNumber, setRollNumber] = useState(initialData.player?.roll_number || '');
   const [mobile, setMobile] = useState(initialData.player?.mobile || '');
   const [photoUrl, setPhotoUrl] = useState(initialData.player?.photo_url || '');
 
+  const [profileSnapshot, setProfileSnapshot] = useState({
+    fullName: initialData.player?.full_name || '',
+    rollNumber: initialData.player?.roll_number || '',
+    mobile: initialData.player?.mobile || '',
+    photoUrl: initialData.player?.photo_url || '',
+  });
+
+  const handleStartEditProfile = () => {
+    setProfileSnapshot({ fullName, rollNumber, mobile, photoUrl });
+    setIsEditingProfile(true);
+    setMessage(null);
+  };
+
+  const handleCancelProfile = () => {
+    setFullName(profileSnapshot.fullName);
+    setRollNumber(profileSnapshot.rollNumber);
+    setMobile(profileSnapshot.mobile);
+    setPhotoUrl(profileSnapshot.photoUrl);
+    setIsEditingProfile(false);
+    setMessage(null);
+  };
+
   // ---------------------------------------------------------------------------
-  // 2. Season Registration State
+  // 2. Season Registration State & Snapshot
   // ---------------------------------------------------------------------------
+  const [isEditingReg, setIsEditingReg] = useState(!initialData.registration);
   const [regRollNumber, setRegRollNumber] = useState(
-    initialData.registration ? rollNumber : rollNumber
+    initialData.player?.roll_number || rollNumber
   );
   const [programme, setProgramme] = useState<
     'btech_regular' | 'btech_lateral' | 'diploma' | 'pg'
@@ -85,53 +229,204 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
     }
   };
 
-  // ---------------------------------------------------------------------------
-  // 3. Registration Extras (CricHeroes Pending, Discrepancy, Referral)
-  // ---------------------------------------------------------------------------
-  const [isCricheroesPending, setIsCricheroesPending] = useState(false);
-  const [hasYearDiscrepancy, setHasYearDiscrepancy] = useState(false);
-  const [discrepancyNote, setDiscrepancyNote] = useState('');
-  const [isAccReferred, setIsAccReferred] = useState(false);
-  const [referredFranchise, setReferredFranchise] = useState('');
-
-  // ---------------------------------------------------------------------------
-  // 4. Skill Profile & Branching Questionnaire State (§5.1)
-  // ---------------------------------------------------------------------------
-  const [isBatter, setIsBatter] = useState(initialData.skillProfile?.is_batter ?? false);
-  const [battingArm, setBattingArm] = useState<'right' | 'left'>('right');
-  const [battingStyleCustom, setBattingStyleCustom] = useState<string>('aggressive');
-  const [battingOrderCustom, setBattingOrderCustom] = useState<string>('top_order');
-
-  const [isBowler, setIsBowler] = useState(initialData.skillProfile?.is_bowler ?? false);
-  const [bowlingArm, setBowlingArm] = useState<'right' | 'left'>('right');
-  const [bowlingType, setBowlingType] = useState<'fast' | 'spin'>('fast');
-  const [paceVariety, setPaceVariety] = useState<string>('seam');
-  const [spinVariety, setSpinVariety] = useState<string>('off_spin');
-  const [bowlingRoles, setBowlingRoles] = useState<string[]>(['Economical bowler']);
-
-  const [isWicketKeeper, setIsWicketKeeper] = useState(
-    initialData.skillProfile?.is_wicket_keeper ?? false
+  // Registration Extras (CricHeroes Pending, Discrepancy, Referral)
+  const initialParsedSkills = useMemo(
+    () => parseInitialSkills(initialData.skillProfile),
+    [initialData.skillProfile]
   );
-  const [fieldingZone, setFieldingZone] = useState<'infield' | 'outfield'>('infield');
-  const [preferredFieldingPosition, setPreferredFieldingPosition] = useState<string>('Cover');
 
-  const [highestLevelPlayed, setHighestLevelPlayed] = useState<string>('inter_college');
-  const [playedPreviousAcc, setPlayedPreviousAcc] = useState<boolean>(false);
-  const [previousAccTeam, setPreviousAccTeam] = useState<string>('');
-
-  const [isFielderOnly, setIsFielderOnly] = useState(
-    initialData.skillProfile?.is_fielder_only ?? false
+  const [isCricheroesPending, setIsCricheroesPending] = useState(
+    initialParsedSkills.isCricheroesPending
   );
+  const [hasYearDiscrepancy, setHasYearDiscrepancy] = useState(
+    initialParsedSkills.hasYearDiscrepancy
+  );
+  const [discrepancyNote, setDiscrepancyNote] = useState(
+    initialParsedSkills.discrepancyNote
+  );
+  const [isAccReferred, setIsAccReferred] = useState(
+    initialParsedSkills.isAccReferred
+  );
+  const [referredFranchise, setReferredFranchise] = useState(
+    initialParsedSkills.referredFranchise
+  );
+
+  const [regSnapshot, setRegSnapshot] = useState({
+    regRollNumber: initialData.player?.roll_number || rollNumber,
+    programme: (initialData.registration?.programme as any) || 'btech_regular',
+    academicYear: initialData.registration?.academic_year || 1,
+    branch: initialData.registration?.branch || 'CSE',
+    basePrice: (initialData.registration?.base_price as BasePrice) || 20,
+    cricheroesUrl: initialData.registration?.cricheroes_url || '',
+    cricheroesMobile: initialData.registration?.cricheroes_registered_mobile || '',
+    isCricheroesPending: initialParsedSkills.isCricheroesPending,
+    hasYearDiscrepancy: initialParsedSkills.hasYearDiscrepancy,
+    discrepancyNote: initialParsedSkills.discrepancyNote,
+    isAccReferred: initialParsedSkills.isAccReferred,
+    referredFranchise: initialParsedSkills.referredFranchise,
+  });
+
+  const handleStartEditReg = () => {
+    if (isEligible) return;
+    setRegSnapshot({
+      regRollNumber,
+      programme,
+      academicYear,
+      branch,
+      basePrice,
+      cricheroesUrl,
+      cricheroesMobile,
+      isCricheroesPending,
+      hasYearDiscrepancy,
+      discrepancyNote,
+      isAccReferred,
+      referredFranchise,
+    });
+    setIsEditingReg(true);
+    setMessage(null);
+  };
+
+  const handleCancelReg = () => {
+    setRegRollNumber(regSnapshot.regRollNumber);
+    setProgramme(regSnapshot.programme);
+    setAcademicYear(regSnapshot.academicYear);
+    setBranch(regSnapshot.branch);
+    setBasePrice(regSnapshot.basePrice);
+    setCricheroesUrl(regSnapshot.cricheroesUrl);
+    setCricheroesMobile(regSnapshot.cricheroesMobile);
+    setIsCricheroesPending(regSnapshot.isCricheroesPending);
+    setHasYearDiscrepancy(regSnapshot.hasYearDiscrepancy);
+    setDiscrepancyNote(regSnapshot.discrepancyNote);
+    setIsAccReferred(regSnapshot.isAccReferred);
+    setReferredFranchise(regSnapshot.referredFranchise);
+    setIsEditingReg(false);
+    setMessage(null);
+  };
+
+  // ---------------------------------------------------------------------------
+  // 3. Skill Profile & Questionnaire State & Snapshot (§5.1)
+  // ---------------------------------------------------------------------------
+  const [isEditingSkills, setIsEditingSkills] = useState(!initialData.skillProfile);
+
+  const [isBatter, setIsBatter] = useState(initialParsedSkills.isBatter);
+  const [battingArm, setBattingArm] = useState<'right' | 'left'>(initialParsedSkills.battingArm);
+  const [battingStyleCustom, setBattingStyleCustom] = useState<string>(
+    initialParsedSkills.battingStyleCustom
+  );
+  const [battingOrderCustom, setBattingOrderCustom] = useState<string>(
+    initialParsedSkills.battingOrderCustom
+  );
+
+  const [isBowler, setIsBowler] = useState(initialParsedSkills.isBowler);
+  const [bowlingArm, setBowlingArm] = useState<'right' | 'left'>(initialParsedSkills.bowlingArm);
+  const [bowlingType, setBowlingType] = useState<'fast' | 'spin'>(initialParsedSkills.bowlingType);
+  const [paceVariety, setPaceVariety] = useState<string>(initialParsedSkills.paceVariety);
+  const [spinVariety, setSpinVariety] = useState<string>(initialParsedSkills.spinVariety);
+  const [bowlingRoles, setBowlingRoles] = useState<string[]>(initialParsedSkills.bowlingRoles);
+
+  const [isWicketKeeper, setIsWicketKeeper] = useState(initialParsedSkills.isWicketKeeper);
+  const [fieldingZone, setFieldingZone] = useState<'infield' | 'outfield'>(
+    initialParsedSkills.fieldingZone
+  );
+  const [preferredFieldingPosition, setPreferredFieldingPosition] = useState<string>(
+    initialParsedSkills.preferredFieldingPosition
+  );
+
+  const [highestLevelPlayed, setHighestLevelPlayed] = useState<string>(
+    initialParsedSkills.highestLevelPlayed
+  );
+  const [playedPreviousAcc, setPlayedPreviousAcc] = useState<boolean>(
+    initialParsedSkills.playedPreviousAcc
+  );
+  const [previousAccTeam, setPreviousAccTeam] = useState<string>(
+    initialParsedSkills.previousAccTeam
+  );
+
+  const [isFielderOnly, setIsFielderOnly] = useState(initialParsedSkills.isFielderOnly);
   const [confirmedFielderOnly, setConfirmedFielderOnly] = useState(
-    initialData.skillProfile?.is_fielder_only ?? false
+    initialParsedSkills.confirmedFielderOnly
   );
 
   const [experienceYears, setExperienceYears] = useState<number | ''>(
-    initialData.skillProfile?.experience_years ?? ''
+    initialParsedSkills.experienceYears
   );
-  const [experienceDesc, setExperienceDesc] = useState(
-    initialData.skillProfile?.experience_description || ''
-  );
+  const [experienceDesc, setExperienceDesc] = useState(initialParsedSkills.experienceDesc);
+
+  const [skillsSnapshot, setSkillsSnapshot] = useState({
+    isBatter: initialParsedSkills.isBatter,
+    battingArm: initialParsedSkills.battingArm,
+    battingStyleCustom: initialParsedSkills.battingStyleCustom,
+    battingOrderCustom: initialParsedSkills.battingOrderCustom,
+    isBowler: initialParsedSkills.isBowler,
+    bowlingArm: initialParsedSkills.bowlingArm,
+    bowlingType: initialParsedSkills.bowlingType,
+    paceVariety: initialParsedSkills.paceVariety,
+    spinVariety: initialParsedSkills.spinVariety,
+    bowlingRoles: initialParsedSkills.bowlingRoles,
+    isWicketKeeper: initialParsedSkills.isWicketKeeper,
+    fieldingZone: initialParsedSkills.fieldingZone,
+    preferredFieldingPosition: initialParsedSkills.preferredFieldingPosition,
+    highestLevelPlayed: initialParsedSkills.highestLevelPlayed,
+    playedPreviousAcc: initialParsedSkills.playedPreviousAcc,
+    previousAccTeam: initialParsedSkills.previousAccTeam,
+    isFielderOnly: initialParsedSkills.isFielderOnly,
+    confirmedFielderOnly: initialParsedSkills.confirmedFielderOnly,
+    experienceYears: initialParsedSkills.experienceYears,
+    experienceDesc: initialParsedSkills.experienceDesc,
+  });
+
+  const handleStartEditSkills = () => {
+    if (isEligible) return;
+    setSkillsSnapshot({
+      isBatter,
+      battingArm,
+      battingStyleCustom,
+      battingOrderCustom,
+      isBowler,
+      bowlingArm,
+      bowlingType,
+      paceVariety,
+      spinVariety,
+      bowlingRoles,
+      isWicketKeeper,
+      fieldingZone,
+      preferredFieldingPosition,
+      highestLevelPlayed,
+      playedPreviousAcc,
+      previousAccTeam,
+      isFielderOnly,
+      confirmedFielderOnly,
+      experienceYears,
+      experienceDesc,
+    });
+    setIsEditingSkills(true);
+    setMessage(null);
+  };
+
+  const handleCancelSkills = () => {
+    setIsBatter(skillsSnapshot.isBatter);
+    setBattingArm(skillsSnapshot.battingArm);
+    setBattingStyleCustom(skillsSnapshot.battingStyleCustom);
+    setBattingOrderCustom(skillsSnapshot.battingOrderCustom);
+    setIsBowler(skillsSnapshot.isBowler);
+    setBowlingArm(skillsSnapshot.bowlingArm);
+    setBowlingType(skillsSnapshot.bowlingType);
+    setPaceVariety(skillsSnapshot.paceVariety);
+    setSpinVariety(skillsSnapshot.spinVariety);
+    setBowlingRoles(skillsSnapshot.bowlingRoles);
+    setIsWicketKeeper(skillsSnapshot.isWicketKeeper);
+    setFieldingZone(skillsSnapshot.fieldingZone);
+    setPreferredFieldingPosition(skillsSnapshot.preferredFieldingPosition);
+    setHighestLevelPlayed(skillsSnapshot.highestLevelPlayed);
+    setPlayedPreviousAcc(skillsSnapshot.playedPreviousAcc);
+    setPreviousAccTeam(skillsSnapshot.previousAccTeam);
+    setIsFielderOnly(skillsSnapshot.isFielderOnly);
+    setConfirmedFielderOnly(skillsSnapshot.confirmedFielderOnly);
+    setExperienceYears(skillsSnapshot.experienceYears);
+    setExperienceDesc(skillsSnapshot.experienceDesc);
+    setIsEditingSkills(false);
+    setMessage(null);
+  };
 
   // Notifications
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(
@@ -183,7 +478,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
       if (!res.success) {
         setMessage({ type: 'error', text: res.error || 'Failed to save profile' });
       } else {
-        setMessage({ type: 'success', text: 'Personal profile saved successfully!' });
+        setProfileSnapshot({ fullName, rollNumber, mobile, photoUrl });
+        setIsEditingProfile(false);
+        setMessage({ type: 'success', text: 'Registration information saved' });
         router.refresh();
       }
     });
@@ -207,9 +504,26 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
       if (!res.success) {
         setMessage({ type: 'error', text: res.error || 'Season registration failed' });
       } else {
-        setMessage({ type: 'success', text: 'Registered for season successfully!' });
+        setRegSnapshot({
+          regRollNumber,
+          programme,
+          academicYear,
+          branch,
+          basePrice,
+          cricheroesUrl,
+          cricheroesMobile,
+          isCricheroesPending,
+          hasYearDiscrepancy,
+          discrepancyNote,
+          isAccReferred,
+          referredFranchise,
+        });
+        setIsEditingReg(false);
+        setMessage({ type: 'success', text: 'Registration information saved' });
         router.refresh();
-        setActiveTab('skills');
+        if (!initialData.registration) {
+          setActiveTab('skills');
+        }
       }
     });
   }
@@ -222,6 +536,14 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
       setMessage({
         type: 'error',
         text: 'Please submit your season registration before completing your skill questionnaire.',
+      });
+      return;
+    }
+
+    if (isEligible) {
+      setMessage({
+        type: 'error',
+        text: 'Your registration is approved and locked for the tournament auction. Modifications cannot be made.',
       });
       return;
     }
@@ -248,41 +570,61 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
     }
 
     const structuredProfile = {
-      batting: isBatter ? {
-        arm: battingArm,
-        style: battingStyleCustom,
-        position: battingOrderCustom,
-      } : null,
-      bowling: isBowler ? {
-        arm: bowlingArm,
-        type: bowlingType,
-        paceVariety: bowlingType === 'fast' ? paceVariety : null,
-        spinVariety: bowlingType === 'spin' ? spinVariety : null,
-        roles: bowlingRoles,
-      } : null,
-      fielding: !isWicketKeeper ? {
-        zone: fieldingZone,
-        position: preferredFieldingPosition,
-      } : { zone: 'wicket_keeper', position: 'Wicket-Keeper' },
+      batting: isBatter
+        ? {
+            arm: battingArm,
+            style: battingStyleCustom,
+            position: battingOrderCustom,
+          }
+        : null,
+      bowling: isBowler
+        ? {
+            arm: bowlingArm,
+            type: bowlingType,
+            paceVariety: bowlingType === 'fast' ? paceVariety : null,
+            spinVariety: bowlingType === 'spin' ? spinVariety : null,
+            roles: bowlingRoles,
+          }
+        : null,
+      fielding: !isWicketKeeper
+        ? {
+            zone: fieldingZone,
+            position: preferredFieldingPosition,
+          }
+        : { zone: 'wicket_keeper', position: 'Wicket-Keeper' },
       experience: {
         highestLevel: highestLevelPlayed,
         playedPreviousAcc,
         previousAccTeam: playedPreviousAcc ? previousAccTeam : null,
         notes: experienceDesc,
       },
-      referral: isAccReferred ? {
-        referredByFranchise: referredFranchise,
-      } : null,
+      referral: isAccReferred
+        ? {
+            referredByFranchise: referredFranchise,
+          }
+        : null,
       discrepancy: hasYearDiscrepancy ? discrepancyNote : null,
       cricHeroesPending: isCricheroesPending,
     };
 
-    const mappedBattingStyle = isBatter ? (battingArm === 'left' ? 'left_hand' : 'right_hand') : null;
-    const mappedBattingOrder = isBatter ? (battingOrderCustom === 'finisher' ? 'lower_order' : (battingOrderCustom as any)) : null;
+    const mappedBattingStyle = isBatter
+      ? battingArm === 'left'
+        ? 'left_hand'
+        : 'right_hand'
+      : null;
+    const mappedBattingOrder = isBatter
+      ? battingOrderCustom === 'finisher'
+        ? 'lower_order'
+        : (battingOrderCustom as any)
+      : null;
     const mappedBowlingStyle = isBowler
-      ? (bowlingArm === 'left'
-          ? (bowlingType === 'fast' ? 'left_arm_fast' : 'left_arm_orthodox')
-          : (bowlingType === 'fast' ? 'right_arm_medium' : 'right_arm_off_spin'))
+      ? bowlingArm === 'left'
+        ? bowlingType === 'fast'
+          ? 'left_arm_fast'
+          : 'left_arm_orthodox'
+        : bowlingType === 'fast'
+        ? 'right_arm_medium'
+        : 'right_arm_off_spin'
       : null;
 
     startTransition(async () => {
@@ -302,14 +644,34 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
       if (!res.success) {
         setMessage({ type: 'error', text: res.error || 'Failed to save skill profile' });
       } else {
+        setSkillsSnapshot({
+          isBatter,
+          battingArm,
+          battingStyleCustom,
+          battingOrderCustom,
+          isBowler,
+          bowlingArm,
+          bowlingType,
+          paceVariety,
+          spinVariety,
+          bowlingRoles,
+          isWicketKeeper,
+          fieldingZone,
+          preferredFieldingPosition,
+          highestLevelPlayed,
+          playedPreviousAcc,
+          previousAccTeam,
+          isFielderOnly,
+          confirmedFielderOnly,
+          experienceYears,
+          experienceDesc,
+        });
+        setIsEditingSkills(false);
         setMessage({
           type: 'success',
-          text: 'Skill questionnaire saved! Auction eligibility is now active. Redirecting to your Player Dashboard...',
+          text: 'Registration information saved',
         });
         router.refresh();
-        setTimeout(() => {
-          router.push('/player');
-        }, 1200);
       }
     });
   }
@@ -326,6 +688,24 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
           <span>← Return to Player Dashboard</span>
         </button>
       </div>
+
+      {/* Auction Eligibility Lock Banner */}
+      {isEligible && (
+        <div className="mb-6 rounded-lg border-2 border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/40 p-4">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">🔒</span>
+            <div>
+              <h4 className="font-bold text-sm text-emerald-900 dark:text-emerald-200">
+                Registration Approved &amp; Locked for Auction
+              </h4>
+              <p className="text-xs text-emerald-800 dark:text-emerald-300 mt-0.5">
+                Your player registration and skill questionnaire have been verified and approved by the Super Admin for the active tournament auction.
+                Modifications are locked to ensure auction integrity.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tab Navigation */}
       <div className="mb-6 flex border-b border-gray-200 dark:border-gray-800">
@@ -397,10 +777,38 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
           className="rounded-lg border p-6 bg-white dark:bg-gray-900 shadow-sm"
           style={{ borderColor: 'var(--border)' }}
         >
-          <h2 className="text-lg font-bold mb-1">Permanent Player Identity</h2>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-6">
-            Your permanent student cricket identity. Your roll number and contact mobile remain private.
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+            <div>
+              <h2 className="text-lg font-bold">Permanent Player Identity</h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Your permanent student cricket identity. Your roll number and contact mobile remain private.
+              </p>
+            </div>
+            {initialData.player && !isEditingProfile && (
+              <button
+                type="button"
+                onClick={handleStartEditProfile}
+                className="inline-flex items-center gap-1.5 rounded-md border border-emerald-600 bg-white px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-50 dark:bg-gray-800 dark:text-emerald-300 dark:hover:bg-gray-700 cursor-pointer"
+              >
+                <span>✏️</span>
+                <span>EDIT</span>
+              </button>
+            )}
+          </div>
+
+          {initialData.player && !isEditingProfile && (
+            <div className="mb-6 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 p-3.5 dark:border-emerald-800 dark:bg-emerald-950/30">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-white text-xs font-bold">✓</span>
+              <div>
+                <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                  Registration information saved
+                </p>
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-400">
+                  Profile is currently in read-only mode. Click EDIT to modify details.
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -411,10 +819,11 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 id="full_name"
                 type="text"
                 required
+                disabled={!isEditingProfile}
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 placeholder="e.g. Rahul Sharma"
-                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm dark:bg-gray-800 dark:border-gray-700"
+                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60 dark:bg-gray-800 dark:border-gray-700"
               />
             </div>
 
@@ -426,10 +835,11 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 id="roll_number"
                 type="text"
                 required
+                disabled={!isEditingProfile}
                 value={rollNumber}
                 onChange={(e) => setRollNumber(e.target.value.toUpperCase())}
                 placeholder="e.g. 23811A0501 or 23597-EC-001"
-                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm uppercase dark:bg-gray-800 dark:border-gray-700"
+                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm uppercase disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60 dark:bg-gray-800 dark:border-gray-700"
               />
             </div>
 
@@ -441,10 +851,11 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 id="mobile"
                 type="tel"
                 required
+                disabled={!isEditingProfile}
                 value={mobile}
                 onChange={(e) => setMobile(e.target.value)}
                 placeholder="10-digit mobile (e.g. 9876543210)"
-                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm dark:bg-gray-800 dark:border-gray-700"
+                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60 dark:bg-gray-800 dark:border-gray-700"
               />
               <span className="text-[11px] text-gray-500">
                 Never shared with other franchises or in public views.
@@ -458,22 +869,46 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               <input
                 id="photo_url"
                 type="url"
+                disabled={!isEditingProfile}
                 value={photoUrl}
                 onChange={(e) => setPhotoUrl(e.target.value)}
                 placeholder="https://example.com/photo.jpg"
-                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm dark:bg-gray-800 dark:border-gray-700"
+                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60 dark:bg-gray-800 dark:border-gray-700"
               />
             </div>
           </div>
 
-          <div className="mt-6 flex justify-end">
-            <button
-              type="submit"
-              disabled={isPending}
-              className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
-            >
-              {isPending ? 'Saving Profile...' : 'Save Profile'}
-            </button>
+          <div className="mt-6 flex justify-end gap-3 pt-4 border-t border-gray-100 dark:border-gray-800">
+            {!isEditingProfile ? (
+              <button
+                type="button"
+                onClick={handleStartEditProfile}
+                className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-5 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 cursor-pointer"
+              >
+                <span>✏️</span>
+                <span>EDIT</span>
+              </button>
+            ) : (
+              <>
+                {initialData.player && (
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={handleCancelProfile}
+                    className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 cursor-pointer disabled:opacity-50"
+                  >
+                    CANCEL
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="rounded-md bg-emerald-600 px-5 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
+                >
+                  {isPending ? 'Saving...' : 'SAVE'}
+                </button>
+              </>
+            )}
           </div>
         </form>
       )}
@@ -485,26 +920,52 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
           className="rounded-lg border p-6 bg-white dark:bg-gray-900 shadow-sm"
           style={{ borderColor: 'var(--border)' }}
         >
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <div>
               <h2 className="text-lg font-bold">{activeSeasonName} Registration</h2>
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 Select your base price and register for the auction.
               </p>
             </div>
-            {initialData.registration && (
-              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                Status: {initialData.registration.registration_status.toUpperCase()}
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {initialData.registration && (
+                <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                  Status: {initialData.registration.registration_status.toUpperCase()}
+                </span>
+              )}
+              {initialData.registration && !isEditingReg && !isEligible && (
+                <button
+                  type="button"
+                  onClick={handleStartEditReg}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-emerald-600 bg-white px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-50 dark:bg-gray-800 dark:text-emerald-300 dark:hover:bg-gray-700 cursor-pointer"
+                >
+                  <span>✏️</span>
+                  <span>EDIT</span>
+                </button>
+              )}
+            </div>
           </div>
+
+          {initialData.registration && !isEditingReg && !isEligible && (
+            <div className="mb-6 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 p-3.5 dark:border-emerald-800 dark:bg-emerald-950/30">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-white text-xs font-bold">✓</span>
+              <div>
+                <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                  Registration information saved
+                </p>
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-400">
+                  Season registration details are saved in read-only mode. Click EDIT to make changes before verification.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Academic Derivation Banner & Controls */}
           <div className="mb-6 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-semibold text-gray-800 dark:text-gray-200 text-xs">
-                  Academic Classification & Auction Bucket
+                  Academic Classification &amp; Auction Bucket
                 </p>
                 <p className="text-[11px] text-gray-500 dark:text-gray-400">
                   Your tournament auction tier is derived strictly from your course and academic year.
@@ -521,10 +982,10 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                   Course / Programme *
                 </label>
                 <select
-                  disabled={Boolean(initialData.registration)}
+                  disabled={!isEditingReg || isEligible}
                   value={programme}
                   onChange={(e) => setProgramme(e.target.value as any)}
-                  className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700"
+                  className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                 >
                   <option value="btech_regular">B.Tech (Regular)</option>
                   <option value="btech_lateral">B.Tech (Lateral Entry)</option>
@@ -538,10 +999,10 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                   Academic Year *
                 </label>
                 <select
-                  disabled={Boolean(initialData.registration)}
+                  disabled={!isEditingReg || isEligible}
                   value={academicYear}
                   onChange={(e) => setAcademicYear(Number(e.target.value))}
-                  className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700"
+                  className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                 >
                   <option value={1}>1st Year</option>
                   <option value={2}>2nd Year</option>
@@ -558,11 +1019,11 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 </label>
                 <input
                   type="text"
-                  disabled={Boolean(initialData.registration)}
+                  disabled={!isEditingReg || isEligible}
                   value={branch}
                   onChange={(e) => setBranch(e.target.value.toUpperCase())}
                   placeholder="e.g. CSE"
-                  className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm uppercase bg-white dark:bg-gray-800 dark:border-gray-700"
+                  className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm uppercase bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                 />
               </div>
             </div>
@@ -577,11 +1038,11 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 id="reg_roll"
                 type="text"
                 required
-                disabled={Boolean(initialData.registration)}
+                disabled={!isEditingReg || isEligible}
                 value={regRollNumber}
                 onChange={(e) => handleRegRollChange(e.target.value)}
                 placeholder="e.g. 24811A05F2, 23811A0501, or custom"
-                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm uppercase disabled:bg-gray-100 dark:disabled:bg-gray-800 dark:bg-gray-800 dark:border-gray-700"
+                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm uppercase disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60 dark:bg-gray-800 dark:border-gray-700"
               />
             </div>
 
@@ -592,10 +1053,10 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               <select
                 id="base_price"
                 required
-                disabled={Boolean(initialData.registration)}
+                disabled={!isEditingReg || isEligible}
                 value={basePrice}
                 onChange={(e) => setBasePrice(Number(e.target.value) as BasePrice)}
-                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm disabled:bg-gray-100 dark:disabled:bg-gray-800 dark:bg-gray-800 dark:border-gray-700"
+                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60 dark:bg-gray-800 dark:border-gray-700"
               >
                 {BASE_PRICE_LADDER.map((p) => (
                   <option key={p} value={p}>
@@ -612,11 +1073,11 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               <input
                 id="cricheroes_url"
                 type="url"
-                disabled={Boolean(initialData.registration)}
+                disabled={!isEditingReg || isEligible}
                 value={cricheroesUrl}
                 onChange={(e) => setCricheroesUrl(e.target.value)}
                 placeholder="https://cricheroes.in/player-profile/..."
-                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm disabled:bg-gray-100 dark:disabled:bg-gray-800 dark:bg-gray-800 dark:border-gray-700"
+                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60 dark:bg-gray-800 dark:border-gray-700"
               />
             </div>
 
@@ -627,11 +1088,11 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               <input
                 id="cricheroes_mobile"
                 type="tel"
-                disabled={Boolean(initialData.registration)}
+                disabled={!isEditingReg || isEligible}
                 value={cricheroesMobile}
                 onChange={(e) => setCricheroesMobile(e.target.value)}
                 placeholder="10-digit mobile registered in CricHeroes"
-                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm disabled:bg-gray-100 dark:disabled:bg-gray-800 dark:bg-gray-800 dark:border-gray-700"
+                className="w-full rounded-md border px-3 py-2 text-sm shadow-sm disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60 dark:bg-gray-800 dark:border-gray-700"
               />
             </div>
 
@@ -640,7 +1101,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
                 <input
                   type="checkbox"
-                  disabled={Boolean(initialData.registration)}
+                  disabled={!isEditingReg || isEligible}
                   checked={isCricheroesPending}
                   onChange={(e) => setIsCricheroesPending(e.target.checked)}
                   className="rounded text-amber-600 h-4 w-4"
@@ -664,7 +1125,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
                 <input
                   type="checkbox"
-                  disabled={Boolean(initialData.registration)}
+                  disabled={!isEditingReg || isEligible}
                   checked={hasYearDiscrepancy}
                   onChange={(e) => setHasYearDiscrepancy(e.target.checked)}
                   className="rounded text-blue-600 h-4 w-4"
@@ -678,11 +1139,11 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                   </p>
                   <input
                     type="text"
-                    disabled={Boolean(initialData.registration)}
+                    disabled={!isEditingReg || isEligible}
                     value={discrepancyNote}
                     onChange={(e) => setDiscrepancyNote(e.target.value)}
                     placeholder="Reason for discrepancy (e.g. Year-back in 2024, re-admitted to 2nd year)"
-                    className="w-full rounded border px-2 py-1 text-xs bg-white dark:bg-gray-800 dark:border-gray-700"
+                    className="w-full rounded border px-2 py-1 text-xs bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed"
                   />
                 </div>
               )}
@@ -693,7 +1154,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
                 <input
                   type="checkbox"
-                  disabled={Boolean(initialData.registration)}
+                  disabled={!isEditingReg || isEligible}
                   checked={isAccReferred}
                   onChange={(e) => setIsAccReferred(e.target.checked)}
                   className="rounded text-purple-600 h-4 w-4"
@@ -706,10 +1167,10 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                     Select Referring Franchise:
                   </label>
                   <select
-                    disabled={Boolean(initialData.registration)}
+                    disabled={!isEditingReg || isEligible}
                     value={referredFranchise}
                     onChange={(e) => setReferredFranchise(e.target.value)}
-                    className="w-full rounded-md border px-2.5 py-1.5 text-xs bg-white dark:bg-gray-800 dark:border-gray-700"
+                    className="w-full rounded-md border px-2.5 py-1.5 text-xs bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed"
                   >
                     <option value="">-- Choose Referring Team --</option>
                     <option value="Titans">Titans</option>
@@ -729,17 +1190,40 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
             </div>
           </div>
 
-          {!initialData.registration && (
-            <div className="mt-6 flex justify-end">
-              <button
-                type="submit"
-                disabled={isPending}
-                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
-              >
-                {isPending ? 'Registering...' : 'Register for Season'}
-              </button>
-            </div>
-          )}
+          <div className="mt-6 flex justify-end gap-3 pt-4 border-t border-gray-100 dark:border-gray-800">
+            {!isEditingReg ? (
+              !isEligible ? (
+                <button
+                  type="button"
+                  onClick={handleStartEditReg}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-5 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 cursor-pointer"
+                >
+                  <span>✏️</span>
+                  <span>EDIT</span>
+                </button>
+              ) : null
+            ) : (
+              <>
+                {initialData.registration && (
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={handleCancelReg}
+                    className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 cursor-pointer disabled:opacity-50"
+                  >
+                    CANCEL
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="rounded-md bg-emerald-600 px-5 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
+                >
+                  {isPending ? 'Saving...' : 'SAVE'}
+                </button>
+              </>
+            )}
+          </div>
         </form>
       )}
 
@@ -750,17 +1234,53 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
           className="rounded-lg border p-6 bg-white dark:bg-gray-900 shadow-sm"
           style={{ borderColor: 'var(--border)' }}
         >
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <div>
               <h2 className="text-lg font-bold">Player Skill Questionnaire</h2>
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 Answer the skill questions to derive your authoritative player type for the auction.
               </p>
             </div>
-            <div className="rounded-md bg-emerald-100 dark:bg-emerald-950 px-3 py-1 text-xs font-bold text-emerald-800 dark:text-emerald-300">
-              Derived Role: {derivedRolePreview.replace('_', ' ').toUpperCase()}
+            <div className="flex items-center gap-2">
+              <div className="rounded-md bg-emerald-100 dark:bg-emerald-950 px-3 py-1.5 text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                Derived Role: {derivedRolePreview.replace('_', ' ').toUpperCase()}
+              </div>
+              {initialData.skillProfile && !isEditingSkills && !isEligible && (
+                <button
+                  type="button"
+                  onClick={handleStartEditSkills}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-emerald-600 bg-white px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-50 dark:bg-gray-800 dark:text-emerald-300 dark:hover:bg-gray-700 cursor-pointer"
+                >
+                  <span>✏️</span>
+                  <span>EDIT</span>
+                </button>
+              )}
             </div>
           </div>
+
+          {initialData.skillProfile && !isEditingSkills && !isEligible && (
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50/70 p-3.5 dark:border-emerald-800 dark:bg-emerald-950/30">
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-white text-xs font-bold">✓</span>
+                <div>
+                  <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                    Registration information saved
+                  </p>
+                  <p className="text-[11px] text-emerald-700 dark:text-emerald-400">
+                    Questionnaire is currently in read-only mode. Click EDIT to unlock and adjust your answers.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleStartEditSkills}
+                className="inline-flex items-center gap-1.5 rounded-md border border-emerald-600 bg-white px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-50 dark:bg-gray-800 dark:text-emerald-300 dark:hover:bg-gray-700 cursor-pointer"
+              >
+                <span>✏️</span>
+                <span>EDIT</span>
+              </button>
+            </div>
+          )}
 
           {/* Primary Skill Checkboxes */}
           <div className="mb-6 grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 rounded-md bg-gray-50 dark:bg-gray-800/40 border">
@@ -768,9 +1288,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               <input
                 type="checkbox"
                 checked={isBatter}
-                disabled={isFielderOnly}
+                disabled={!isEditingSkills || isFielderOnly || isEligible}
                 onChange={(e) => setIsBatter(e.target.checked)}
-                className="rounded text-emerald-600 h-4 w-4"
+                className="rounded text-emerald-600 h-4 w-4 disabled:opacity-85 disabled:cursor-not-allowed"
               />
               Batter
             </label>
@@ -779,9 +1299,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               <input
                 type="checkbox"
                 checked={isBowler}
-                disabled={isFielderOnly}
+                disabled={!isEditingSkills || isFielderOnly || isEligible}
                 onChange={(e) => setIsBowler(e.target.checked)}
-                className="rounded text-emerald-600 h-4 w-4"
+                className="rounded text-emerald-600 h-4 w-4 disabled:opacity-85 disabled:cursor-not-allowed"
               />
               Bowler
             </label>
@@ -790,9 +1310,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               <input
                 type="checkbox"
                 checked={isWicketKeeper}
-                disabled={isFielderOnly}
+                disabled={!isEditingSkills || isFielderOnly || isEligible}
                 onChange={(e) => setIsWicketKeeper(e.target.checked)}
-                className="rounded text-emerald-600 h-4 w-4"
+                className="rounded text-emerald-600 h-4 w-4 disabled:opacity-85 disabled:cursor-not-allowed"
               />
               Wicket-Keeper
             </label>
@@ -801,6 +1321,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               <input
                 type="checkbox"
                 checked={isFielderOnly}
+                disabled={!isEditingSkills || isEligible}
                 onChange={(e) => {
                   const checked = e.target.checked;
                   setIsFielderOnly(checked);
@@ -810,7 +1331,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                     setIsWicketKeeper(false);
                   }
                 }}
-                className="rounded text-emerald-600 h-4 w-4"
+                className="rounded text-emerald-600 h-4 w-4 disabled:opacity-85 disabled:cursor-not-allowed"
               />
               Fielder Only
             </label>
@@ -829,8 +1350,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                     <label className="block text-xs font-semibold mb-1">Batting Arm *</label>
                     <select
                       value={battingArm}
+                      disabled={!isEditingSkills || isEligible}
                       onChange={(e) => setBattingArm(e.target.value as any)}
-                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                     >
                       <option value="right">Right-hand bat</option>
                       <option value="left">Left-hand bat</option>
@@ -841,8 +1363,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                     <label className="block text-xs font-semibold mb-1">Batting Style *</label>
                     <select
                       value={battingStyleCustom}
+                      disabled={!isEditingSkills || isEligible}
                       onChange={(e) => setBattingStyleCustom(e.target.value)}
-                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                     >
                       <option value="strike_rotator">Strike Rotator</option>
                       <option value="aggressive">Aggressive Batter</option>
@@ -854,8 +1377,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                     <label className="block text-xs font-semibold mb-1">Preferred Position *</label>
                     <select
                       value={battingOrderCustom}
+                      disabled={!isEditingSkills || isEligible}
                       onChange={(e) => setBattingOrderCustom(e.target.value)}
-                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                     >
                       <option value="opener">Opener</option>
                       <option value="top_order">Top Order (3-4)</option>
@@ -878,8 +1402,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                     <label className="block text-xs font-semibold mb-1">Bowling Arm *</label>
                     <select
                       value={bowlingArm}
+                      disabled={!isEditingSkills || isEligible}
                       onChange={(e) => setBowlingArm(e.target.value as any)}
-                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                     >
                       <option value="right">Right-arm</option>
                       <option value="left">Left-arm</option>
@@ -890,8 +1415,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                     <label className="block text-xs font-semibold mb-1">Bowling Type *</label>
                     <select
                       value={bowlingType}
+                      disabled={!isEditingSkills || isEligible}
                       onChange={(e) => setBowlingType(e.target.value as any)}
-                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                     >
                       <option value="fast">Fast / Medium-Pace</option>
                       <option value="spin">Spin</option>
@@ -903,8 +1429,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                       <label className="block text-xs font-semibold mb-1">Pace Variety *</label>
                       <select
                         value={paceVariety}
+                        disabled={!isEditingSkills || isEligible}
                         onChange={(e) => setPaceVariety(e.target.value)}
-                        className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                        className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                       >
                         <option value="swing">Swing Bowler</option>
                         <option value="seam">Seam Bowler</option>
@@ -916,8 +1443,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                       <label className="block text-xs font-semibold mb-1">Spin Variety *</label>
                       <select
                         value={spinVariety}
+                        disabled={!isEditingSkills || isEligible}
                         onChange={(e) => setSpinVariety(e.target.value)}
-                        className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                        className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                       >
                         <option value="off_spin">Off-Spin</option>
                         <option value="leg_spin">Leg-Spin</option>
@@ -941,6 +1469,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                       <label key={role} className="flex items-center gap-2 text-xs cursor-pointer">
                         <input
                           type="checkbox"
+                          disabled={!isEditingSkills || isEligible}
                           checked={bowlingRoles.includes(role)}
                           onChange={(e) => {
                             if (e.target.checked) {
@@ -949,7 +1478,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                               setBowlingRoles(bowlingRoles.filter((r) => r !== role));
                             }
                           }}
-                          className="rounded text-blue-600 h-3.5 w-3.5"
+                          className="rounded text-blue-600 h-3.5 w-3.5 disabled:opacity-85 disabled:cursor-not-allowed"
                         />
                         {role}
                       </label>
@@ -970,8 +1499,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                     <label className="block text-xs font-semibold mb-1">Fielding Zone *</label>
                     <select
                       value={fieldingZone}
+                      disabled={!isEditingSkills || isEligible}
                       onChange={(e) => setFieldingZone(e.target.value as any)}
-                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                     >
                       <option value="infield">Infield</option>
                       <option value="outfield">Outfield</option>
@@ -982,8 +1512,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                     <label className="block text-xs font-semibold mb-1">Preferred Position *</label>
                     <select
                       value={preferredFieldingPosition}
+                      disabled={!isEditingSkills || isEligible}
                       onChange={(e) => setPreferredFieldingPosition(e.target.value)}
-                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                      className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                     >
                       {[
                         'Slip',
@@ -1023,8 +1554,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                   <label className="block text-xs font-semibold mb-1">Highest Level Played *</label>
                   <select
                     value={highestLevelPlayed}
+                    disabled={!isEditingSkills || isEligible}
                     onChange={(e) => setHighestLevelPlayed(e.target.value)}
-                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                   >
                     <option value="district_above">District or above</option>
                     <option value="inter_college">Inter-college</option>
@@ -1039,12 +1571,13 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                     type="number"
                     min="0"
                     max="30"
+                    disabled={!isEditingSkills || isEligible}
                     value={experienceYears}
                     onChange={(e) =>
                       setExperienceYears(e.target.value === '' ? '' : Number(e.target.value))
                     }
                     placeholder="e.g. 3"
-                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                   />
                 </div>
 
@@ -1052,8 +1585,9 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                   <label className="block text-xs font-semibold mb-1">Played Previous ACC Edition?</label>
                   <select
                     value={playedPreviousAcc ? 'yes' : 'no'}
+                    disabled={!isEditingSkills || isEligible}
                     onChange={(e) => setPlayedPreviousAcc(e.target.value === 'yes')}
-                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                   >
                     <option value="no">No</option>
                     <option value="yes">Yes</option>
@@ -1066,10 +1600,11 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                   <label className="block text-xs font-semibold mb-1">Previous ACC Team Name</label>
                   <input
                     type="text"
+                    disabled={!isEditingSkills || isEligible}
                     value={previousAccTeam}
                     onChange={(e) => setPreviousAccTeam(e.target.value)}
                     placeholder="e.g. Titans, Dominators"
-                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                    className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                   />
                 </div>
               )}
@@ -1080,10 +1615,11 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 </label>
                 <textarea
                   rows={2}
+                  disabled={!isEditingSkills || isEligible}
                   value={experienceDesc}
                   onChange={(e) => setExperienceDesc(e.target.value)}
                   placeholder="Mention awards, CricHeroes records, or match-winning performances..."
-                  className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700"
+                  className="w-full rounded-md border px-3 py-2 text-sm dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                 />
               </div>
             </div>
@@ -1105,9 +1641,10 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 <label className="flex items-center gap-2 text-xs font-bold text-amber-950 dark:text-amber-100 cursor-pointer pt-2 pl-6">
                   <input
                     type="checkbox"
+                    disabled={!isEditingSkills || isEligible}
                     checked={confirmedFielderOnly}
                     onChange={(e) => setConfirmedFielderOnly(e.target.checked)}
-                    className="rounded text-amber-600 h-4 w-4"
+                    className="rounded text-amber-600 h-4 w-4 disabled:opacity-85 disabled:cursor-not-allowed"
                   />
                   I explicitly confirm my registration as a Fielder only.
                 </label>
@@ -1115,14 +1652,44 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
             )}
           </div>
 
-          <div className="mt-6 flex justify-end">
-            <button
-              type="submit"
-              disabled={isPending}
-              className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
-            >
-              {isPending ? 'Saving Questionnaire...' : 'Save Skill Questionnaire'}
-            </button>
+          <div className="mt-6 flex justify-end gap-3 pt-4 border-t border-gray-100 dark:border-gray-800">
+            {!isEditingSkills ? (
+              !isEligible ? (
+                <button
+                  type="button"
+                  onClick={handleStartEditSkills}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-5 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 cursor-pointer"
+                >
+                  <span>✏️</span>
+                  <span>EDIT</span>
+                </button>
+              ) : (
+                <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1">
+                  <span>🔒</span>
+                  <span>Locked for Auction</span>
+                </span>
+              )
+            ) : (
+              <>
+                {initialData.skillProfile && (
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={handleCancelSkills}
+                    className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 cursor-pointer disabled:opacity-50"
+                  >
+                    CANCEL
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="rounded-md bg-emerald-600 px-5 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
+                >
+                  {isPending ? 'Saving...' : 'SAVE'}
+                </button>
+              </>
+            )}
           </div>
         </form>
       )}

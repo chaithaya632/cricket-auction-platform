@@ -177,16 +177,49 @@ export async function registerPlayerSeasonAction(
     // 3. Check for existing registration in this season
     const { data: existingRegistration } = await supabase
       .from('player_season_registrations')
-      .select('id, registration_status')
+      .select('id, registration_status, is_auction_eligible')
       .eq('player_id', userId)
       .eq('season_id', activeSeason.id)
       .maybeSingle();
 
     if (existingRegistration) {
-      return {
-        success: false,
-        error: 'You have already submitted a registration for this season.',
-      };
+      if (
+        existingRegistration.is_auction_eligible ||
+        existingRegistration.registration_status === 'eligible'
+      ) {
+        return {
+          success: false,
+          error: 'Your registration is approved and locked for the tournament auction. Modifications are not allowed.',
+        };
+      }
+
+      // Update existing registration details
+      const { data: updatedReg, error: updateError } = await supabase
+        .from('player_season_registrations')
+        .update({
+          programme,
+          academic_year: academicYear,
+          branch,
+          bucket: derivedPlayerBucket,
+          base_price,
+          cricheroes_url: cricheroes_url || null,
+          cricheroes_registered_mobile: cricheroes_registered_mobile || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingRegistration.id)
+        .select('*')
+        .single();
+
+      if (updateError) {
+        return {
+          success: false,
+          error: 'Could not update season registration details. Please try again.',
+        };
+      }
+
+      revalidatePath('/player');
+      revalidatePath('/player/registration');
+      return { success: true, data: updatedReg as DbPlayerSeasonRegistration };
     }
 
     // 4. Insert season registration
@@ -267,7 +300,7 @@ export async function savePlayerSkillProfileAction(
     // 2. Authoritative ownership check: verify registration belongs to this authenticated user
     const { data: registration, error: regError } = await supabase
       .from('player_season_registrations')
-      .select('id, player_id')
+      .select('id, player_id, is_auction_eligible, registration_status')
       .eq('id', registrationId)
       .maybeSingle();
 
@@ -275,6 +308,13 @@ export async function savePlayerSkillProfileAction(
       return {
         success: false,
         error: 'Unauthorized. You can only update your own skill profile.',
+      };
+    }
+
+    if (registration.is_auction_eligible || registration.registration_status === 'eligible') {
+      return {
+        success: false,
+        error: 'Your registration is approved and locked for the tournament auction. Skill questionnaire cannot be modified.',
       };
     }
 

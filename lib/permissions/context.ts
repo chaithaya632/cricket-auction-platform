@@ -42,18 +42,21 @@ export const getUserPermissionContext = cache(async (
   user: DbUser,
   seasonId?: string
 ): Promise<UserPermissionContext> => {
-  // 1. Resolve target season
-  let targetSeason: DbSeason | null = null;
-  if (seasonId) {
-    const { data } = await supabase
-      .from('seasons')
-      .select('*')
-      .eq('id', seasonId)
-      .maybeSingle();
-    targetSeason = (data as DbSeason) || null;
-  } else {
-    targetSeason = await getActiveSeason(supabase);
-  }
+  // 1. Resolve target season and user roles concurrently
+  const [seasonResult, roleRecordsResult] = await Promise.all([
+    seasonId
+      ? supabase.from('seasons').select('*').eq('id', seasonId).maybeSingle()
+      : getActiveSeason(supabase),
+    supabase
+      .from('season_roles')
+      .select('*, franchise:franchises(*)')
+      .eq('user_id', user.id)
+      .eq('is_active', true),
+  ]);
+
+  const targetSeason: DbSeason | null = (
+    seasonId ? (seasonResult as any)?.data : seasonResult
+  ) || null;
 
   // If no season is found, user has no active season roles
   if (!targetSeason) {
@@ -71,15 +74,9 @@ export const getUserPermissionContext = cache(async (
     };
   }
 
-  // 2. Fetch user roles for this specific season
-  const { data: roleRecords } = await supabase
-    .from('season_roles')
-    .select('*')
-    .eq('user_id', user.id)
-    .eq('season_id', targetSeason.id)
-    .eq('is_active', true);
-
-  const roles = (roleRecords as DbSeasonRole[]) || [];
+  // 2. Filter user roles for this specific season
+  const allRoles = (roleRecordsResult.data || []) as any[];
+  const roles = allRoles.filter((r) => r.season_id === targetSeason.id) as DbSeasonRole[];
 
   const isSuperAdmin = roles.some((r) => r.role === 'super_admin');
   const isOperator = roles.some((r) => r.role === 'operator');
@@ -90,18 +87,23 @@ export const getUserPermissionContext = cache(async (
 
   // 3. Resolve assigned franchise if user has franchise role
   let assignedFranchise: DbFranchise | null = null;
-  const franchiseRole = roles.find((r) => r.role === 'franchise' && r.franchise_id);
+  const franchiseRole = allRoles.find(
+    (r) => r.season_id === targetSeason.id && r.role === 'franchise' && r.franchise_id
+  );
 
-  if (franchiseRole && franchiseRole.franchise_id) {
-    const { data: franchiseData } = await supabase
-      .from('franchises')
-      .select('*')
-      .eq('id', franchiseRole.franchise_id)
-      .eq('season_id', targetSeason.id)
-      .eq('is_active', true)
-      .maybeSingle();
+  if (franchiseRole) {
+    assignedFranchise = (franchiseRole.franchise as DbFranchise) || null;
+    if (!assignedFranchise && franchiseRole.franchise_id) {
+      const { data: franchiseData } = await supabase
+        .from('franchises')
+        .select('*')
+        .eq('id', franchiseRole.franchise_id)
+        .eq('season_id', targetSeason.id)
+        .eq('is_active', true)
+        .maybeSingle();
 
-    assignedFranchise = (franchiseData as DbFranchise) || null;
+      assignedFranchise = (franchiseData as DbFranchise) || null;
+    }
   }
 
   return {

@@ -2,6 +2,7 @@
 // ACC Auction Portal — Franchise Application Queries
 // =============================================================================
 
+import { cache } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DbFranchise, DbBucketRule, DbSeasonConfig } from '@/lib/db/types';
 import {
@@ -24,32 +25,49 @@ import { PLAYERS } from '@/lib/acc/mock-data';
 /**
  * Retrieves the complete squad, financial state, bucket progress, and roster
  * for an authenticated franchise in a specific season.
+ * Memoized per server render cycle with React cache().
  */
-export async function getFranchiseSquadData(
+export const getFranchiseSquadData = cache(async (
   supabase: SupabaseClient,
   franchiseId: string,
   seasonId: string
-): Promise<FranchiseSquadSummary | null> {
-  // 1. Fetch franchise info
-  const { data: franchise, error: franchiseErr } = await supabase
-    .from('franchises')
-    .select('*')
-    .eq('id', franchiseId)
-    .single();
+): Promise<FranchiseSquadSummary | null> => {
+  // 1-5. Concurrently fetch franchise, config, bucket rules, acquired lots, and leadership
+  const [
+    franchiseResult,
+    configRowsResult,
+    bucketRulesResult,
+    lotsResult,
+    membersResult,
+  ] = await Promise.all([
+    supabase.from('franchises').select('*').eq('id', franchiseId).maybeSingle(),
+    supabase.from('season_config').select('key, value').eq('season_id', seasonId),
+    supabase
+      .from('bucket_rules')
+      .select('*')
+      .eq('season_id', seasonId)
+      .order('auction_order', { ascending: true }),
+    supabase
+      .from('auction_lots')
+      .select('id, registration_id, bucket, status, current_price, base_price')
+      .eq('season_id', seasonId)
+      .eq('highest_bidder_franchise_id', franchiseId)
+      .in('status', ['sold', 'allotted', 'scouted']),
+    supabase
+      .from('franchise_members')
+      .select('role, player_registration_id')
+      .eq('franchise_id', franchiseId)
+      .eq('is_active', true),
+  ]);
 
-  if (franchiseErr || !franchise) {
+  const franchise = franchiseResult.data as DbFranchise | null;
+  if (!franchise) {
     return null;
   }
 
-  // 2. Fetch season configuration
-  const { data: configRows } = await supabase
-    .from('season_config')
-    .select('key, value')
-    .eq('season_id', seasonId);
-
   const configMap: Record<string, string> = {};
-  if (configRows) {
-    for (const c of configRows as { key: string; value: string }[]) {
+  if (configRowsResult.data) {
+    for (const c of configRowsResult.data as { key: string; value: string }[]) {
       configMap[c.key] = c.value;
     }
   }
@@ -60,24 +78,9 @@ export async function getFranchiseSquadData(
   const minAuctionPurchases = parseInt(configMap['min_auction_purchases'] || '15', 10);
   const minBasePrice = 20;
 
-  // 3. Fetch bucket rules
-  const { data: bucketRulesData } = await supabase
-    .from('bucket_rules')
-    .select('*')
-    .eq('season_id', seasonId)
-    .order('auction_order', { ascending: true });
+  const bucketRules: DbBucketRule[] = (bucketRulesResult.data as DbBucketRule[]) || [];
 
-  const bucketRules: DbBucketRule[] = bucketRulesData || [];
-
-  // 4. Fetch operational acquired lots for this franchise
-  const { data: lotsData } = await supabase
-    .from('auction_lots')
-    .select('id, registration_id, bucket, status, current_price, base_price')
-    .eq('season_id', seasonId)
-    .eq('highest_bidder_franchise_id', franchiseId)
-    .in('status', ['sold', 'allotted', 'scouted']);
-
-  const rawLots = (lotsData || []) as {
+  const rawLots = (lotsResult.data || []) as {
     id: string;
     registration_id: string;
     bucket: string;
@@ -101,13 +104,7 @@ export async function getFranchiseSquadData(
     };
   });
 
-  // 5. Fetch leadership roles (captain / vice-captain)
-  const { data: membersData } = await supabase
-    .from('franchise_members')
-    .select('role, player_registration_id')
-    .eq('franchise_id', franchiseId)
-    .eq('is_active', true);
-
+  const membersData = membersResult.data;
   const captainRegId = membersData?.find((m) => m.role === 'captain')?.player_registration_id;
   const viceCaptainRegId = membersData?.find(
     (m) => m.role === 'vice_captain'
@@ -195,19 +192,19 @@ export async function getFranchiseSquadData(
     squadConstraints,
     squadPlayers,
   };
-}
+});
 
 /**
  * Discovers auction-eligible players for franchise scouting. Projections sourced via
- * public_players_view (strictly excluding private mobile numbers).
- * Attaches career statistics and provides a resilient fallback to tournament mock roster
- * if the database has zero registered players yet.
+ * public_players_view and authoritative database tables. Strictly excludes private mobile numbers.
+ * Never falls back to mock players.
+ * Memoized per server render cycle with React cache().
  */
-export async function getSeasonPlayerDiscovery(
+export const getSeasonPlayerDiscovery = cache(async (
   supabase: SupabaseClient,
   seasonId: string,
   filters?: PlayerDiscoveryFilters
-): Promise<PlayerDiscoveryItem[]> {
+): Promise<PlayerDiscoveryItem[]> => {
   try {
     let query = supabase
       .from('public_players_view')
@@ -215,11 +212,11 @@ export async function getSeasonPlayerDiscovery(
       .eq('season_id', seasonId)
       .eq('is_auction_eligible', true);
 
-    if (filters?.bucket) {
+    if (filters?.bucket && filters.bucket !== 'ALL') {
       query = query.eq('bucket', filters.bucket);
     }
 
-    if (filters?.derivedPlayerType) {
+    if (filters?.derivedPlayerType && filters.derivedPlayerType !== 'ALL') {
       query = query.eq('derived_player_type', filters.derivedPlayerType);
     }
 
@@ -229,86 +226,68 @@ export async function getSeasonPlayerDiscovery(
 
     const { data, error } = await query.order('full_name', { ascending: true });
 
-    // Resilient fallback to mock player pool if database has 0 registered eligible players
     if (error || !data || data.length === 0) {
-      const fallbackList: PlayerDiscoveryItem[] = PLAYERS.map((p) => {
-        const pType = p.playerType.toLowerCase().replace(/-/g, '_').replace(/ /g, '_');
-        return {
-          registrationId: `mock-reg-${p.id}`,
-          seasonId,
-          playerId: p.id,
-          fullName: p.fullName,
-          photoUrl: p.photoUrl,
-          programme: p.course.toLowerCase() === 'diploma' ? 'diploma' : 'btech_regular',
-          academicYear: p.yearOfStudy,
-          branch: p.branch,
-          bucket: p.bucket,
-          basePrice: p.basePrice,
-          registrationStatus: 'eligible',
-          cricheroesStatus: p.cricheroesVerified ? 'verified' : 'unverified',
-          cricheroesUrl: 'https://cricheroes.com',
-          isAuctionEligible: true,
-          derivedPlayerType: pType,
-          isBatter: pType.includes('batter') || pType.includes('all_rounder'),
-          isBowler: pType.includes('bowler') || pType.includes('all_rounder'),
-          isWicketKeeper: pType.includes('wicket'),
-          battingStyle: 'Right-hand bat',
-          bowlingStyle: pType.includes('bowler') ? 'Right-arm medium' : null,
-          experienceYears: 2,
-          careerStats: {
-            matches: p.stats.matches,
-            runs: p.stats.runs,
-            battingAvg: p.stats.battingAvg,
-            strikeRate: p.stats.strikeRate,
-            highestScore: p.stats.highestScore,
-            wickets: p.stats.wickets,
-            bowlingAvg: p.stats.bowlingAvg,
-            economy: p.stats.economy,
-            catches: p.stats.catches,
-            stumpings: p.stats.stumpings,
-            notes: 'Official ACC tournament candidate',
-          },
-          notes: 'Official ACC tournament candidate',
-        };
-      });
-
-      return fallbackList.filter((item) => {
-        if (filters?.bucket && item.bucket !== filters.bucket) return false;
-        if (filters?.derivedPlayerType && item.derivedPlayerType !== filters.derivedPlayerType) return false;
-        if (filters?.searchQuery) {
-          const q = filters.searchQuery.toLowerCase().trim();
-          if (!item.fullName.toLowerCase().includes(q) && !item.branch?.toLowerCase().includes(q)) {
-            return false;
-          }
-        }
-        return true;
-      });
+      return [];
     }
 
-    // Attach parsed career statistics for database players
     const regIds = (data as any[]).map((p) => p.registration_id).filter(Boolean);
+    const playerIds = (data as any[]).map((p) => p.player_id).filter(Boolean);
+
+    // Parallel fetch: skill profiles, non-sensitive roll numbers, and live auction lots
+    const [profilesResult, rollNumbersResult, lotsResult] = await Promise.all([
+      regIds.length > 0
+        ? supabase
+            .from('player_skill_profiles')
+            .select('registration_id, experience_description, fielding_position')
+            .in('registration_id', regIds)
+        : Promise.resolve({ data: [] }),
+      playerIds.length > 0
+        ? supabase
+            .from('players')
+            .select('id, roll_number')
+            .in('id', playerIds)
+        : Promise.resolve({ data: [] }),
+      regIds.length > 0
+        ? supabase
+            .from('auction_lots')
+            .select('registration_id, status, current_price, highest_bidder_franchise_id')
+            .eq('season_id', seasonId)
+            .in('registration_id', regIds)
+        : Promise.resolve({ data: [] }),
+    ]);
+
     const statsMap = new Map<string, any>();
+    const fieldingMap = new Map<string, string | null>();
+    for (const prof of profilesResult.data || []) {
+      statsMap.set(prof.registration_id, parseCareerStats(prof.experience_description));
+      fieldingMap.set(prof.registration_id, prof.fielding_position || null);
+    }
 
-    if (regIds.length > 0) {
-      const { data: profiles } = await supabase
-        .from('player_skill_profiles')
-        .select('registration_id, experience_description')
-        .in('registration_id', regIds);
+    const rollMap = new Map<string, string>();
+    for (const pl of rollNumbersResult.data || []) {
+      rollMap.set(pl.id, pl.roll_number);
+    }
 
-      if (profiles) {
-        for (const prof of profiles) {
-          statsMap.set(prof.registration_id, parseCareerStats(prof.experience_description));
-        }
-      }
+    const lotMap = new Map<string, any>();
+    for (const lot of lotsResult.data || []) {
+      lotMap.set(lot.registration_id, lot);
     }
 
     return (data as any[]).map((p) => {
       const parsedStats = statsMap.get(p.registration_id);
+      const lotInfo = lotMap.get(p.registration_id);
+
+      let effectiveAuctionStatus = 'available';
+      if (lotInfo?.status) {
+        effectiveAuctionStatus = lotInfo.status;
+      }
+
       return {
         registrationId: p.registration_id,
         seasonId: p.season_id,
         playerId: p.player_id,
         fullName: p.full_name,
+        rollNumber: rollMap.get(p.player_id) || undefined,
         photoUrl: p.photo_url,
         programme: p.programme,
         academicYear: p.academic_year,
@@ -326,6 +305,9 @@ export async function getSeasonPlayerDiscovery(
         battingStyle: p.batting_style,
         bowlingStyle: p.bowling_style,
         experienceYears: p.experience_years,
+        fieldingPosition: fieldingMap.get(p.registration_id) || null,
+        auctionStatus: effectiveAuctionStatus,
+        highestBidderFranchiseId: lotInfo?.highest_bidder_franchise_id || null,
         careerStats: parsedStats,
         notes: parsedStats?.notes || null,
       };
@@ -333,7 +315,7 @@ export async function getSeasonPlayerDiscovery(
   } catch {
     return [];
   }
-}
+});
 
 import type { Franchise } from '@/lib/acc/types';
 import { FRANCHISES } from '@/lib/acc/mock-data';
@@ -341,11 +323,12 @@ import { FRANCHISES } from '@/lib/acc/mock-data';
 /**
  * Retrieves the unified franchise list for admin and public consoles.
  * Connects to PostgreSQL `franchises` table and maps team attributes.
+ * Memoized per server render cycle with React cache().
  */
-export async function getAdminFranchisesList(
+export const getAdminFranchisesList = cache(async (
   supabase: SupabaseClient,
   seasonId?: string
-): Promise<Franchise[]> {
+): Promise<Franchise[]> => {
   try {
     let query = supabase
       .from('franchises')
@@ -392,7 +375,7 @@ export async function getAdminFranchisesList(
         coordinatorDept: 'Sports Committee',
         captainName: captain?.users?.full_name || 'TBD',
         viceCaptainName: vc?.users?.full_name || 'TBD',
-        startingPurse: 10000,
+        startingPurse: 1000,
         logoUrl: f.logo_url || undefined,
       };
     });
@@ -401,4 +384,4 @@ export async function getAdminFranchisesList(
   } catch {
     return FRANCHISES;
   }
-}
+});

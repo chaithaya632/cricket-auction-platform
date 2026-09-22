@@ -2,6 +2,7 @@
 // ACC Auction Portal — Application Layer: Auction Queries
 // =============================================================================
 
+import { cache } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   AuctionLotWithDetails,
@@ -18,11 +19,12 @@ import { validateBucketEligibility } from '@/domain/auction/bucket-eligibility';
 /**
  * Fetches the single active auction lot currently 'in_progress' for the season.
  * Combines lot projection with public player and franchise views.
+ * Memoized per server render cycle with React cache().
  */
-export async function getActiveLot(
+export const getActiveLot = cache(async (
   supabase: SupabaseClient,
   seasonId: string
-): Promise<AuctionLotWithDetails | null> {
+): Promise<AuctionLotWithDetails | null> => {
   const { data: lot, error: lotErr } = await supabase
     .from('auction_lots')
     .select('*')
@@ -119,16 +121,17 @@ export async function getActiveLot(
       parsed_stats: parsedStats,
     },
   };
-}
+});
 
 /**
  * Fetches upcoming lots in the queue for a given season.
+ * Memoized per server render cycle with React cache().
  */
-export async function getAuctionQueue(
+export const getAuctionQueue = cache(async (
   supabase: SupabaseClient,
   seasonId: string,
   limit = 25
-): Promise<AuctionLotWithDetails[]> {
+): Promise<AuctionLotWithDetails[]> => {
   const { data: lots, error } = await supabase
     .from('auction_lots')
     .select('*')
@@ -187,7 +190,7 @@ export async function getAuctionQueue(
       highest_bidder: null,
     };
   });
-}
+});
 
 /**
  * Fetches the chronological event history for a specific auction lot.
@@ -308,11 +311,12 @@ export async function getRecentAuctionEvents(
 
 /**
  * Fetches season auction configuration values.
+ * Memoized per server render cycle with React cache().
  */
-export async function getSeasonAuctionConfig(
+export const getSeasonAuctionConfig = cache(async (
   supabase: SupabaseClient,
   seasonId: string
-): Promise<AuctionConfigDTO> {
+): Promise<AuctionConfigDTO> => {
   const { data: rows } = await supabase
     .from('season_config')
     .select('key, value')
@@ -333,29 +337,41 @@ export async function getSeasonAuctionConfig(
     minSquadSize: parseInt(configMap['min_squad_size'] || '17', 10),
     defaultPurse: parseInt(configMap['default_purse'] || '1000', 10),
   };
-}
+});
 
 /**
  * Retrieves the authoritative session lifecycle state of the auction.
  * Evaluates seasons.status ('draft', 'registration', 'auction', 'completed'),
  * season_config ('auction_session_status' = 'live' | 'paused'),
  * and current active lot in progress.
+ * Memoized per server render cycle with React cache().
  */
-export async function getAuctionSessionState(
+export const getAuctionSessionState = cache(async (
   supabase: SupabaseClient,
   seasonId: string
-): Promise<AuctionSessionState> {
-  const { data: season } = await supabase
-    .from('seasons')
-    .select('id, name, status')
-    .eq('id', seasonId)
-    .maybeSingle();
+): Promise<AuctionSessionState> => {
+  const [seasonResult, configRowsResult, activeLotResult] = await Promise.all([
+    supabase
+      .from('seasons')
+      .select('id, name, status')
+      .eq('id', seasonId)
+      .maybeSingle(),
+    supabase
+      .from('season_config')
+      .select('key, value')
+      .eq('season_id', seasonId)
+      .in('key', ['auction_session_status', 'auction_started_at']),
+    supabase
+      .from('auction_lots')
+      .select('id')
+      .eq('season_id', seasonId)
+      .eq('status', 'in_progress')
+      .maybeSingle(),
+  ]);
 
-  const { data: configRows } = await supabase
-    .from('season_config')
-    .select('key, value')
-    .eq('season_id', seasonId)
-    .in('key', ['auction_session_status', 'auction_started_at']);
+  const season = seasonResult.data;
+  const configRows = configRowsResult.data;
+  const activeLot = activeLotResult.data;
 
   const configMap: Record<string, string> = {};
   if (configRows) {
@@ -363,13 +379,6 @@ export async function getAuctionSessionState(
       configMap[r.key] = r.value;
     }
   }
-
-  const { data: activeLot } = await supabase
-    .from('auction_lots')
-    .select('id')
-    .eq('season_id', seasonId)
-    .eq('status', 'in_progress')
-    .maybeSingle();
 
   const seasonStatus = season?.status || 'draft';
   const sessionStatusConfig = configMap['auction_session_status'];
@@ -400,7 +409,7 @@ export async function getAuctionSessionState(
     startedAt,
     activeLotId: activeLot?.id || null,
   };
-}
+});
 
 export interface EligiblePlayerQueueCandidate {
   registrationId: string;
@@ -418,50 +427,52 @@ export interface EligiblePlayerQueueCandidate {
 /**
  * Retrieves all registered players in the given season who are marked AUCTION ELIGIBLE,
  * active (not blocked), and do NOT yet have an auction lot assigned in this season.
+ * Memoized per server render cycle with React cache().
  */
-export async function getEligiblePlayersForLotQueue(
+export const getEligiblePlayersForLotQueue = cache(async (
   supabase: SupabaseClient,
   seasonId: string
-): Promise<EligiblePlayerQueueCandidate[]> {
+): Promise<EligiblePlayerQueueCandidate[]> => {
   try {
-    // 1. Fetch registrations for this season with player and skill details
-    const { data: registrations, error: regErr } = await supabase
-      .from('player_season_registrations')
-      .select(`
-        id,
-        player_id,
-        bucket,
-        base_price,
-        branch,
-        academic_year,
-        is_auction_eligible,
-        registration_status,
-        players (
+    // 1-2. Concurrently fetch eligible registrations and existing auction lots
+    const [regResult, lotsResult] = await Promise.all([
+      supabase
+        .from('player_season_registrations')
+        .select(`
           id,
-          full_name,
-          roll_number,
-          photo_url,
-          is_active
-        ),
-        player_skill_profiles (
-          derived_player_type
-        )
-      `)
-      .eq('season_id', seasonId)
-      .eq('is_auction_eligible', true);
+          player_id,
+          bucket,
+          base_price,
+          branch,
+          academic_year,
+          is_auction_eligible,
+          registration_status,
+          players (
+            id,
+            full_name,
+            roll_number,
+            photo_url,
+            is_active
+          ),
+          player_skill_profiles (
+            derived_player_type
+          )
+        `)
+        .eq('season_id', seasonId)
+        .eq('is_auction_eligible', true),
+      supabase
+        .from('auction_lots')
+        .select('registration_id')
+        .eq('season_id', seasonId),
+    ]);
 
-    if (regErr || !registrations || registrations.length === 0) {
+    const registrations = regResult.data;
+    if (regResult.error || !registrations || registrations.length === 0) {
       return [];
     }
 
-    // 2. Fetch existing auction lots in this season
-    const { data: existingLots } = await supabase
-      .from('auction_lots')
-      .select('registration_id')
-      .eq('season_id', seasonId);
-
     const queuedRegistrationIds = new Set(
-      (existingLots || []).map((l) => l.registration_id)
+      (lotsResult.data || []).map((l) => l.registration_id)
     );
 
     // 3. Filter registrations not yet queued and ensure player is active
@@ -496,69 +507,76 @@ export async function getEligiblePlayersForLotQueue(
   } catch {
     return [];
   }
-}
+});
 
 /**
  * Computes live scarcity status for the active lot's bucket (§12.3, Cases 11-15).
  * Supply is counted against players needed, not teams.
+ * Memoized per server render cycle with React cache().
  */
-export async function getActiveLotScarcity(
+export const getActiveLotScarcity = cache(async (
   supabase: SupabaseClient,
   seasonId: string,
   bucket: string
-): Promise<BucketScarcityReport | null> {
+): Promise<BucketScarcityReport | null> => {
   if (!bucket || bucket === 'PG') return null;
 
   try {
-    // 1. Fetch unsold supply in this bucket
-    const { count: unsoldSupply } = await supabase
-      .from('auction_lots')
-      .select('id', { count: 'exact', head: true })
-      .eq('season_id', seasonId)
-      .eq('bucket', bucket)
-      .in('status', ['pending', 'in_progress', 'skipped']);
-
-    // 2. Fetch all active franchises in the season
-    const { data: franchises } = await supabase
-      .from('franchises')
-      .select('id, name')
-      .eq('season_id', seasonId)
-      .eq('is_active', true);
-
-    if (!franchises || franchises.length === 0) return null;
-
-    // 3. For each franchise, calculate remaining needed in this bucket
-    const franchiseNeeds: FranchiseBucketNeed[] = [];
-
-    for (const f of franchises) {
-      const { count: bought } = await supabase
+    // 1-3. Concurrently fetch unsold supply, franchises, and acquired lots in this bucket
+    const [unsoldResult, franchisesResult, boughtLotsResult] = await Promise.all([
+      supabase
         .from('auction_lots')
         .select('id', { count: 'exact', head: true })
         .eq('season_id', seasonId)
-        .eq('highest_bidder_franchise_id', f.id)
         .eq('bucket', bucket)
-        .in('status', ['sold', 'allotted']);
+        .in('status', ['pending', 'in_progress', 'skipped']),
+      supabase
+        .from('franchises')
+        .select('id, name')
+        .eq('season_id', seasonId)
+        .eq('is_active', true),
+      supabase
+        .from('auction_lots')
+        .select('highest_bidder_franchise_id')
+        .eq('season_id', seasonId)
+        .eq('bucket', bucket)
+        .in('status', ['sold', 'allotted']),
+    ]);
 
-      const acquired = bought || 0;
-      const minRequired = 2; // Spec §7: minimum 2 per mandatory bucket B1..B5
-      const needed = Math.max(0, minRequired - acquired);
-      franchiseNeeds.push({
+    const franchises = franchisesResult.data;
+    if (!franchises || franchises.length === 0) return null;
+
+    // Count bought lots per franchise in memory
+    const countMap = new Map<string, number>();
+    for (const lot of boughtLotsResult.data || []) {
+      if (lot.highest_bidder_franchise_id) {
+        countMap.set(
+          lot.highest_bidder_franchise_id,
+          (countMap.get(lot.highest_bidder_franchise_id) || 0) + 1
+        );
+      }
+    }
+
+    const minRequired = 2; // Spec §7: minimum 2 per mandatory bucket B1..B5
+    const franchiseNeeds: FranchiseBucketNeed[] = franchises.map((f) => {
+      const acquired = countMap.get(f.id) || 0;
+      return {
         franchiseId: f.id,
         franchiseName: f.name,
-        needed,
-      });
-    }
+        needed: Math.max(0, minRequired - acquired),
+      };
+    });
 
     return detectBucketScarcity({
       bucket,
-      unsoldSupply: unsoldSupply || 0,
+      unsoldSupply: unsoldResult.count || 0,
       franchiseNeeds,
     });
   } catch (err) {
     console.error('Failed to compute bucket scarcity:', err);
     return null;
   }
-}
+});
 
 /**
  * Retrieves real-time summary for all franchises in the season, including purse,
