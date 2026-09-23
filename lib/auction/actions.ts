@@ -1843,3 +1843,340 @@ export async function adminRegisterScoutedPlayerAction(params: {
     return { success: false, error: err?.message || 'Scouting registration failed.' };
   }
 }
+
+/**
+ * Authoritative Draw Sequence (§10):
+ * B.Tech 3rd year (B3) -> B.Tech 4th year (B4) -> B.Tech 2nd year (B2) -> Diploma (B5) -> B.Tech 1st year (B1) -> PG (last)
+ */
+export const BUCKET_DRAW_SEQUENCE = ['B3', 'B4', 'B2', 'B5', 'B1', 'PG'] as const;
+
+/**
+ * Super Admin / Operator Action to skip a lot (§10).
+ * Skipped players can be recalled at the end of their bucket or carried into Round 2.
+ */
+export async function skipLotAction(
+  lotId: string,
+  reason: string = 'Skipped by operator'
+): Promise<AuctionActionResult<{ lotId: string }>> {
+  try {
+    const adminContext = await requireAdmin();
+    const adminClient = createAdminClient();
+
+    const { data: lot, error: fetchErr } = await adminClient
+      .from('auction_lots')
+      .select('*')
+      .eq('id', lotId)
+      .single();
+
+    if (fetchErr || !lot) {
+      return { success: false, error: 'Lot not found.' };
+    }
+
+    if (lot.status !== 'in_progress' && lot.status !== 'pending') {
+      return { success: false, error: `Cannot skip lot in status '${lot.status}'.` };
+    }
+
+    const now = new Date().toISOString();
+    const { error: updateErr } = await adminClient
+      .from('auction_lots')
+      .update({
+        status: 'skipped',
+        current_price: null,
+        highest_bidder_franchise_id: null,
+        started_at: null,
+        ended_at: null,
+        updated_at: now,
+      })
+      .eq('id', lotId);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message };
+    }
+
+    await adminClient.from('auction_events').insert({
+      season_id: lot.season_id,
+      auction_lot_id: lotId,
+      event_type: 'SKIP_LOT',
+      actor_user_id: adminContext.user.id,
+      reason: reason.trim(),
+      created_at: now,
+    });
+
+    await writeAuditLog(
+      {
+        seasonId: lot.season_id,
+        actorUserId: adminContext.user.id,
+        action: 'SKIP_LOT',
+        entityType: 'auction_lot',
+        entityId: lotId,
+        reason: reason.trim(),
+        metadata: { lot_number: lot.lot_number, bucket: lot.bucket },
+      },
+      adminClient
+    );
+
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin/queue');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+
+    return { success: true, data: { lotId } };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to skip lot.' };
+  }
+}
+
+/**
+ * Super Admin / Operator Action to recall a skipped lot back to the floor (§10).
+ */
+export async function recallSkippedLotAction(
+  lotId: string
+): Promise<AuctionActionResult<{ lotId: string }>> {
+  try {
+    const adminContext = await requireAdmin();
+    const adminClient = createAdminClient();
+
+    const { data: lot, error: fetchErr } = await adminClient
+      .from('auction_lots')
+      .select('*')
+      .eq('id', lotId)
+      .single();
+
+    if (fetchErr || !lot) {
+      return { success: false, error: 'Lot not found.' };
+    }
+
+    if (lot.status !== 'skipped') {
+      return { success: false, error: `Cannot recall lot. Status is '${lot.status}', expected 'skipped'.` };
+    }
+
+    const now = new Date().toISOString();
+    const { error: updateErr } = await adminClient
+      .from('auction_lots')
+      .update({
+        status: 'pending',
+        current_price: null,
+        highest_bidder_franchise_id: null,
+        started_at: null,
+        ended_at: null,
+        updated_at: now,
+      })
+      .eq('id', lotId);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message };
+    }
+
+    await adminClient.from('auction_events').insert({
+      season_id: lot.season_id,
+      auction_lot_id: lotId,
+      event_type: 'RECALL_LOT',
+      actor_user_id: adminContext.user.id,
+      reason: `Recalled skipped player ${lot.lot_number} back to floor queue at base price ${lot.base_price} credits`,
+      created_at: now,
+    });
+
+    await writeAuditLog(
+      {
+        seasonId: lot.season_id,
+        actorUserId: adminContext.user.id,
+        action: 'RECALL_LOT',
+        entityType: 'auction_lot',
+        entityId: lotId,
+        reason: 'Recalled skipped player back to auction queue (§10)',
+        metadata: { lot_number: lot.lot_number, bucket: lot.bucket },
+      },
+      adminClient
+    );
+
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin/queue');
+    revalidatePath('/live');
+
+    return { success: true, data: { lotId } };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to recall skipped lot.' };
+  }
+}
+
+/**
+ * Auto-Mode Draw Action (§10).
+ * System randomly draws the next player according to the authoritative bucket sequence:
+ * B3 -> B4 -> B2 -> B5 -> B1 -> PG.
+ */
+export async function drawNextAutoLotAction(
+  activeBucket?: string
+): Promise<AuctionActionResult<{ lotId: string; drawNumber: number; bucket: string; playerName: string }>> {
+  try {
+    const adminContext = await requireAdmin();
+    const activeSeason = adminContext.activeSeason;
+    if (!activeSeason) {
+      return { success: false, error: 'No active season found.' };
+    }
+
+    const adminClient = createAdminClient();
+
+    // Check if a lot is already in progress
+    const { data: existingActive } = await adminClient
+      .from('auction_lots')
+      .select('id, lot_number')
+      .eq('season_id', activeSeason.id)
+      .eq('status', 'in_progress')
+      .limit(1);
+
+    if (existingActive && existingActive.length > 0) {
+      return { success: false, error: 'A lot is already in progress on the auction block.' };
+    }
+
+    // Determine target bucket sequence
+    const bucketsToSearch = activeBucket
+      ? [activeBucket]
+      : [...BUCKET_DRAW_SEQUENCE];
+
+    let candidateLots: any[] = [];
+    let selectedBucket = '';
+
+    for (const b of bucketsToSearch) {
+      const { data: pendingInBucket } = await adminClient
+        .from('auction_lots')
+        .select(`
+          id,
+          lot_number,
+          draw_number,
+          bucket,
+          base_price,
+          player_season_registrations (
+            players (
+              full_name
+            )
+          )
+        `)
+        .eq('season_id', activeSeason.id)
+        .eq('bucket', b)
+        .eq('status', 'pending');
+
+      if (pendingInBucket && pendingInBucket.length > 0) {
+        candidateLots = pendingInBucket;
+        selectedBucket = b;
+        break;
+      }
+    }
+
+    if (candidateLots.length === 0) {
+      return { success: false, error: 'No pending lots remain in the auction draw pool.' };
+    }
+
+    // Pick random lot within the selected bucket
+    const randomIndex = Math.floor(Math.random() * candidateLots.length);
+    const chosenLot = candidateLots[randomIndex];
+    const reg: any = Array.isArray(chosenLot.player_season_registrations)
+      ? chosenLot.player_season_registrations[0]
+      : chosenLot.player_season_registrations;
+    const player: any = Array.isArray(reg?.players) ? reg.players[0] : reg?.players;
+    const playerName = player?.full_name || 'Player';
+
+    // Move to in_progress
+    const selectRes = await selectLotAction(chosenLot.id);
+    if (!selectRes.success) {
+      return { success: false, error: selectRes.error };
+    }
+
+    return {
+      success: true,
+      data: {
+        lotId: chosenLot.id,
+        drawNumber: chosenLot.draw_number || chosenLot.lot_number,
+        bucket: selectedBucket,
+        playerName,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Auto draw failed.' };
+  }
+}
+
+/**
+ * Guest-Mode Draw Action (§10).
+ * Honorary guest calls a number aloud; operator enters it and that player comes up.
+ * Enforces: no number is ever called twice.
+ */
+export async function callGuestDrawNumberAction(
+  drawNumber: number,
+  bucket: string
+): Promise<AuctionActionResult<{ lotId: string; drawNumber: number; playerName: string }>> {
+  try {
+    const adminContext = await requireAdmin();
+    const activeSeason = adminContext.activeSeason;
+    if (!activeSeason) {
+      return { success: false, error: 'No active season found.' };
+    }
+
+    if (!drawNumber || drawNumber < 1) {
+      return { success: false, error: 'Please enter a valid draw number.' };
+    }
+
+    const adminClient = createAdminClient();
+
+    // Find lot by draw_number in active bucket
+    const { data: lots, error: lotErr } = await adminClient
+      .from('auction_lots')
+      .select(`
+        id,
+        lot_number,
+        draw_number,
+        bucket,
+        status,
+        base_price,
+        player_season_registrations (
+          players (
+            full_name
+          )
+        )
+      `)
+      .eq('season_id', activeSeason.id)
+      .eq('bucket', bucket)
+      .eq('draw_number', drawNumber);
+
+    if (lotErr || !lots || lots.length === 0) {
+      return { success: false, error: `Draw number #${drawNumber} not found in Bucket ${bucket}.` };
+    }
+
+    const targetLot = lots[0];
+
+    // Enforce: no number is ever called twice (§10)
+    if (targetLot.status === 'sold' || targetLot.status === 'allotted') {
+      return {
+        success: false,
+        error: `Draw number #${drawNumber} has already been called and sold/allotted. No number may be called twice (§10).`,
+      };
+    }
+
+    if (targetLot.status === 'in_progress') {
+      return { success: false, error: `Draw number #${drawNumber} is already on the auction block.` };
+    }
+
+    const reg: any = Array.isArray(targetLot.player_season_registrations)
+      ? targetLot.player_season_registrations[0]
+      : targetLot.player_season_registrations;
+    const player: any = Array.isArray(reg?.players) ? reg.players[0] : reg?.players;
+    const playerName = player?.full_name || 'Player';
+
+    // Bring to floor
+    const selectRes = await selectLotAction(targetLot.id);
+    if (!selectRes.success) {
+      return { success: false, error: selectRes.error };
+    }
+
+    return {
+      success: true,
+      data: {
+        lotId: targetLot.id,
+        drawNumber,
+        playerName,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Guest draw failed.' };
+  }
+}
+

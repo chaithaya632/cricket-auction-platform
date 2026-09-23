@@ -39,6 +39,7 @@ export const PG_CATEGORY = 'PG' as const;
 // Default Auction Bucket Order (spec §16)
 // ---------------------------------------------------------------------------
 export const DEFAULT_BUCKET_ORDER = ['B3', 'B4', 'B2', 'B5', 'B1', 'PG'] as const;
+export const BUCKET_DRAW_SEQUENCE = DEFAULT_BUCKET_ORDER;
 
 // ---------------------------------------------------------------------------
 // Base Price Ladder (spec §11)

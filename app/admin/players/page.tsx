@@ -3,7 +3,8 @@ import { DashboardShell } from "@/components/acc/dashboard-shell"
 import { PageHeader } from "@/components/acc/page-header"
 import { PlayersTable } from "@/components/acc/admin/players-table"
 import { AddPlayerDialog } from "@/components/acc/admin/add-player-dialog"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import { getSessionUser } from "@/lib/acc/server-session"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { requireAdmin } from "@/lib/permissions/guards"
@@ -29,10 +30,14 @@ export default async function AdminPlayersPage() {
       breadcrumb="Players"
       actions={
         <>
-          <Button variant="outline" size="sm">
-            <Download className="size-4" />
+          <a
+            href="/api/admin/export"
+            download="acc_tournament_data.csv"
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            <Download className="size-4 mr-1.5" />
             Export
-          </Button>
+          </a>
           <AddPlayerDialog />
         </>
       }

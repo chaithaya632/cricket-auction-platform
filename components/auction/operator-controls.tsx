@@ -15,6 +15,8 @@ import {
   selectLotAction,
   confirmSaleAction,
   markUnsoldAction,
+  skipLotAction,
+  recallSkippedLotAction,
   undoSaleAction,
   adminProxyBidAction,
   adminStartRoundTwoAction,
@@ -208,6 +210,21 @@ export function OperatorControls({
         setErrorMsg(res.error || 'Failed to mark unsold.');
       } else {
         setSuccessMsg('Player passed and marked UNSOLD.');
+        router.refresh();
+      }
+    });
+  };
+
+  const handleSkipLot = () => {
+    if (!activeLot) return;
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    startTransition(async () => {
+      const res = await skipLotAction(activeLot.id, 'Skipped by operator (§10)');
+      if (!res.success) {
+        setErrorMsg(res.error || 'Failed to skip lot.');
+      } else {
+        setSuccessMsg(`Player #${activeLot.draw_number} (${activeLot.player.full_name}) skipped. Can be recalled at the end of Bucket ${activeLot.bucket} (§10).`);
         router.refresh();
       }
     });
@@ -590,13 +607,13 @@ export function OperatorControls({
           )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {/* HAMMER / SELL */}
           <button
             type="button"
             onClick={handleConfirmSale}
             disabled={!canHammer || isPending}
-            className={`py-4 px-4 rounded-xl font-bold text-sm transition-all duration-150 flex flex-col items-center justify-center gap-1 ${
+            className={`py-4 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all duration-150 flex flex-col items-center justify-center gap-1 ${
               canHammer && !isPending
                 ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg cursor-pointer active:scale-95'
                 : 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-800'
@@ -614,7 +631,7 @@ export function OperatorControls({
             type="button"
             onClick={handleMarkUnsold}
             disabled={!canPass || isPending}
-            className={`py-4 px-4 rounded-xl font-bold text-sm transition-all duration-150 flex flex-col items-center justify-center gap-1 ${
+            className={`py-4 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all duration-150 flex flex-col items-center justify-center gap-1 ${
               canPass && !isPending
                 ? 'bg-amber-600/80 hover:bg-amber-600 text-white shadow-lg cursor-pointer active:scale-95'
                 : 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-800'
@@ -627,12 +644,30 @@ export function OperatorControls({
             </span>
           </button>
 
+          {/* SKIP LOT (§10) */}
+          <button
+            type="button"
+            onClick={handleSkipLot}
+            disabled={!canPass || isPending}
+            className={`py-4 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all duration-150 flex flex-col items-center justify-center gap-1 ${
+              canPass && !isPending
+                ? 'bg-purple-900/80 hover:bg-purple-800 text-purple-200 border border-purple-700 shadow-lg cursor-pointer active:scale-95'
+                : 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-800'
+            }`}
+          >
+            <span className="text-xl">⏭</span>
+            <span>SKIP LOT</span>
+            <span className="text-[10px] font-normal opacity-80">
+              Recalled at bucket end (§10)
+            </span>
+          </button>
+
           {/* UNDO SALE */}
           <button
             type="button"
             onClick={() => setShowUndoModal(true)}
             disabled={(!lastSoldLotId && soldLots.length === 0) || isPending || !isFloorActive}
-            className={`py-4 px-4 rounded-xl font-bold text-sm transition-all duration-150 flex flex-col items-center justify-center gap-1 ${
+            className={`py-4 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all duration-150 flex flex-col items-center justify-center gap-1 ${
               (lastSoldLotId || soldLots.length > 0) && !isPending && isFloorActive
                 ? 'bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-amber-500/40 shadow-lg cursor-pointer active:scale-95'
                 : 'bg-zinc-800/50 text-zinc-600 cursor-not-allowed border border-zinc-800'

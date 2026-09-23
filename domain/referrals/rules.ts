@@ -40,3 +40,55 @@ export function canAddReferral(state: FranchiseReferralState): boolean {
   const max = state.maxReferrals ?? SQUAD_RULES.MAX_REFERRALS;
   return state.referralCount < max;
 }
+
+export interface ReferralConflictCheckParams {
+  claimingFranchiseId: string;
+  playerDeclaredFranchiseId?: string | null;
+  existingReferrals: Array<{
+    franchiseId: string;
+    status: 'pending' | 'approved' | 'rejected' | 'conflict';
+  }>;
+}
+
+export interface ReferralConflictResult {
+  hasConflict: boolean;
+  status: 'pending' | 'conflict';
+  reason?: string;
+}
+
+/**
+ * Evaluates whether a referral claim has conflicts (§6).
+ * Surfacing conflicts:
+ * - Two franchises claim the same player
+ * - Player self-declaration disagrees with franchise claim
+ */
+export function evaluateReferralConflict(params: ReferralConflictCheckParams): ReferralConflictResult {
+  const { claimingFranchiseId, playerDeclaredFranchiseId, existingReferrals } = params;
+
+  // 1. Check if another franchise has an active claim (pending or approved) on this player
+  const competingClaims = existingReferrals.filter(
+    (r) => r.franchiseId !== claimingFranchiseId && (r.status === 'pending' || r.status === 'approved')
+  );
+
+  if (competingClaims.length > 0) {
+    return {
+      hasConflict: true,
+      status: 'conflict',
+      reason: 'Conflict detected: Multiple franchises have claimed this player as a referral (§6).',
+    };
+  }
+
+  // 2. Check if player self-declared a different franchise
+  if (playerDeclaredFranchiseId && playerDeclaredFranchiseId !== claimingFranchiseId) {
+    return {
+      hasConflict: true,
+      status: 'conflict',
+      reason: 'Conflict detected: Player declared a different referring franchise during registration (§6).',
+    };
+  }
+
+  return {
+    hasConflict: false,
+    status: 'pending',
+  };
+}

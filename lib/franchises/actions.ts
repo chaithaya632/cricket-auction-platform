@@ -5,8 +5,9 @@
 // =============================================================================
 
 import { revalidatePath } from 'next/cache';
-import { requireAdmin } from '@/lib/permissions/guards';
+import { requireAdmin, requireFranchise } from '@/lib/permissions/guards';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { writeAuditLog } from '@/lib/audit/logger';
 import { z } from 'zod';
 import type { DbFranchise } from '@/lib/db/types';
 
@@ -221,5 +222,175 @@ export async function adminDeleteFranchiseAction(
       success: false,
       error: err instanceof Error ? err.message : 'Failed to delete franchise',
     };
+  }
+}
+
+export interface AssignLeaderInput {
+  franchiseId: string;
+  role: 'captain' | 'vice_captain';
+  registrationId: string;
+}
+
+/**
+ * Assigns a Captain or Vice-Captain to a franchise (§6, §7).
+ *
+ * Rules enforced:
+ * 1. Registered player: Must already be registered as a player in this season.
+ * 2. Cross-franchise uniqueness: Once one franchise claims a player, no other franchise can claim him (§6).
+ * 3. Free & outside auction: Cost 0, sits outside 15 auction purchases.
+ * 4. Pool removal: Captain and vice-captain never enter the auction pool (§6).
+ * 5. Single leadership seat: Exactly one active captain and one active vice-captain per franchise.
+ */
+export async function assignFranchiseLeaderAction(
+  input: AssignLeaderInput
+): Promise<AdminFranchiseActionResult<{ memberId: string; role: string }>> {
+  try {
+    const adminClient = createAdminClient();
+
+    // 1. Authorization: Super Admin or representative of target franchise
+    let actorUserId: string;
+    try {
+      const adminCtx = await requireAdmin();
+      actorUserId = adminCtx.user.id;
+    } catch {
+      const franchiseCtx = await requireFranchise();
+      if (franchiseCtx.assignedFranchise.id !== input.franchiseId) {
+        return { success: false, error: 'Unauthorized: You can only assign leadership for your assigned franchise.' };
+      }
+      actorUserId = franchiseCtx.user.id;
+    }
+
+    if (input.role !== 'captain' && input.role !== 'vice_captain') {
+      return { success: false, error: 'Invalid leadership role. Must be captain or vice_captain.' };
+    }
+
+    // 2. Fetch franchise
+    const { data: franchise, error: fErr } = await adminClient
+      .from('franchises')
+      .select('id, name, season_id')
+      .eq('id', input.franchiseId)
+      .single();
+
+    if (fErr || !franchise) {
+      return { success: false, error: 'Franchise not found.' };
+    }
+
+    // 3. Validate player registration (§6: must already be registered as a player)
+    const { data: reg, error: regErr } = await adminClient
+      .from('player_season_registrations')
+      .select('id, player_id, season_id, players(id, full_name, roll_number)')
+      .eq('id', input.registrationId)
+      .eq('season_id', franchise.season_id)
+      .single();
+
+    if (regErr || !reg) {
+      return { success: false, error: 'Target player must already be registered in this tournament season (§6).' };
+    }
+
+    const player = Array.isArray(reg.players) ? reg.players[0] : reg.players;
+
+    // 4. Enforce: Once one franchise claims a player, no other franchise can claim him (§6)
+    const { data: existingClaims } = await adminClient
+      .from('franchise_members')
+      .select('id, franchise_id, role, franchises(name)')
+      .eq('player_registration_id', input.registrationId)
+      .eq('is_active', true);
+
+    const conflictingClaim = existingClaims?.find((c) => c.franchise_id !== input.franchiseId);
+    if (conflictingClaim) {
+      const teamName = (conflictingClaim.franchises as any)?.name || 'another franchise';
+      return {
+        success: false,
+        error: `Player ${player?.full_name || ''} is already claimed as ${conflictingClaim.role} by ${teamName}. Once claimed, no other franchise can claim him (§6).`,
+      };
+    }
+
+    // Check if player was bought by another franchise in auction
+    const { data: boughtLot } = await adminClient
+      .from('auction_lots')
+      .select('id, highest_bidder_franchise_id, franchises(name)')
+      .eq('registration_id', input.registrationId)
+      .in('status', ['sold', 'allotted', 'scouted'])
+      .maybeSingle();
+
+    if (boughtLot && boughtLot.highest_bidder_franchise_id !== input.franchiseId) {
+      return {
+        success: false,
+        error: `Player ${player?.full_name || ''} was already acquired by ${(boughtLot.franchises as any)?.name || 'another franchise'}.`,
+      };
+    }
+
+    const now = new Date().toISOString();
+
+    // 5. Remove previous leader with this role for this franchise (if replacing)
+    await adminClient
+      .from('franchise_members')
+      .update({ is_active: false })
+      .eq('franchise_id', input.franchiseId)
+      .eq('role', input.role)
+      .eq('is_active', true);
+
+    // 6. Insert new leadership membership
+    const { data: newMember, error: insertErr } = await adminClient
+      .from('franchise_members')
+      .upsert(
+        {
+          franchise_id: input.franchiseId,
+          user_id: reg.player_id,
+          role: input.role,
+          player_registration_id: input.registrationId,
+          is_active: true,
+        },
+        { onConflict: 'franchise_id,user_id' }
+      )
+      .select('id')
+      .single();
+
+    if (insertErr || !newMember) {
+      return { success: false, error: insertErr?.message || 'Failed to assign leadership role.' };
+    }
+
+    // 7. Remove player from auction_lots queue if pending (§6: captains/VCs never enter the auction pool)
+    await adminClient
+      .from('auction_lots')
+      .delete()
+      .eq('registration_id', input.registrationId)
+      .in('status', ['pending', 'upcoming']);
+
+    // 8. Write audit log
+    await writeAuditLog(
+      {
+        seasonId: franchise.season_id,
+        actorUserId,
+        action: 'LEADERSHIP_ASSIGNED',
+        entityType: 'franchise_member',
+        entityId: newMember.id,
+        reason: `Assigned ${player?.full_name} as ${input.role} for ${franchise.name} (§6)`,
+        metadata: {
+          franchise_id: input.franchiseId,
+          role: input.role,
+          player_id: reg.player_id,
+          registration_id: input.registrationId,
+          player_name: player?.full_name,
+        },
+      },
+      adminClient
+    );
+
+    revalidatePath('/franchise');
+    revalidatePath('/franchise/squad');
+    revalidatePath('/admin/franchises');
+    revalidatePath('/teams');
+    revalidatePath('/admin/queue');
+
+    return {
+      success: true,
+      data: {
+        memberId: newMember.id,
+        role: input.role,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to assign leadership role.' };
   }
 }
