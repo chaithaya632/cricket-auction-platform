@@ -38,9 +38,12 @@ export default async function PlayerProfilePage() {
   const supabase = await createClient();
 
   const seasonId = permContext.activeSeason?.id;
-  const fullData = seasonId
-    ? await getPlayerFullData(supabase, permContext.user.id, seasonId)
-    : { player: null, registration: null, skillProfile: null };
+  const [fullData, sessionUser] = await Promise.all([
+    seasonId
+      ? getPlayerFullData(supabase, permContext.user.id, seasonId)
+      : Promise.resolve({ player: null, registration: null, skillProfile: null }),
+    getSessionUser('player'),
+  ]);
 
   const fallback = getPlayer(CURRENT_PLAYER_ID)!;
 
@@ -73,7 +76,6 @@ export default async function PlayerProfilePage() {
       : fallback.playerType
     : fallback.playerType) as PlayerType;
 
-  const sessionUser = await getSessionUser('player');
   sessionUser.name = displayName;
   sessionUser.sub = rollNumber;
   sessionUser.avatarUrl = photoUrl || undefined;

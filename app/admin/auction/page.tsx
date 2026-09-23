@@ -23,9 +23,11 @@ import { LiveIndicator } from '@/components/acc/status-badges';
 import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
 
 export default async function AdminAuctionPage() {
-  const sessionUser = await getSessionUser('admin');
-  const adminContext = await requireAdmin();
-  const supabase = await createClient();
+  const [sessionUser, adminContext, supabase] = await Promise.all([
+    getSessionUser('admin'),
+    requireAdmin(),
+    createClient(),
+  ]);
   const seasonId =
     adminContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 

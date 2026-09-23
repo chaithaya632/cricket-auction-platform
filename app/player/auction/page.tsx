@@ -25,19 +25,19 @@ export default async function PlayerAuctionPage() {
   const seasonId = permContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
   const seasonName = permContext.activeSeason?.name || 'ACC 2026';
 
-  const [activeLot, recentEvents, config, sessionState, fullData] = await Promise.all([
+  const [activeLot, recentEvents, config, sessionState, fullData, sessionUser] = await Promise.all([
     getActiveLot(supabase, seasonId),
     getRecentAuctionEvents(supabase, seasonId, 20),
     getSeasonAuctionConfig(supabase, seasonId),
     getAuctionSessionState(supabase, seasonId),
     getPlayerFullData(supabase, permContext.user.id, seasonId),
+    getSessionUser('player'),
   ]);
 
   const timerDuration = activeLot?.highest_bidder_franchise_id
     ? config.subsequentBidTimerSeconds
     : config.firstBidTimerSeconds;
 
-  const sessionUser = await getSessionUser('player');
   if (fullData.player) {
     sessionUser.name = fullData.player.full_name;
     sessionUser.sub = fullData.player.roll_number;

@@ -21,9 +21,10 @@ export default async function PlayerDashboardPage() {
   const seasonId = permContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
   const seasonName = permContext.activeSeason?.name || 'ACC 2026';
 
-  const [fullData, sessionState] = await Promise.all([
+  const [fullData, sessionState, sessionUser] = await Promise.all([
     getPlayerFullData(supabase, permContext.user.id, seasonId),
     getAuctionSessionState(supabase, seasonId),
+    getSessionUser('player'),
   ]);
 
   const careerStats = parseCareerStats(fullData.skillProfile?.experience_description);
@@ -31,8 +32,6 @@ export default async function PlayerDashboardPage() {
   const auctionLot = fullData.registration
     ? await getPlayerAuctionLot(supabase, fullData.registration.id)
     : null;
-
-  const sessionUser = await getSessionUser('player');
   if (fullData.player) {
     sessionUser.name = fullData.player.full_name;
     sessionUser.sub = fullData.player.roll_number;

@@ -25,11 +25,12 @@ export default async function FranchiseAuctionPage() {
 
   const seasonId = activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 
-  const [activeLot, recentEvents, config, squadData] = await Promise.all([
+  const [activeLot, recentEvents, config, squadData, sessionUser] = await Promise.all([
     getActiveLot(supabase, seasonId),
     getRecentAuctionEvents(supabase, seasonId, 20),
     getSeasonAuctionConfig(supabase, seasonId),
     getFranchiseSquadData(supabase, assignedFranchise.id, seasonId),
+    getSessionUser('franchise'),
   ]);
 
   const timerDuration = activeLot?.highest_bidder_franchise_id
@@ -49,7 +50,6 @@ export default async function FranchiseAuctionPage() {
       }
     : null;
 
-  const sessionUser = await getSessionUser('franchise');
   sessionUser.name = assignedFranchise.name;
   sessionUser.sub = `Purse: ₹${squadData?.purseState.remainingPurse ?? 1000}`;
 

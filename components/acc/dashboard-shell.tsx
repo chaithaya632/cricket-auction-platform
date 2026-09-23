@@ -81,7 +81,7 @@ export function DashboardShell({
                       (item.href !== meta.homeHref && pathname.startsWith(item.href))
                     return (
                       <SidebarMenuItem key={item.href}>
-                        <SidebarMenuButton render={<Link href={item.href} />} isActive={active} tooltip={item.title}>
+                        <SidebarMenuButton render={<Link href={item.href} prefetch={true} />} isActive={active} tooltip={item.title}>
                           <item.icon />
                           <span>{item.title}</span>
                         </SidebarMenuButton>
@@ -124,11 +124,11 @@ export function DashboardShell({
                     <DropdownMenuLabel className="text-muted-foreground text-xs">
                       {meta.label}
                     </DropdownMenuLabel>
-                    <DropdownMenuItem render={<Link href="/" />}>
+                    <DropdownMenuItem render={<Link href="/" prefetch={true} />}>
                       <Home />
                       Public site
                     </DropdownMenuItem>
-                    <DropdownMenuItem render={<Link href="/login" />}>
+                    <DropdownMenuItem render={<Link href="/login" prefetch={true} />}>
                       <UserRound />
                       Switch account
                     </DropdownMenuItem>

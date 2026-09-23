@@ -15,16 +15,18 @@ export default async function FranchiseSquadPage() {
 
   const supabase = await createClient();
 
-  const squadData = activeSeason
-    ? await getFranchiseSquadData(supabase, assignedFranchise.id, activeSeason.id)
-    : null;
+  const [squadData, sessionUser] = await Promise.all([
+    activeSeason
+      ? getFranchiseSquadData(supabase, assignedFranchise.id, activeSeason.id)
+      : Promise.resolve(null),
+    getSessionUser('franchise'),
+  ]);
 
   const purseState = squadData?.purseState;
   const bucketProgress = squadData?.bucketProgress;
   const squadConstraints = squadData?.squadConstraints;
   const squadPlayers = squadData?.squadPlayers || [];
 
-  const sessionUser = await getSessionUser('franchise');
   sessionUser.name = assignedFranchise.name;
   sessionUser.sub = `Purse: ₹${purseState?.remainingPurse ?? 1000}`;
 

@@ -16,11 +16,12 @@ export default async function PlayerRegistrationPage() {
   const seasonId = permContext.activeSeason?.id;
   const seasonName = permContext.activeSeason?.name || 'ACC 2026';
 
-  const fullData = seasonId
-    ? await getPlayerFullData(supabase, permContext.user.id, seasonId)
-    : { player: null, registration: null, skillProfile: null };
-
-  const sessionUser = await getSessionUser('player');
+  const [fullData, sessionUser] = await Promise.all([
+    seasonId
+      ? getPlayerFullData(supabase, permContext.user.id, seasonId)
+      : Promise.resolve({ player: null, registration: null, skillProfile: null }),
+    getSessionUser('player'),
+  ]);
   if (fullData.player) {
     sessionUser.name = fullData.player.full_name;
     sessionUser.sub = fullData.player.roll_number;
