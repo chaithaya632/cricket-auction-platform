@@ -5,25 +5,39 @@ import { Hero } from "@/components/acc/public/hero"
 import { CategoryShowcase } from "@/components/acc/public/category-showcase"
 import { FranchiseStrip } from "@/components/acc/public/franchise-strip"
 import { PlayerCard } from "@/components/acc/player-card"
-import { FRANCHISES, PLAYERS, SALES, franchiseSquad } from "@/lib/acc/mock-data"
 import { BUCKET_ORDER, formatCredits } from "@/lib/acc/config"
+import { createAdminClient } from "@/lib/supabase/admin"
+import { getAdminFranchisesList } from "@/lib/franchises/queries"
+import { getPublicPlayers } from "@/lib/players/queries"
+import { getActiveSeason } from "@/lib/permissions/context"
 import type { Bucket } from "@/lib/acc/types"
 
-export default function HomePage() {
-  const sold = PLAYERS.filter((p) => p.status === "SOLD")
-  const totalSpend = SALES.reduce((s, x) => s + x.finalPrice, 0)
+export const dynamic = "force-dynamic"
+
+export default async function HomePage() {
+  const supabase = createAdminClient()
+  const activeSeason = await getActiveSeason(supabase)
+  const seasonId = activeSeason?.id || "00000000-0000-0000-0000-000000000001"
+
+  const [franchises, players] = await Promise.all([
+    getAdminFranchisesList(supabase, seasonId),
+    getPublicPlayers(supabase, seasonId),
+  ])
+
+  const sold = players.filter((p) => p.status === "SOLD")
+  const totalSpend = franchises.reduce((sum, f) => sum + (f.spent ?? 0), 0)
 
   const counts = BUCKET_ORDER.reduce(
     (acc, b) => {
-      acc[b] = PLAYERS.filter((p) => p.bucket === b).length
+      acc[b] = players.filter((p) => p.bucket === b).length
       return acc
     },
     {} as Record<Bucket, number>,
   )
 
-  const franchisesWithSize = FRANCHISES.map((f) => ({
+  const franchisesWithSize = franchises.map((f) => ({
     ...f,
-    squadSize: franchiseSquad(f.id).length,
+    squadSize: f.squadCount ?? 0,
   }))
 
   const featured = [...sold].sort((a, b) => (b.soldPrice ?? 0) - (a.soldPrice ?? 0)).slice(0, 6)
@@ -32,8 +46,8 @@ export default function HomePage() {
     <>
       <Hero
         stats={{
-          players: PLAYERS.length,
-          franchises: FRANCHISES.length,
+          players: players.length,
+          franchises: franchises.length,
           sold: sold.length,
           spend: formatCredits(totalSpend),
         }}
@@ -57,11 +71,20 @@ export default function HomePage() {
           </Link>
         </div>
 
-        <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {featured.map((p) => (
-            <PlayerCard key={p.id} player={p} href={`/players/${p.id}`} />
-          ))}
-        </div>
+        {featured.length > 0 ? (
+          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {featured.map((p) => {
+              const franchise = p.soldTo ? franchises.find((f) => f.id === p.soldTo) : undefined
+              return (
+                <PlayerCard key={p.id} player={p} href={`/players/${p.id}`} franchise={franchise} />
+              )
+            })}
+          </div>
+        ) : (
+          <div className="mt-8 rounded-xl border border-dashed p-8 text-center text-muted-foreground">
+            Auction in progress or yet to start. Check back as marquee players are acquired!
+          </div>
+        )}
       </section>
 
       <FranchiseStrip franchises={franchisesWithSize} />
@@ -79,7 +102,7 @@ export default function HomePage() {
             <Link href="/login" className={buttonVariants({ size: "lg" })}>
               Sign in to your portal
             </Link>
-            <Link href="/auction" className={buttonVariants({ size: "lg", variant: "outline" })}>
+            <Link href="/live" className={buttonVariants({ size: "lg", variant: "outline" })}>
               Follow the auction
             </Link>
           </div>

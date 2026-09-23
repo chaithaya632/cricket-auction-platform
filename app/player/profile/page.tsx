@@ -11,7 +11,7 @@ import { PlayerStatusBadge } from '@/components/acc/status-badges';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { getSessionUser } from '@/lib/acc/server-session';
-import { CURRENT_PLAYER_ID, getPlayer } from '@/lib/acc/mock-data';
+import { parseCareerStats } from '@/lib/players/queries';
 import type { Bucket, PlayerType, PlayerStatus } from '@/lib/acc/types';
 
 export const metadata: Metadata = { title: 'My Profile · Player' };
@@ -45,12 +45,10 @@ export default async function PlayerProfilePage() {
     getSessionUser('player'),
   ]);
 
-  const fallback = getPlayer(CURRENT_PLAYER_ID)!;
-
   const displayName = fullData.player?.full_name || permContext.user.full_name || 'Player';
   const rollNumber = fullData.player?.roll_number || 'Pending Registration';
   const photoUrl = fullData.player?.photo_url || permContext.user.avatar_url || null;
-  const bucket = (fullData.registration?.bucket || fallback.bucket) as Bucket;
+  const bucket = (fullData.registration?.bucket as Bucket) || 'B1';
   const regStatus = fullData.registration?.registration_status;
   let status: PlayerStatus = 'UNDER_REVIEW';
   if (fullData.registration?.is_auction_eligible || regStatus === 'eligible') {
@@ -61,9 +59,8 @@ export default async function PlayerProfilePage() {
     status = 'REGISTERED';
   } else if (regStatus === 'ineligible') {
     status = 'REJECTED';
-  } else if (fallback?.status) {
-    status = fallback.status;
   }
+
   const playerType = (fullData.skillProfile
     ? fullData.skillProfile.is_wicket_keeper
       ? 'Wicket-keeper'
@@ -73,8 +70,10 @@ export default async function PlayerProfilePage() {
       ? 'Batter'
       : fullData.skillProfile.is_bowler
       ? 'Bowler'
-      : fallback.playerType
-    : fallback.playerType) as PlayerType;
+      : 'All-rounder'
+    : 'All-rounder') as PlayerType;
+
+  const realCareerStats = parseCareerStats(fullData.skillProfile?.experience_description);
 
   sessionUser.name = displayName;
   sessionUser.sub = rollNumber;
@@ -115,23 +114,23 @@ export default async function PlayerProfilePage() {
             <CardContent className="grid grid-cols-2 gap-4">
               <Field
                 label="Course"
-                value={fullData.registration?.programme || fallback.course}
+                value={fullData.registration?.programme === 'pg' ? 'PG' : fullData.registration?.programme ? 'UG' : '—'}
               />
               <Field
                 label="Program"
-                value={fullData.registration?.programme || fallback.program}
+                value={fullData.registration?.programme?.toUpperCase() || '—'}
               />
               <Field
                 label="Branch"
-                value={fullData.registration?.branch || fallback.branch}
+                value={fullData.registration?.branch || '—'}
               />
               <Field
                 label="Year of study"
-                value={`Year ${fullData.registration?.academic_year || fallback.yearOfStudy}`}
+                value={fullData.registration?.academic_year ? `Year ${fullData.registration.academic_year}` : '—'}
               />
               <Field
                 label="Base Price"
-                value={`₹${fullData.registration?.base_price || fallback.basePrice}`}
+                value={fullData.registration?.base_price ? `₹${fullData.registration.base_price}` : '—'}
               />
               <Field label="Player type" value={playerType} />
               <Field
@@ -154,7 +153,7 @@ export default async function PlayerProfilePage() {
 
         <div>
           <h2 className="mb-3 text-lg font-semibold">Career statistics</h2>
-          <PlayerStatsBlock stats={fallback.stats} />
+          <PlayerStatsBlock stats={realCareerStats} />
         </div>
       </div>
     </DashboardShell>

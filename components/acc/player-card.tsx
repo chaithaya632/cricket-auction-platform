@@ -7,9 +7,8 @@ import { PlayerStatusBadge } from "@/components/acc/status-badges"
 import { SkillBadges } from "@/components/acc/skill-badges"
 import { FranchiseCrest } from "@/components/acc/franchise-crest"
 import { formatCredits } from "@/lib/acc/config"
-import { getFranchise } from "@/lib/acc/mock-data"
 import { cn } from "@/lib/utils"
-import type { Player } from "@/lib/acc/types"
+import type { Player, Franchise } from "@/lib/acc/types"
 
 function initials(name: string) {
   return name
@@ -24,17 +23,18 @@ export function PlayerCard({
   href,
   showStatus = true,
   className,
+  franchise,
 }: {
   player: Player
   href?: string
   showStatus?: boolean
   className?: string
+  franchise?: Franchise
 }) {
-  const franchise = getFranchise(player.soldTo)
   const topStat =
     player.playerType === "Bowler"
-      ? { label: "Wickets", value: player.stats.wickets }
-      : { label: "Runs", value: player.stats.runs }
+      ? { label: "Wickets", value: player.stats?.wickets ?? 0 }
+      : { label: "Runs", value: player.stats?.runs ?? 0 }
 
   const body = (
     <Card

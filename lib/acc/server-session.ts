@@ -1,11 +1,11 @@
 import { cache } from 'react';
 import { getCurrentUser } from '@/lib/auth/session';
-import { mockUser, type SessionUser } from '@/lib/acc/session';
+import type { SessionUser } from '@/lib/acc/session';
 import type { Role } from '@/lib/acc/nav';
 
 /**
  * Server-side session resolver that fetches real Supabase Auth session
- * and user profile from public.users, falling back to role mock if needed.
+ * and user profile from public.users.
  * Memoized per request with React cache().
  */
 export const getSessionUser = cache(async (role: Role): Promise<SessionUser> => {
@@ -21,5 +21,9 @@ export const getSessionUser = cache(async (role: Role): Promise<SessionUser> => 
   } catch {
     // Fallback if not in a request context or not signed in
   }
-  return mockUser(role);
+  return {
+    name: role === 'admin' ? 'Auction Admin' : role === 'franchise' ? 'Franchise Representative' : 'Tournament Player',
+    sub: role === 'admin' ? 'System Administrator' : 'Portal User',
+    avatarUrl: undefined,
+  };
 });

@@ -134,7 +134,7 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
         type="button"
         onClick={handlePlaceBid}
         disabled={!canBid}
-        className={`w-full py-4 px-6 rounded-xl font-bold text-base transition-all duration-150 shadow-lg flex items-center justify-center gap-2 ${
+        className={`w-full py-4 px-6 rounded-xl font-bold text-base transition-all duration-150 shadow-lg flex items-center justify-center gap-2 touch-manipulation select-none ${
           canBid
             ? 'bg-emerald-600 hover:bg-emerald-500 text-white active:scale-[0.99] cursor-pointer'
             : 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700/50'

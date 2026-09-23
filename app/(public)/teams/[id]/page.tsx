@@ -9,30 +9,42 @@ import { PurseBar } from "@/components/acc/purse-bar"
 import { StatCard } from "@/components/acc/stat-card"
 import { PlayerCard } from "@/components/acc/player-card"
 import { CategoryChip } from "@/components/acc/category-badge"
-import {
-  FRANCHISES,
-  getFranchise,
-  franchiseSquad,
-  franchiseSpend,
-  franchisePurse,
-  bucketCounts,
-} from "@/lib/acc/mock-data"
 import { BUCKET_ORDER, formatCredits, MIN_PER_BUCKET, STARTING_PURSE, TARGET_SQUAD } from "@/lib/acc/config"
 import { ArrowLeft, Users, Wallet, TrendingDown } from "lucide-react"
+import { createAdminClient } from "@/lib/supabase/admin"
+import { getAdminFranchisesList } from "@/lib/franchises/queries"
+import { getPublicPlayers } from "@/lib/players/queries"
+import { getActiveSeason } from "@/lib/permissions/context"
+import type { Bucket } from "@/lib/acc/types"
 
-export function generateStaticParams() {
-  return FRANCHISES.map((f) => ({ id: f.id }))
-}
+export const dynamic = "force-dynamic"
 
 export default async function TeamDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const team = getFranchise(id)
+  const supabase = createAdminClient()
+  const activeSeason = await getActiveSeason(supabase)
+  const seasonId = activeSeason?.id || "00000000-0000-0000-0000-000000000001"
+
+  const [franchises, players] = await Promise.all([
+    getAdminFranchisesList(supabase, seasonId),
+    getPublicPlayers(supabase, seasonId),
+  ])
+
+  const team = franchises.find((f) => f.id === id)
   if (!team) notFound()
 
-  const squad = franchiseSquad(id)
-  const spend = franchiseSpend(id)
-  const purse = franchisePurse(id)
-  const counts = bucketCounts(id)
+  const squad = players.filter((p) => p.soldTo === id)
+  const spend = team.spent ?? squad.reduce((sum, p) => sum + (p.soldPrice ?? 0), 0)
+  const startingPurse = team.startingPurse || STARTING_PURSE
+  const purse = team.remainingPurse ?? Math.max(0, startingPurse - spend)
+
+  const counts = BUCKET_ORDER.reduce(
+    (acc, b) => {
+      acc[b] = squad.filter((p) => p.bucket === b).length
+      return acc
+    },
+    {} as Record<Bucket, number>,
+  )
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-10 md:px-6">
@@ -80,7 +92,7 @@ export default async function TeamDetailPage({ params }: { params: Promise<{ id:
               <CardTitle className="text-base">Purse</CardTitle>
             </CardHeader>
             <CardContent>
-              <PurseBar spent={spend} total={STARTING_PURSE} />
+              <PurseBar spent={spend} total={startingPurse} />
             </CardContent>
           </Card>
 
@@ -128,7 +140,7 @@ export default async function TeamDetailPage({ params }: { params: Promise<{ id:
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
               {squad.map((p) => (
-                <PlayerCard key={p.id} player={p} href={`/players/${p.id}`} />
+                <PlayerCard key={p.id} player={p} href={`/players/${p.id}`} franchise={team} />
               ))}
             </div>
           )}

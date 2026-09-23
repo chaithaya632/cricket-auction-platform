@@ -416,3 +416,27 @@ export const getAdminPlayersList = cache(async (
     return [];
   }
 });
+
+/**
+ * Strips confidential PII (mobile phone numbers, CricHeroes mobile) from player objects
+ * for safe rendering on public directories, spectator views, and landing pages.
+ */
+export function sanitizePublicPlayer(player: Player): Player {
+  return {
+    ...player,
+    mobile: null,
+    cricheroesMobile: null,
+  };
+}
+
+/**
+ * Retrieves public-safe player directory for a season.
+ * Guarantees no mobile numbers or private contact details are returned.
+ */
+export const getPublicPlayers = cache(async (
+  supabase: SupabaseClient,
+  seasonId?: string
+): Promise<Player[]> => {
+  const players = await getAdminPlayersList(supabase, seasonId);
+  return players.map(sanitizePublicPlayer);
+});

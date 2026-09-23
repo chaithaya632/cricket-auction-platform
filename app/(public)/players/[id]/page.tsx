@@ -10,20 +10,30 @@ import { SkillBadges } from "@/components/acc/skill-badges"
 import { PlayerStatsBlock } from "@/components/acc/player-stats"
 import { FranchiseCrest } from "@/components/acc/franchise-crest"
 import { VerifiedIcon } from "@/components/acc/icons"
-import { PLAYERS, getPlayer, getFranchise } from "@/lib/acc/mock-data"
 import { formatCredits } from "@/lib/acc/config"
 import { ArrowLeft } from "lucide-react"
+import { createAdminClient } from "@/lib/supabase/admin"
+import { getPublicPlayers } from "@/lib/players/queries"
+import { getAdminFranchisesList } from "@/lib/franchises/queries"
+import { getActiveSeason } from "@/lib/permissions/context"
 
-export function generateStaticParams() {
-  return PLAYERS.map((p) => ({ id: p.id }))
-}
+export const dynamic = "force-dynamic"
 
 export default async function PlayerProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const player = getPlayer(id)
+  const supabase = createAdminClient()
+  const activeSeason = await getActiveSeason(supabase)
+  const seasonId = activeSeason?.id || "00000000-0000-0000-0000-000000000001"
+
+  const [players, franchises] = await Promise.all([
+    getPublicPlayers(supabase, seasonId),
+    getAdminFranchisesList(supabase, seasonId),
+  ])
+
+  const player = players.find((p) => p.id === id)
   if (!player) notFound()
 
-  const franchise = getFranchise(player.soldTo)
+  const franchise = player.soldTo ? franchises.find((f) => f.id === player.soldTo) : undefined
 
   const details: { label: string; value: string }[] = [
     { label: "Roll number", value: player.rollNumber },

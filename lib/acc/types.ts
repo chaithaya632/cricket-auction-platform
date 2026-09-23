@@ -100,6 +100,10 @@ export interface Franchise {
   viceCaptainName: string
   startingPurse: number
   logoUrl?: string
+  spent?: number
+  remainingPurse?: number
+  squadCount?: number
+  budgetTotal?: number
 }
 
 export interface SaleRecord {

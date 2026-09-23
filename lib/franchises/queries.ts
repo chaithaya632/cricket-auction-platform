@@ -20,7 +20,6 @@ import type {
   PlayerDiscoveryFilters,
 } from './types';
 import { parseCareerStats } from '@/lib/players/queries';
-import { PLAYERS } from '@/lib/acc/mock-data';
 
 /**
  * Retrieves the complete squad, financial state, bucket progress, and roster
@@ -318,7 +317,6 @@ export const getSeasonPlayerDiscovery = cache(async (
 });
 
 import type { Franchise } from '@/lib/acc/types';
-import { FRANCHISES } from '@/lib/acc/mock-data';
 
 /**
  * Retrieves the unified franchise list for admin and public consoles.
@@ -358,13 +356,41 @@ export const getAdminFranchisesList = cache(async (
     const { data: dbFranchises, error } = await query;
 
     if (error || !dbFranchises || dbFranchises.length === 0) {
-      return FRANCHISES;
+      return [];
+    }
+
+    // Query auction lots to compute real squadCount and spent per franchise
+    let lotsQuery = supabase
+      .from('auction_lots')
+      .select('highest_bidder_franchise_id, current_price, base_price, status')
+      .in('status', ['sold', 'allotted', 'scouted']);
+
+    if (seasonId) {
+      lotsQuery = lotsQuery.eq('season_id', seasonId);
+    }
+
+    const { data: soldLots } = await lotsQuery;
+    const statsMap: Record<string, { squadCount: number; spent: number }> = {};
+    if (soldLots) {
+      for (const lot of soldLots) {
+        if (lot.highest_bidder_franchise_id) {
+          if (!statsMap[lot.highest_bidder_franchise_id]) {
+            statsMap[lot.highest_bidder_franchise_id] = { squadCount: 0, spent: 0 };
+          }
+          statsMap[lot.highest_bidder_franchise_id].squadCount += 1;
+          statsMap[lot.highest_bidder_franchise_id].spent += (lot.current_price || lot.base_price || 0);
+        }
+      }
     }
 
     const parsed: Franchise[] = dbFranchises.map((f: any) => {
       const members = Array.isArray(f.franchise_members) ? f.franchise_members : [];
       const captain = members.find((m: any) => m.role === 'captain' && m.is_active);
       const vc = members.find((m: any) => m.role === 'vice_captain' && m.is_active);
+      const stats = statsMap[f.id] || { squadCount: 0, spent: 0 };
+      const startingPurse = 1000;
+      const spent = stats.spent;
+      const remainingPurse = Math.max(0, startingPurse - spent);
 
       return {
         id: f.id,
@@ -375,13 +401,16 @@ export const getAdminFranchisesList = cache(async (
         coordinatorDept: 'Sports Committee',
         captainName: captain?.users?.full_name || 'TBD',
         viceCaptainName: vc?.users?.full_name || 'TBD',
-        startingPurse: 1000,
+        startingPurse,
+        spent,
+        remainingPurse,
+        squadCount: stats.squadCount,
         logoUrl: f.logo_url || undefined,
       };
     });
 
     return parsed;
   } catch {
-    return FRANCHISES;
+    return [];
   }
 });
