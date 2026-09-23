@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 import { disableDemoModeAction, enableDemoModeAction } from "@/lib/demo/actions"
-import { REQUIRED_CONFIRMATION_PHRASE } from "@/lib/demo/config"
+import { REQUIRED_CONFIRMATION_PHRASE, DEMO_PROJECT_REF, PRODUCTION_PROJECT_REF } from "@/lib/demo/config"
 import { AlertTriangle, CheckCircle2, ShieldAlert, Loader2, ArrowLeft, Play } from "lucide-react"
 
 interface DemoModeCardProps {
@@ -43,10 +43,41 @@ export function DemoModeCard({
   const [confirmationPhrase, setConfirmationPhrase] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
 
-  // Requirement §12: If the production environment has no demo mode,
-  // the demo-management section MUST be hidden entirely.
+  // In production environment (or any non-demo environment), show the protected lock state
   if (!initialIsDemoEnv) {
-    return null
+    return (
+      <Card className="border-border/60 bg-muted/20">
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <CardTitle className="text-base font-semibold">Demo / Judge Mode</CardTitle>
+              <Badge variant="outline" className="font-mono text-xs uppercase border-border/80 text-muted-foreground">
+                PRODUCTION PROTECTED
+              </Badge>
+            </div>
+            {projectRef && (
+              <span className="font-mono text-xs text-muted-foreground">
+                Environment: {projectRef}
+              </span>
+            )}
+          </div>
+          <CardDescription>
+            Demo mode is disabled in production. This portal is connected to the official ACC tournament database.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-muted/40 p-3 text-sm text-muted-foreground">
+            <ShieldAlert className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <div className="flex flex-col gap-1">
+              <span className="font-medium text-foreground">Production Safety Lock Active</span>
+              <span className="text-xs">
+                Demo data cleanup controls are strictly restricted to the approved rehearsal environment (<code className="font-mono text-xs font-semibold">{DEMO_PROJECT_REF}</code>). Production tournament data (<code className="font-mono text-xs font-semibold">{PRODUCTION_PROJECT_REF}</code>) is fully isolated and cannot be modified by demo controls.
+              </span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    )
   }
 
   const isConfirmed = confirmationPhrase.trim() === REQUIRED_CONFIRMATION_PHRASE
