@@ -25,7 +25,7 @@ import {
 import { toast } from "sonner"
 import { disableDemoModeAction, enableDemoModeAction } from "@/lib/demo/actions"
 import { REQUIRED_CONFIRMATION_PHRASE, DEMO_PROJECT_REF, PRODUCTION_PROJECT_REF } from "@/lib/demo/config"
-import { AlertTriangle, CheckCircle2, ShieldAlert, Loader2, ArrowLeft, Play } from "lucide-react"
+import { AlertTriangle, CheckCircle2, ShieldAlert, Loader2, ArrowLeft, Play, Lock } from "lucide-react"
 
 interface DemoModeCardProps {
   initialIsDemoEnv: boolean
@@ -65,7 +65,7 @@ export function DemoModeCard({
             Demo mode is disabled in production. This portal is connected to the official ACC tournament database.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-muted/40 p-3 text-sm text-muted-foreground">
             <ShieldAlert className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <div className="flex flex-col gap-1">
@@ -74,6 +74,21 @@ export function DemoModeCard({
                 Demo data cleanup controls are strictly restricted to the approved rehearsal environment (<code className="font-mono text-xs font-semibold">{DEMO_PROJECT_REF}</code>). Production tournament data (<code className="font-mono text-xs font-semibold">{PRODUCTION_PROJECT_REF}</code>) is fully isolated and cannot be modified by demo controls.
               </span>
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 pt-1">
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={true}
+              className="gap-2 cursor-not-allowed opacity-60"
+            >
+              <Lock className="size-4" />
+              Disable Demo Mode
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Locked in production · Demo cleanup is only active in rehearsal (<code className="font-mono">{DEMO_PROJECT_REF}</code>)
+            </span>
           </div>
         </CardContent>
       </Card>
