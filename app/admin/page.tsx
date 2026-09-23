@@ -75,7 +75,7 @@ export default async function AdminDashboardPage({
         <div className="flex items-center gap-2">
           <Link href="/admin/settings" className={buttonVariants({ variant: "outline", size: "sm" })}>
             <Settings className="size-4" />
-            Settings & Demo Mode
+            Settings
           </Link>
           <Link href="/admin/auction" className={buttonVariants({ size: "sm" })}>
             <Gavel className="size-4" />
@@ -88,7 +88,7 @@ export default async function AdminDashboardPage({
         <div className="mb-6 flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
           <ShieldAlert className="size-4 shrink-0" />
           <span>
-            Access to <strong>Tournament Settings & Demo Mode</strong> is restricted to Super Admin accounts. Match Operators do not have permission to modify system settings.
+            Access to <strong>Tournament Settings</strong> is restricted to Super Admin accounts. Match Operators do not have permission to modify system settings.
           </span>
         </div>
       )}
