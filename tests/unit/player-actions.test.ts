@@ -18,14 +18,37 @@ describe('Player Application — Profile Validation Schema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('accepts optional or empty photo_url', () => {
-    const validNoPhoto = {
+  it('strictly requires photo_url and fails if missing, empty, or undefined', () => {
+    const missingPhoto = {
       full_name: 'Rohit Sharma',
       roll_number: '22811A0501',
       mobile: '9876543210',
+    };
+    const resMissing = playerProfileSchema.safeParse(missingPhoto);
+    expect(resMissing.success).toBe(false);
+    if (!resMissing.success) {
+      expect(resMissing.error.issues[0].message).toBe('Player photograph is required.');
+    }
+
+    const emptyPhoto = {
+      ...missingPhoto,
       photo_url: '',
     };
-    expect(playerProfileSchema.safeParse(validNoPhoto).success).toBe(true);
+    const resEmpty = playerProfileSchema.safeParse(emptyPhoto);
+    expect(resEmpty.success).toBe(false);
+    if (!resEmpty.success) {
+      expect(resEmpty.error.issues[0].message).toBe('Player photograph is required.');
+    }
+
+    const nullPhoto = {
+      ...missingPhoto,
+      photo_url: null,
+    };
+    const resNull = playerProfileSchema.safeParse(nullPhoto);
+    expect(resNull.success).toBe(false);
+    if (!resNull.success) {
+      expect(resNull.error.issues[0].message).toBe('Player photograph is required.');
+    }
   });
 
   it('accepts valid HTTPS and HTTP photo URLs (including Supabase Storage CDN URLs)', () => {
@@ -81,6 +104,7 @@ describe('Player Application — Profile Validation Schema', () => {
       full_name: 'R',
       roll_number: '22811A0501',
       mobile: '9876543210',
+      photo_url: 'https://example.com/photo.jpg',
     };
     const result = playerProfileSchema.safeParse(invalid);
     expect(result.success).toBe(false);
@@ -93,6 +117,7 @@ describe('Player Application — Profile Validation Schema', () => {
         full_name: 'Test Player',
         roll_number: '22811A0501',
         mobile: '5123456789',
+        photo_url: 'https://example.com/photo.jpg',
       }).success
     ).toBe(false);
 
@@ -102,6 +127,7 @@ describe('Player Application — Profile Validation Schema', () => {
         full_name: 'Test Player',
         roll_number: '22811A0501',
         mobile: '987654321',
+        photo_url: 'https://example.com/photo.jpg',
       }).success
     ).toBe(false);
 
@@ -111,6 +137,7 @@ describe('Player Application — Profile Validation Schema', () => {
         full_name: 'Test Player',
         roll_number: '22811A0501',
         mobile: '987654321a',
+        photo_url: 'https://example.com/photo.jpg',
       }).success
     ).toBe(false);
   });

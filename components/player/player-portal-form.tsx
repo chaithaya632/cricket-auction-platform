@@ -4,7 +4,7 @@
 // ACC Auction Portal — Player Portal Form Component
 // =============================================================================
 
-import { useState, useTransition, useMemo } from 'react';
+import { useState, useTransition, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   savePlayerProfileAction,
@@ -163,8 +163,8 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
   const [mobile, setMobile] = useState(initialData.player?.mobile || '');
   const [photoUrl, setPhotoUrl] = useState(initialData.player?.photo_url || '');
   const [photoError, setPhotoError] = useState<string | null>(null);
-  const [useManualUrl, setUseManualUrl] = useState(false);
   const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [profileSnapshot, setProfileSnapshot] = useState({
     fullName: initialData.player?.full_name || '',
@@ -558,6 +558,17 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
   async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault();
     setMessage(null);
+
+    if (!photoUrl || photoUrl.trim() === '') {
+      setPhotoError('Player photograph is required.');
+      setMessage({ type: 'error', text: 'Player photograph is required.' });
+      return;
+    }
+
+    if (isProcessingPhoto) {
+      setMessage({ type: 'error', text: 'Please wait for your photograph to finish uploading.' });
+      return;
+    }
 
     startTransition(async () => {
       const res = await savePlayerProfileAction({
@@ -955,34 +966,34 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
             </div>
 
             <div className="space-y-2 sm:col-span-2">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <label className="block text-xs font-semibold">
-                  Player Photograph <span className="text-gray-400 font-normal">(Projected on Big Screen)</span>
-                </label>
-                {isEditingProfile && (
-                  <button
-                    type="button"
-                    onClick={() => setUseManualUrl(!useManualUrl)}
-                    className="text-[11px] text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 underline cursor-pointer"
-                  >
-                    {useManualUrl ? 'Switch to File Upload / Camera' : 'Or enter image URL manually'}
-                  </button>
-                )}
-              </div>
+              <label className="block text-xs font-semibold">
+                Player Photograph <span className="text-red-500">*</span> <span className="text-gray-400 font-normal">(Projected on Big Screen)</span>
+              </label>
 
               {/* Face Visible Guidance Alert (§5) */}
               <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 p-3 text-[11px] text-gray-600 dark:text-gray-300">
                 <p className="font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5 mb-1">
                   <span>📸</span>
-                  <span>Face Clearly Visible — Auditorium Projector Quality Guidance (§5)</span>
+                  <span>Upload a clear photo with the face clearly visible. Formal or casual photo accepted.</span>
                 </p>
-                Face must be clearly visible (formal or casual both acceptable). High quality is essential as your photograph will be projected on a large screen during live bidding in the college auditorium.
+                High quality is essential as your photograph will be projected on a large screen during live bidding in the college auditorium. Accepts JPG, JPEG, PNG, WebP (max 5 MB).
               </div>
 
-              {/* Photo Preview & Controls */}
+              {/* Hidden file input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/jpg"
+                disabled={!isEditingProfile || isProcessingPhoto}
+                onChange={handlePhotoFileChange}
+                className="hidden"
+                id="player-photo-upload"
+              />
+
+              {/* Photo Display / Upload Control */}
               {photoUrl ? (
-                <div className="flex items-center gap-4 p-3 rounded-lg border bg-gray-50/70 dark:bg-gray-800/40">
-                  <div className="relative w-16 h-16 rounded-lg overflow-hidden border-2 border-emerald-500 shadow-sm shrink-0 bg-gray-200 dark:bg-gray-700">
+                <div className="flex items-center gap-4 p-3.5 rounded-lg border bg-gray-50/70 dark:bg-gray-800/40">
+                  <div className="relative w-20 h-20 rounded-lg overflow-hidden border-2 border-emerald-500 shadow-sm shrink-0 bg-gray-200 dark:bg-gray-700">
                     <img
                       src={photoUrl}
                       alt="Player preview"
@@ -990,73 +1001,63 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                     />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                      ✓ Photograph attached
+                    <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                      <span>✓</span> Photograph uploaded
                     </p>
-                    <p className="text-[11px] text-gray-500 truncate">
-                      {photoUrl.startsWith('http')
-                        ? 'Cloud Storage verified photo ready for auditorium projector'
-                        : photoUrl}
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      Face clearly visible • Ready for auditorium projector
                     </p>
                     {isEditingProfile && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPhotoUrl('');
-                          setPhotoError(null);
-                        }}
-                        className="text-[11px] text-red-600 hover:text-red-700 font-semibold cursor-pointer mt-1"
-                      >
-                        Remove / Re-upload
-                      </button>
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={isProcessingPhoto}
+                          onClick={() => fileInputRef.current?.click()}
+                          className="inline-flex items-center gap-1 rounded-md border border-emerald-600 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:bg-gray-800 dark:text-emerald-300 dark:hover:bg-gray-700 cursor-pointer disabled:opacity-50"
+                        >
+                          <span>🔄</span>
+                          <span>Replace Photo</span>
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
-              ) : null}
-
-              {/* Upload Input or Manual URL Input */}
-              {isEditingProfile && (
-                <div className="space-y-1.5">
-                  {!useManualUrl ? (
-                    <div>
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp,image/jpg"
-                        disabled={!isEditingProfile || isProcessingPhoto}
-                        onChange={handlePhotoFileChange}
-                        className="block w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 dark:file:bg-emerald-950 dark:file:text-emerald-300 cursor-pointer disabled:opacity-50"
-                      />
-                      <p className="text-[11px] text-gray-500 mt-1">
-                        Accepts JPG, PNG, WebP (max 5 MB). Automatically processed for big-screen projection and instant list loading.
+              ) : (
+                isEditingProfile && (
+                  <div className="border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-5 text-center bg-gray-50/50 dark:bg-gray-800/20 hover:border-emerald-500 transition-colors">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <div className="w-12 h-12 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-xl">
+                        📷
+                      </div>
+                      <div>
+                        <button
+                          type="button"
+                          disabled={isProcessingPhoto}
+                          onClick={() => fileInputRef.current?.click()}
+                          className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 cursor-pointer disabled:opacity-50"
+                        >
+                          <span>Upload Photo</span>
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-gray-500">
+                        Choose photo from device or camera • JPG, PNG, WebP up to 5 MB
                       </p>
                     </div>
-                  ) : (
-                    <div>
-                      <input
-                        id="photo_url"
-                        type="url"
-                        disabled={!isEditingProfile}
-                        value={photoUrl}
-                        onChange={(e) => setPhotoUrl(e.target.value)}
-                        placeholder="https://example.com/photo.jpg"
-                        className="w-full rounded-md border px-3 py-2 text-sm shadow-sm disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60 dark:bg-gray-800 dark:border-gray-700"
-                      />
-                      <p className="text-[11px] text-gray-500 mt-1">
-                        Enter a direct, public image URL (https://...)
-                      </p>
-                    </div>
-                  )}
+                  </div>
+                )
+              )}
 
-                  {photoError && (
-                    <p className="text-xs text-red-600 dark:text-red-400 font-semibold">
-                      ⚠️ {photoError}
-                    </p>
-                  )}
-                  {isProcessingPhoto && (
-                    <p className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold animate-pulse">
-                      Processing and optimizing photograph for auditorium projection...
-                    </p>
-                  )}
+              {/* Upload Status / Error feedback */}
+              {isProcessingPhoto && (
+                <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 font-semibold p-2 bg-emerald-50/60 dark:bg-emerald-950/30 rounded border border-emerald-200 dark:border-emerald-800 animate-pulse">
+                  <span className="inline-block animate-spin">⏳</span>
+                  <span>Uploading photograph to secure storage...</span>
+                </div>
+              )}
+
+              {photoError && (
+                <div className="p-2.5 rounded border border-red-200 bg-red-50 dark:bg-red-950/30 text-xs text-red-600 dark:text-red-400 font-semibold">
+                  ⚠️ {photoError}
                 </div>
               )}
             </div>
@@ -1086,10 +1087,10 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 )}
                 <button
                   type="submit"
-                  disabled={isPending}
+                  disabled={isPending || isProcessingPhoto}
                   className="rounded-md bg-emerald-600 px-5 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
                 >
-                  {isPending ? 'Saving...' : 'SAVE'}
+                  {isProcessingPhoto ? 'Uploading Photo...' : isPending ? 'Saving...' : 'SAVE'}
                 </button>
               </>
             )}

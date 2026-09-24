@@ -7,8 +7,8 @@ import { BASE_PRICE_LADDER } from '@/lib/constants';
 
 const mobilePattern = /^[6-9]\d{9}$/;
 
-const isValidPhotoString = (val: string | null | undefined): boolean => {
-  if (!val || val === '') return true;
+const isValidPhotoUrl = (val: string | null | undefined): boolean => {
+  if (!val || typeof val !== 'string') return false;
   const trimmed = val.trim();
   if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) {
     try {
@@ -30,11 +30,10 @@ export const playerProfileSchema = z.object({
     .trim()
     .regex(mobilePattern, 'Mobile must be a valid 10-digit Indian phone number starting with 6-9'),
   photo_url: z
-    .string()
+    .string({ error: 'Player photograph is required.' })
     .trim()
-    .refine(isValidPhotoString, 'Photo must be a valid HTTP or HTTPS storage/web URL')
-    .optional()
-    .or(z.literal('')),
+    .min(1, 'Player photograph is required.')
+    .refine(isValidPhotoUrl, 'Photo must be a valid HTTP or HTTPS storage/web URL'),
 });
 
 export const playerRegistrationSchema = z.object({
@@ -101,7 +100,7 @@ export const adminCreatePlayerSchema = z.object({
   photo_url: z
     .string()
     .trim()
-    .refine(isValidPhotoString, 'Photo must be a valid HTTP or HTTPS storage/web URL')
+    .refine((val) => !val || isValidPhotoUrl(val), 'Photo must be a valid HTTP or HTTPS storage/web URL')
     .or(z.literal(''))
     .nullable()
     .optional(),
