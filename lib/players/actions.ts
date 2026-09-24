@@ -19,6 +19,11 @@ import {
   playerSkillSchema,
   adminCreatePlayerSchema,
 } from './validation';
+import {
+  uploadPlayerPhoto,
+  ALLOWED_PHOTO_MIME_TYPES,
+  MAX_PHOTO_FILE_SIZE,
+} from '@/lib/storage';
 import type {
   PlayerProfileInput,
   PlayerRegistrationInput,
@@ -1280,5 +1285,43 @@ export async function adminApprovePlayerRegistrationAction(
       success: false,
       error: err instanceof Error ? err.message : 'Failed to update player registration status',
     };
+  }
+}
+
+/**
+ * Server action for uploading player photographs directly to Supabase Storage.
+ * Restricts upload authority to authenticated players for their own profile.
+ */
+export async function uploadPlayerPhotoAction(
+  formData: FormData
+): Promise<{ success: boolean; url?: string; error?: string }> {
+  try {
+    const permContext = await requirePlayer();
+    const userId = permContext.user.id;
+
+    const file = formData.get('file') as File | null;
+    if (!file) {
+      return { success: false, error: 'No photo file provided.' };
+    }
+
+    if (!ALLOWED_PHOTO_MIME_TYPES.includes(file.type)) {
+      return { success: false, error: 'Invalid photo format. Accepted formats: JPG, PNG, WebP.' };
+    }
+
+    if (file.size > MAX_PHOTO_FILE_SIZE) {
+      return { success: false, error: 'Photo file size exceeds maximum 5 MB limit.' };
+    }
+
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    const result = await uploadPlayerPhoto(userId, buffer, file.type);
+    if (!result.success) {
+      return { success: false, error: result.error || 'Failed to upload photo to storage.' };
+    }
+
+    return { success: true, url: result.url };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to upload photo.' };
   }
 }

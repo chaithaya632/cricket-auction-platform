@@ -10,6 +10,7 @@ import {
   savePlayerProfileAction,
   registerPlayerSeasonAction,
   savePlayerSkillProfileAction,
+  uploadPlayerPhotoAction,
 } from '@/lib/players/actions';
 import { parseRollNumber, calculateAcademicYear, deriveBucket } from '@/domain/academic';
 import { derivePlayerType, validateSkills } from '@/domain/players';
@@ -211,14 +212,32 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
           const ctx = canvas.getContext('2d');
           if (ctx) {
             ctx.drawImage(img, 0, 0, width, height);
-            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
-            setPhotoUrl(compressedDataUrl);
+            canvas.toBlob(async (blob) => {
+              try {
+                if (blob) {
+                  const formData = new FormData();
+                  formData.append('file', blob, 'photo.jpg');
+                  const uploadRes = await uploadPlayerPhotoAction(formData);
+                  if (uploadRes.success && uploadRes.url) {
+                    setPhotoUrl(uploadRes.url);
+                    setIsProcessingPhoto(false);
+                    return;
+                  }
+                }
+              } catch (uploadErr) {
+                console.warn('Storage upload fallback triggered:', uploadErr);
+              }
+              // Resilient fallback to compressed canvas data URL
+              const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+              setPhotoUrl(compressedDataUrl);
+              setIsProcessingPhoto(false);
+            }, 'image/jpeg', 0.85);
           } else {
             setPhotoUrl(loadEvt.target?.result as string);
+            setIsProcessingPhoto(false);
           }
         } catch {
           setPhotoUrl(loadEvt.target?.result as string);
-        } finally {
           setIsProcessingPhoto(false);
         }
       };
