@@ -28,29 +28,39 @@ describe('Player Application — Profile Validation Schema', () => {
     expect(playerProfileSchema.safeParse(validNoPhoto).success).toBe(true);
   });
 
-  it('accepts valid base64 image data URIs (JPEG, PNG, WebP) for mobile photo uploads', () => {
-    const validJpegData = {
+  it('accepts valid HTTPS and HTTP photo URLs (including Supabase Storage CDN URLs)', () => {
+    const validStorageUrl = {
+      full_name: 'Rohit Sharma',
+      roll_number: '22811A0501',
+      mobile: '9876543210',
+      photo_url: 'https://btlmiewfyyevtxgywpwy.supabase.co/storage/v1/object/public/player-photos/players/123-1727200000.jpg',
+    };
+    expect(playerProfileSchema.safeParse(validStorageUrl).success).toBe(true);
+
+    const validWebpUrl = {
+      ...validStorageUrl,
+      photo_url: 'https://example.com/photos/rohit.webp',
+    };
+    expect(playerProfileSchema.safeParse(validWebpUrl).success).toBe(true);
+  });
+
+  it('strictly rejects base64 data URIs from database persistence to protect 500-player scale', () => {
+    const dataUriJpeg = {
       full_name: 'Rohit Sharma',
       roll_number: '22811A0501',
       mobile: '9876543210',
       photo_url: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBD...',
     };
-    expect(playerProfileSchema.safeParse(validJpegData).success).toBe(true);
+    expect(playerProfileSchema.safeParse(dataUriJpeg).success).toBe(false);
 
-    const validPngData = {
-      ...validJpegData,
+    const dataUriPng = {
+      ...dataUriJpeg,
       photo_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAE...',
     };
-    expect(playerProfileSchema.safeParse(validPngData).success).toBe(true);
-
-    const validWebpData = {
-      ...validJpegData,
-      photo_url: 'data:image/webp;base64,UklGRkAAAABXRUJQVlA4ID...',
-    };
-    expect(playerProfileSchema.safeParse(validWebpData).success).toBe(true);
+    expect(playerProfileSchema.safeParse(dataUriPng).success).toBe(false);
   });
 
-  it('rejects invalid or non-image photo strings', () => {
+  it('rejects invalid or non-HTTP photo strings', () => {
     const invalidPhoto = {
       full_name: 'Rohit Sharma',
       roll_number: '22811A0501',
@@ -59,11 +69,11 @@ describe('Player Application — Profile Validation Schema', () => {
     };
     expect(playerProfileSchema.safeParse(invalidPhoto).success).toBe(false);
 
-    const invalidMimeType = {
+    const invalidProtocol = {
       ...invalidPhoto,
-      photo_url: 'data:application/pdf;base64,JVBERi0xLjQK...',
+      photo_url: 'ftp://example.com/photo.jpg',
     };
-    expect(playerProfileSchema.safeParse(invalidMimeType).success).toBe(false);
+    expect(playerProfileSchema.safeParse(invalidProtocol).success).toBe(false);
   });
 
   it('rejects short full_name', () => {

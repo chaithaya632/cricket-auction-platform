@@ -220,24 +220,29 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                   const uploadRes = await uploadPlayerPhotoAction(formData);
                   if (uploadRes.success && uploadRes.url) {
                     setPhotoUrl(uploadRes.url);
+                    setPhotoError(null);
+                    setIsProcessingPhoto(false);
+                    return;
+                  }
+                  if (!uploadRes.success) {
+                    setPhotoError(uploadRes.error || 'Failed to upload photo to storage. Please try again.');
                     setIsProcessingPhoto(false);
                     return;
                   }
                 }
-              } catch (uploadErr) {
-                console.warn('Storage upload fallback triggered:', uploadErr);
+              } catch (uploadErr: any) {
+                setPhotoError(uploadErr?.message || 'Storage upload error. Please check your connection and try again.');
+                setIsProcessingPhoto(false);
+                return;
               }
-              // Resilient fallback to compressed canvas data URL
-              const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
-              setPhotoUrl(compressedDataUrl);
               setIsProcessingPhoto(false);
             }, 'image/jpeg', 0.85);
           } else {
-            setPhotoUrl(loadEvt.target?.result as string);
+            setPhotoError('Failed to process image on device canvas.');
             setIsProcessingPhoto(false);
           }
         } catch {
-          setPhotoUrl(loadEvt.target?.result as string);
+          setPhotoError('Failed to process image on device.');
           setIsProcessingPhoto(false);
         }
       };
@@ -989,8 +994,8 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                       ✓ Photograph attached
                     </p>
                     <p className="text-[11px] text-gray-500 truncate">
-                      {photoUrl.startsWith('data:')
-                        ? 'Optimized mobile photo ready for auditorium projector'
+                      {photoUrl.startsWith('http')
+                        ? 'Cloud Storage verified photo ready for auditorium projector'
                         : photoUrl}
                     </p>
                     {isEditingProfile && (

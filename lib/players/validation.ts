@@ -18,14 +18,7 @@ const isValidPhotoString = (val: string | null | undefined): boolean => {
       return false;
     }
   }
-  if (
-    trimmed.startsWith('data:image/jpeg;base64,') ||
-    trimmed.startsWith('data:image/png;base64,') ||
-    trimmed.startsWith('data:image/webp;base64,') ||
-    trimmed.startsWith('data:image/jpg;base64,')
-  ) {
-    return true;
-  }
+  // Disallow base64 data URIs from database persistence to prevent row size bloat
   return false;
 };
 
@@ -39,7 +32,7 @@ export const playerProfileSchema = z.object({
   photo_url: z
     .string()
     .trim()
-    .refine(isValidPhotoString, 'Photo must be a valid web URL or uploaded image (JPEG, PNG, WebP)')
+    .refine(isValidPhotoString, 'Photo must be a valid HTTP or HTTPS storage/web URL')
     .optional()
     .or(z.literal('')),
 });
@@ -108,7 +101,7 @@ export const adminCreatePlayerSchema = z.object({
   photo_url: z
     .string()
     .trim()
-    .refine(isValidPhotoString, 'Photo must be a valid web URL or uploaded image (JPEG, PNG, WebP)')
+    .refine(isValidPhotoString, 'Photo must be a valid HTTP or HTTPS storage/web URL')
     .or(z.literal(''))
     .nullable()
     .optional(),
