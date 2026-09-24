@@ -80,6 +80,7 @@ export interface Player {
   hasRegistration?: boolean
   yearOverride?: number | null
   yearOverrideReason?: string | null
+  discrepancyNote?: string | null
   eligibilityReasons?: string[]
   skillDetails?: {
     battingStyle?: string | null

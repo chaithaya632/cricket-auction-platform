@@ -28,6 +28,44 @@ describe('Player Application — Profile Validation Schema', () => {
     expect(playerProfileSchema.safeParse(validNoPhoto).success).toBe(true);
   });
 
+  it('accepts valid base64 image data URIs (JPEG, PNG, WebP) for mobile photo uploads', () => {
+    const validJpegData = {
+      full_name: 'Rohit Sharma',
+      roll_number: '22811A0501',
+      mobile: '9876543210',
+      photo_url: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBD...',
+    };
+    expect(playerProfileSchema.safeParse(validJpegData).success).toBe(true);
+
+    const validPngData = {
+      ...validJpegData,
+      photo_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAE...',
+    };
+    expect(playerProfileSchema.safeParse(validPngData).success).toBe(true);
+
+    const validWebpData = {
+      ...validJpegData,
+      photo_url: 'data:image/webp;base64,UklGRkAAAABXRUJQVlA4ID...',
+    };
+    expect(playerProfileSchema.safeParse(validWebpData).success).toBe(true);
+  });
+
+  it('rejects invalid or non-image photo strings', () => {
+    const invalidPhoto = {
+      full_name: 'Rohit Sharma',
+      roll_number: '22811A0501',
+      mobile: '9876543210',
+      photo_url: 'not-a-valid-url-or-photo-data',
+    };
+    expect(playerProfileSchema.safeParse(invalidPhoto).success).toBe(false);
+
+    const invalidMimeType = {
+      ...invalidPhoto,
+      photo_url: 'data:application/pdf;base64,JVBERi0xLjQK...',
+    };
+    expect(playerProfileSchema.safeParse(invalidMimeType).success).toBe(false);
+  });
+
   it('rejects short full_name', () => {
     const invalid = {
       full_name: 'R',
@@ -204,5 +242,15 @@ describe('Player Application — Career Stats Parsing & Structure', () => {
     expect(parsed.matches).toBe(0);
     expect(parsed.runs).toBe(0);
     expect(parsed.wickets).toBe(0);
+  });
+
+  it('correctly extracts student discrepancy note from experience_description JSON payload', () => {
+    const payloadWithDiscrepancy = {
+      experience: { highestLevel: 'inter_college', years: 1, notes: 'Opening batsman' },
+      discrepancy: 'Detained in 2024 due to medical leave, admitted back to 2nd year',
+    };
+    const jsonStr = JSON.stringify(payloadWithDiscrepancy);
+    const parsed = JSON.parse(jsonStr);
+    expect(parsed.discrepancy).toBe('Detained in 2024 due to medical leave, admitted back to 2nd year');
   });
 });

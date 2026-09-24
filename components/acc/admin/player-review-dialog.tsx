@@ -272,6 +272,36 @@ export function PlayerReviewDialog({
             </div>
           )}
 
+          {/* Student-Flagged Year Discrepancy Alert (§4.1 Detained Student Policy) */}
+          {player.discrepancyNote && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="size-4 shrink-0" />
+                <span>Student-Flagged Academic Year Discrepancy (§4.1 Detained Student Queue):</span>
+              </div>
+              <p className="font-mono text-xs bg-background/80 p-2.5 rounded-lg border border-amber-500/20 text-foreground">
+                &ldquo;{player.discrepancyNote}&rdquo;
+              </p>
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1">
+                <span>
+                  {player.yearOverride
+                    ? `Overridden by Super Admin: Year ${player.yearOverride} (${player.yearOverrideReason})`
+                    : "Action required: Verify against college examination records and apply Year Override below if confirmed."}
+                </span>
+                {!showOverride && isSuperAdmin && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-[11px] px-2 border-amber-500/40 text-amber-600 hover:text-amber-700"
+                    onClick={() => setShowOverride(true)}
+                  >
+                    Open Year Override
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* 2. Structured Eligibility Checklist (§1, §2) */}
           <div className="rounded-xl border p-4 bg-card space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">

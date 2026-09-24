@@ -318,6 +318,18 @@ export const getAdminPlayersList = cache(async (
         isActive: p.is_active !== false,
       });
 
+      let discrepancyNote: string | null = null;
+      if (skill?.experience_description) {
+        try {
+          const parsed = JSON.parse(skill.experience_description);
+          if (parsed && typeof parsed.discrepancy === 'string' && parsed.discrepancy.trim()) {
+            discrepancyNote = parsed.discrepancy.trim();
+          }
+        } catch {
+          // Plain text format
+        }
+      }
+
       return {
         id: p.id,
         rollNumber: p.roll_number,
@@ -349,6 +361,7 @@ export const getAdminPlayersList = cache(async (
         hasRegistration: Boolean(reg),
         yearOverride: reg?.year_override || null,
         yearOverrideReason: reg?.year_override_reason || null,
+        discrepancyNote,
         eligibilityReasons: eligibilityBreakdown.missingRequirements,
         skillDetails: {
           battingStyle: skill?.batting_style || null,

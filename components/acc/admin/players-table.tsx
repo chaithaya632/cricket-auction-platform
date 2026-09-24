@@ -60,6 +60,7 @@ export function PlayersTable({ players }: { players: Player[] }) {
       if (paymentFilter !== "all" && (p.paymentStatus || "unpaid") !== paymentFilter) return false
       if (eligibilityFilter === "eligible" && !p.isAuctionEligible) return false
       if (eligibilityFilter === "ineligible" && p.isAuctionEligible) return false
+      if (eligibilityFilter === "discrepancies" && (!p.discrepancyNote || p.yearOverride)) return false
       if (
         q &&
         !p.fullName.toLowerCase().includes(q) &&
@@ -132,6 +133,7 @@ export function PlayersTable({ players }: { players: Player[] }) {
             <SelectItem value="all">All eligibility</SelectItem>
             <SelectItem value="eligible">Auction Eligible</SelectItem>
             <SelectItem value="ineligible">Not Eligible</SelectItem>
+            <SelectItem value="discrepancies">⚠️ Flagged Discrepancies</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -175,9 +177,20 @@ export function PlayersTable({ players }: { players: Player[] }) {
                             </Badge>
                           )}
                         </div>
-                        <span className="font-mono text-xs text-muted-foreground mt-0.5">
-                          {p.rollNumber} · {p.program} {p.branch ? `· ${p.branch}` : ""}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                          <span className="font-mono text-xs text-muted-foreground">
+                            {p.rollNumber} · {p.program} {p.branch ? `· ${p.branch}` : ""}
+                          </span>
+                          {p.discrepancyNote && !p.yearOverride && (
+                            <span
+                              title={`Flagged Discrepancy: ${p.discrepancyNote}`}
+                              className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                            >
+                              <AlertTriangle className="size-2.5" />
+                              Discrepancy
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </TableCell>

@@ -7,6 +7,28 @@ import { BASE_PRICE_LADDER } from '@/lib/constants';
 
 const mobilePattern = /^[6-9]\d{9}$/;
 
+const isValidPhotoString = (val: string | null | undefined): boolean => {
+  if (!val || val === '') return true;
+  const trimmed = val.trim();
+  if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) {
+    try {
+      new URL(trimmed);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (
+    trimmed.startsWith('data:image/jpeg;base64,') ||
+    trimmed.startsWith('data:image/png;base64,') ||
+    trimmed.startsWith('data:image/webp;base64,') ||
+    trimmed.startsWith('data:image/jpg;base64,')
+  ) {
+    return true;
+  }
+  return false;
+};
+
 export const playerProfileSchema = z.object({
   full_name: z.string().trim().min(2, 'Full name must be at least 2 characters'),
   roll_number: z.string().trim().min(1, 'Roll number is required').max(50, 'Roll number must not exceed 50 characters'),
@@ -14,7 +36,12 @@ export const playerProfileSchema = z.object({
     .string()
     .trim()
     .regex(mobilePattern, 'Mobile must be a valid 10-digit Indian phone number starting with 6-9'),
-  photo_url: z.string().trim().url('Photo must be a valid URL').optional().or(z.literal('')),
+  photo_url: z
+    .string()
+    .trim()
+    .refine(isValidPhotoString, 'Photo must be a valid web URL or uploaded image (JPEG, PNG, WebP)')
+    .optional()
+    .or(z.literal('')),
 });
 
 export const playerRegistrationSchema = z.object({
@@ -78,7 +105,13 @@ export const adminCreatePlayerSchema = z.object({
     .string()
     .trim()
     .regex(mobilePattern, 'Mobile must be a valid 10-digit phone number starting with 6-9'),
-  photo_url: z.string().trim().url('Photo must be a valid URL').or(z.literal('')).nullable().optional(),
+  photo_url: z
+    .string()
+    .trim()
+    .refine(isValidPhotoString, 'Photo must be a valid web URL or uploaded image (JPEG, PNG, WebP)')
+    .or(z.literal(''))
+    .nullable()
+    .optional(),
   programme: z
     .enum(['btech_regular', 'btech_lateral', 'diploma', 'pg'])
     .optional()
