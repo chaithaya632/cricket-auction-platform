@@ -52,10 +52,11 @@ export function AddPlayerDialog() {
   const derivedBucket = deriveBucket(programme, parseInt(academicYear, 10) || 1)
 
   const handleRollChange = (val: string) => {
-    const upper = val.toUpperCase()
+    const upper = val.toUpperCase().trim()
     setRollNumber(upper)
     const parsed = parseRollNumber(upper)
     if (parsed.isValid && parsed.programme) {
+      setError(null)
       setProgramme(parsed.programme)
       if (parsed.admissionYear) {
         const yr = calculateAcademicYear(parsed.admissionYear, parsed.programme)
@@ -64,12 +65,21 @@ export function AddPlayerDialog() {
       if (parsed.branchName) {
         setBranch(parsed.branchName)
       }
+    } else if (upper) {
+      setError(parsed.error || "Invalid roll number format. Must match B.Tech regular (YY811Abbnn), B.Tech lateral (YY815Abbnn), or Diploma (YY597-BB-nnn).")
     }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+
+    const parsed = parseRollNumber(rollNumber.trim().toUpperCase(), programme)
+    if (!parsed.isValid) {
+      setError(parsed.error || "Invalid roll number format. Creation blocked.")
+      return
+    }
+
     setLoading(true)
 
     try {
@@ -156,13 +166,13 @@ export function AddPlayerDialog() {
                 <Label htmlFor="roll_number">Roll Number *</Label>
                 <Input
                   id="roll_number"
-                  placeholder="e.g. 24811A05F2, 23811A0501, or custom"
+                  placeholder="e.g. 25811A0403, 25815A0403, or 24597-CM-015"
                   required
                   value={rollNumber}
                   onChange={(e) => handleRollChange(e.target.value)}
                   disabled={loading}
                 />
-                <p className="text-[11px] text-muted-foreground">Standard ACC or custom roll numbers accepted</p>
+                <p className="text-[11px] text-muted-foreground">Authoritative roll number (B.Tech regular, lateral, or Diploma)</p>
               </div>
             </div>
 
@@ -184,7 +194,7 @@ export function AddPlayerDialog() {
                   <Select
                     value={programme}
                     onValueChange={(val) => val && setProgramme(val as any)}
-                    disabled={loading}
+                    disabled={loading || programme !== 'pg' || !parseRollNumber(rollNumber).isValid}
                   >
                     <SelectTrigger className="h-8 text-xs">
                       <SelectValue placeholder="Programme" />
@@ -203,7 +213,7 @@ export function AddPlayerDialog() {
                   <Select
                     value={academicYear}
                     onValueChange={(val) => val && setAcademicYear(val)}
-                    disabled={loading}
+                    disabled={loading || programme !== 'pg' || !parseRollNumber(rollNumber).isValid}
                   >
                     <SelectTrigger className="h-8 text-xs">
                       <SelectValue placeholder="Year" />
@@ -226,7 +236,7 @@ export function AddPlayerDialog() {
                     placeholder="e.g. CSE"
                     value={branch}
                     onChange={(e) => setBranch(e.target.value.toUpperCase())}
-                    disabled={loading}
+                    disabled={loading || programme !== 'pg' || !parseRollNumber(rollNumber).isValid}
                     className="h-8 text-xs uppercase"
                   />
                 </div>

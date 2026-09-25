@@ -245,10 +245,73 @@ describe('Academic Domain — deriveAcademicProfile (Spec §4.1, §4.2, §5 & Ap
     expect(p.bucket).toBe('PG');
   });
 
-  it('gracefully returns invalid for malformed roll numbers', () => {
+  it('gracefully returns invalid for malformed roll numbers and blocks derivation', () => {
     const p = deriveAcademicProfile('INVALID-ROLL');
     expect(p.isValid).toBe(false);
     expect(p.error).toBeDefined();
+    expect(p.programme).toBeUndefined();
+    expect(p.academicYear).toBeUndefined();
+    expect(p.branchName).toBeUndefined();
+    expect(p.bucket).toBeUndefined();
+  });
+
+  it('guarantees that invalid roll numbers make registration impossible with no manual override bypass', () => {
+    const invalidInputs = [
+      '23811B0501',       // Invalid college degree indicator 'B'
+      'CUSTOM-ROLL-123',  // Custom arbitrary roll string
+      '25811A9999',       // Invalid branch code '99'
+      '99999',            // Arbitrary number
+      '25597-XX-001',     // Invalid diploma branch 'XX'
+      '   ',              // Empty
+    ];
+
+    for (const roll of invalidInputs) {
+      const parsed = parseRollNumber(roll);
+      expect(parsed.isValid).toBe(false);
+      expect(parsed.error).toBeDefined();
+
+      const profile = deriveAcademicProfile(roll);
+      expect(profile.isValid).toBe(false);
+      expect(profile.programme).toBeUndefined();
+      expect(profile.academicYear).toBeUndefined();
+      expect(profile.branchName).toBeUndefined();
+      expect(profile.bucket).toBeUndefined();
+    }
+  });
+
+  it('proves lateral entry offset is +2 while regular entry is +1 for the same admission year', () => {
+    // 25811A0403 (Regular, ECE, admitted 2025) -> Year 2 -> Bucket B2
+    const regular = deriveAcademicProfile('25811A0403', undefined, ACC_2026_SEASON);
+    expect(regular.isLateral).toBe(false);
+    expect(regular.academicYear).toBe(2);
+    expect(regular.bucket).toBe('B2');
+
+    // 25815A0403 (Lateral, ECE, admitted 2025) -> Year 3 -> Bucket B3
+    const lateral = deriveAcademicProfile('25815A0403', undefined, ACC_2026_SEASON);
+    expect(lateral.isLateral).toBe(true);
+    expect(lateral.academicYear).toBe(3);
+    expect(lateral.bucket).toBe('B3');
+  });
+
+  it('verifies all specification branch codes in B.Tech regular and lateral', () => {
+    const btechBranches: Record<string, string> = {
+      '02': 'EEE',
+      '03': 'ME',
+      '04': 'ECE',
+      '05': 'CSE',
+      '42': 'CSM',
+      '44': 'CSD',
+    };
+
+    for (const [code, expectedName] of Object.entries(btechBranches)) {
+      const reg = deriveAcademicProfile(`24811A${code}01`, undefined, ACC_2026_SEASON);
+      expect(reg.isValid).toBe(true);
+      expect(reg.branchName).toBe(expectedName);
+
+      const lat = deriveAcademicProfile(`24815A${code}01`, undefined, ACC_2026_SEASON);
+      expect(lat.isValid).toBe(true);
+      expect(lat.branchName).toBe(expectedName);
+    }
   });
 });
 

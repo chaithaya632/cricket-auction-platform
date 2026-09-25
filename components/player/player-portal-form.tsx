@@ -168,6 +168,8 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
   const [mobile, setMobile] = useState(initialData.player?.mobile || '');
   const [photoUrl, setPhotoUrl] = useState(initialData.player?.photo_url || '');
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [rollError, setRollError] = useState<string | null>(null);
+  const [regRollError, setRegRollError] = useState<string | null>(null);
   const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -311,11 +313,31 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
     return deriveBucket(programme, academicYear);
   }, [programme, academicYear]);
 
+  const handleRollChange = (val: string) => {
+    const upper = val.toUpperCase().trim();
+    setRollNumber(upper);
+    if (!upper) {
+      setRollError('College roll number is required.');
+    } else {
+      const parsed = parseRollNumber(upper);
+      if (!parsed.isValid) {
+        setRollError(parsed.error || 'Invalid roll number format. Must match B.Tech regular (YY811Abbnn), B.Tech lateral (YY815Abbnn), or Diploma (YY597-BB-nnn).');
+      } else {
+        setRollError(null);
+      }
+    }
+  };
+
   const handleRegRollChange = (val: string) => {
-    const upper = val.toUpperCase();
+    const upper = val.toUpperCase().trim();
     setRegRollNumber(upper);
+    if (!upper) {
+      setRegRollError('Roll number is required.');
+      return;
+    }
     const derived = deriveAcademicProfile(upper);
     if (derived.isValid && derived.programme) {
+      setRegRollError(null);
       setProgramme(derived.programme);
       if (derived.academicYear) {
         setAcademicYear(derived.academicYear);
@@ -323,6 +345,8 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
       if (derived.branchName || derived.branchCode) {
         setBranch(derived.branchName || derived.branchCode || '');
       }
+    } else {
+      setRegRollError(derived.error || 'Invalid roll number format. Must match B.Tech regular (YY811Abbnn), B.Tech lateral (YY815Abbnn), or Diploma (YY597-BB-nnn).');
     }
   };
 
@@ -575,6 +599,14 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
       return;
     }
 
+    const parsedProfileRoll = parseRollNumber(rollNumber);
+    if (!parsedProfileRoll.isValid) {
+      const err = parsedProfileRoll.error || 'Invalid roll number format. Must match B.Tech regular (YY811Abbnn), B.Tech lateral (YY815Abbnn), or Diploma (YY597-BB-nnn).';
+      setRollError(err);
+      setMessage({ type: 'error', text: err });
+      return;
+    }
+
     startTransition(async () => {
       const res = await savePlayerProfileAction({
         full_name: fullName,
@@ -597,6 +629,15 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
   async function handleRegisterSeason(e: React.FormEvent) {
     e.preventDefault();
     setMessage(null);
+
+    const activeRoll = regRollNumber || rollNumber;
+    const parsedRegRoll = parseRollNumber(activeRoll);
+    if (!parsedRegRoll.isValid) {
+      const err = parsedRegRoll.error || 'Invalid roll number format. Registration blocked.';
+      setRegRollError(err);
+      setMessage({ type: 'error', text: err });
+      return;
+    }
 
     startTransition(async () => {
       const res = await registerPlayerSeasonAction({
@@ -945,10 +986,13 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 required
                 disabled={!isEditingProfile}
                 value={rollNumber}
-                onChange={(e) => setRollNumber(e.target.value.toUpperCase())}
-                placeholder="e.g. 23811A0501 or 23597-EC-001"
+                onChange={(e) => handleRollChange(e.target.value)}
+                placeholder="e.g. 25811A0403, 25815A0403, or 24597-CM-015"
                 className="w-full rounded-md border px-3 py-2 text-sm shadow-sm uppercase disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60 dark:bg-gray-800 dark:border-gray-700"
               />
+              {rollError && (
+                <p className="text-[11px] text-destructive mt-1 font-medium">{rollError}</p>
+              )}
             </div>
 
             <div>
@@ -1177,7 +1221,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                   )}
                 </label>
                 <select
-                  disabled={programme !== 'pg' || !isEditingReg || isEligible}
+                  disabled={programme !== 'pg' || !isEditingReg || isEligible || !parseRollNumber(regRollNumber || rollNumber).isValid}
                   value={programme}
                   onChange={(e) => setProgramme(e.target.value as any)}
                   className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
@@ -1199,7 +1243,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                   )}
                 </label>
                 <select
-                  disabled={programme !== 'pg' || !isEditingReg || isEligible}
+                  disabled={programme !== 'pg' || !isEditingReg || isEligible || !parseRollNumber(regRollNumber || rollNumber).isValid}
                   value={academicYear}
                   onChange={(e) => setAcademicYear(Number(e.target.value))}
                   className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
@@ -1224,7 +1268,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 </label>
                 <input
                   type="text"
-                  disabled={programme !== 'pg' || !isEditingReg || isEligible}
+                  disabled={programme !== 'pg' || !isEditingReg || isEligible || !parseRollNumber(regRollNumber || rollNumber).isValid}
                   value={branch}
                   onChange={(e) => setBranch(e.target.value.toUpperCase())}
                   placeholder="e.g. CSE"
@@ -1246,9 +1290,12 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 disabled={!isEditingReg || isEligible}
                 value={regRollNumber}
                 onChange={(e) => handleRegRollChange(e.target.value)}
-                placeholder="e.g. 24811A05F2, 23811A0501, or custom"
+                placeholder="e.g. 25811A0403, 25815A0403, or 24597-CM-015"
                 className="w-full rounded-md border px-3 py-2 text-sm shadow-sm uppercase disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60 dark:bg-gray-800 dark:border-gray-700"
               />
+              {regRollError && (
+                <p className="text-[11px] text-destructive mt-1 font-medium">{regRollError}</p>
+              )}
             </div>
 
             <div>

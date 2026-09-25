@@ -145,23 +145,24 @@ export async function registerPlayerSeasonAction(
       branch: inputBranch,
     } = validation.data;
 
-    // 1. Authoritative academic derivation from explicit input or parsed metadata
-    const parsedRoll = parseRollNumber(roll_number);
-    if (!parsedRoll.isValid) {
+    // 1. Authoritative academic derivation strictly from roll number per ACC Spec §4.1
+    const parsedRoll = parseRollNumber(roll_number, inputProgramme);
+    if (!parsedRoll.isValid || !parsedRoll.programme) {
       return {
         success: false,
-        error: parsedRoll.error || 'Invalid roll number format',
+        error: parsedRoll.error || 'Invalid roll number format. Registration blocked.',
       };
     }
 
-    const programme = inputProgramme || parsedRoll.programme || 'btech_regular';
-    const academicYear =
-      inputYear ||
-      (parsedRoll.admissionYear
-        ? calculateAcademicYear(parsedRoll.admissionYear, programme, new Date())
-        : 1);
-    const branch = inputBranch || parsedRoll.branchName || null;
-    const derivedPlayerBucket = deriveBucket(programme, academicYear);
+    const isPg = parsedRoll.programme === 'pg';
+    const programme = parsedRoll.programme;
+    const academicYear = isPg
+      ? (inputYear || 1)
+      : calculateAcademicYear(parsedRoll.admissionYear!, programme, new Date());
+    const branch = isPg
+      ? (inputBranch || 'PG')
+      : (parsedRoll.branchName || null);
+    const derivedPlayerBucket = isPg ? 'PG' : deriveBucket(programme, academicYear);
 
     const supabase = await createClient();
 
@@ -606,23 +607,24 @@ export async function adminCreatePlayerAction(
 
     const data = validation.data;
 
-    // Academic roll number & explicit academic inputs
-    const parsedRoll = parseRollNumber(data.roll_number);
-    if (!parsedRoll.isValid) {
+    // Academic roll number & authoritative derivation per ACC Spec §4.1
+    const parsedRoll = parseRollNumber(data.roll_number, data.programme);
+    if (!parsedRoll.isValid || !parsedRoll.programme) {
       return {
         success: false,
-        error: parsedRoll.error || 'Invalid roll number format',
+        error: parsedRoll.error || 'Invalid roll number format. Creation blocked.',
       };
     }
 
-    const programme = data.programme || parsedRoll.programme || 'btech_regular';
-    const academicYear =
-      data.academic_year ||
-      (parsedRoll.admissionYear
-        ? calculateAcademicYear(parsedRoll.admissionYear, programme, new Date())
-        : 1);
-    const branch = data.branch || parsedRoll.branchName || null;
-    const derivedPlayerBucket = deriveBucket(programme, academicYear);
+    const isPg = parsedRoll.programme === 'pg';
+    const programme = parsedRoll.programme;
+    const academicYear = isPg
+      ? (data.academic_year || 1)
+      : calculateAcademicYear(parsedRoll.admissionYear!, programme, new Date());
+    const branch = isPg
+      ? (data.branch || 'PG')
+      : (parsedRoll.branchName || null);
+    const derivedPlayerBucket = isPg ? 'PG' : deriveBucket(programme, academicYear);
 
     const adminClient = createAdminClient();
 

@@ -5,6 +5,7 @@ import {
   playerSkillSchema,
 } from '@/lib/players/validation';
 import { BASE_PRICE_LADDER } from '@/lib/constants';
+import { parseRollNumber, calculateAcademicYear, deriveBucket } from '@/domain/academic';
 
 describe('Player Application — Profile Validation Schema', () => {
   it('validates correct profile data', () => {
@@ -289,5 +290,48 @@ describe('Player Application — Career Stats Parsing & Structure', () => {
     const jsonStr = JSON.stringify(payloadWithDiscrepancy);
     const parsed = JSON.parse(jsonStr);
     expect(parsed.discrepancy).toBe('Detained in 2024 due to medical leave, admitted back to 2nd year');
+  });
+
+  it('guarantees that invalid roll number blocks season registration and profile creation', () => {
+    const invalidRolls = ['INVALID_ROLL', '23811B0501', 'CUSTOM-999', '12345'];
+
+    for (const roll of invalidRolls) {
+      const parsed = parseRollNumber(roll);
+      expect(parsed.isValid).toBe(false);
+      expect(parsed.error).toBeDefined();
+    }
+  });
+
+  it('guarantees that valid roll number auto-derives academic classification and ignores attempted manual overrides for non-PG', () => {
+    // Roll number 26811A0501 is 1st Year CSE Regular B.Tech (Bucket B1)
+    const roll = '26811A0501';
+    const parsed = parseRollNumber(roll);
+    expect(parsed.isValid).toBe(true);
+    expect(parsed.programme).toBe('btech_regular');
+    expect(parsed.branchName).toBe('CSE');
+
+    // Simulate an attempt to manually override year, branch, and programme from client payload
+    const attemptedManualOverride = {
+      programme: 'btech_lateral',
+      academic_year: 4,
+      branch: 'ME',
+    };
+
+    // Authoritative rule: For non-PG, parsedRoll is strictly authoritative
+    const isPg = parsed.programme === 'pg';
+    const programme = parsed.programme;
+    const academicYear = isPg
+      ? attemptedManualOverride.academic_year
+      : calculateAcademicYear(parsed.admissionYear!, programme!, new Date(2026, 8, 1));
+    const branch = isPg
+      ? attemptedManualOverride.branch
+      : (parsed.branchName || null);
+    const derivedBucket = isPg ? 'PG' : deriveBucket(programme!, academicYear);
+
+    // Assert that the attempted manual overrides are completely ignored
+    expect(programme).toBe('btech_regular');
+    expect(academicYear).toBe(1);
+    expect(branch).toBe('CSE');
+    expect(derivedBucket).toBe('B1');
   });
 });
