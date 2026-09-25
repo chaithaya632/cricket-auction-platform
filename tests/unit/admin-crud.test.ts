@@ -9,6 +9,8 @@ describe('Admin CRUD — Player Creation Validation', () => {
       full_name: 'Jasprit Bumrah',
       roll_number: '21KD1A0501',
       mobile: '9876543210',
+      programme: 'btech_regular' as const,
+      academic_year: 1,
       base_price: 140,
       player_type: 'bowler' as const,
       batting_style: 'right_hand' as const,
@@ -69,6 +71,8 @@ describe('Admin CRUD — Player Creation Validation', () => {
       full_name: 'Suryakumar Yadav',
       roll_number: '21KD1A0502',
       mobile: '9123456780',
+      programme: 'btech_regular' as const,
+      academic_year: 1,
     });
 
     expect(result.success).toBe(true);
@@ -84,6 +88,8 @@ describe('Admin CRUD — Player Creation Validation', () => {
       full_name: 'Rohit Sharma',
       roll_number: '23811A0505',
       mobile: '9848012345',
+      programme: 'btech_regular' as const,
+      academic_year: 1,
       base_price: 100,
       player_type: 'batter' as const,
       batting_style: 'right_hand' as const,
@@ -240,6 +246,8 @@ describe('Admin CRUD — Academic & Category Bucket Assignment', () => {
       full_name: 'Aditya Kumar',
       roll_number: '24811A05F2',
       mobile: '9848011223',
+      programme: 'btech_regular' as const,
+      academic_year: 2,
     });
     expect(res1.success).toBe(true);
     if (res1.success) {
@@ -250,6 +258,8 @@ describe('Admin CRUD — Academic & Category Bucket Assignment', () => {
       full_name: 'Special Candidate',
       roll_number: 'DIPLOMA-ME-045',
       mobile: '9848011224',
+      programme: 'diploma' as const,
+      academic_year: 1,
     });
     expect(res2.success).toBe(true);
     if (res2.success) {

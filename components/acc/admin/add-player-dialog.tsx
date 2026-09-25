@@ -151,7 +151,7 @@ export function AddPlayerDialog() {
         roll_number: rollNumber.trim().toUpperCase(),
         mobile: mobile.trim(),
         programme: programme as any,
-        academic_year: parseInt(academicYear, 10) || 1,
+        academic_year: parseInt(academicYear, 10),
         branch: branch.trim() || null,
         player_type: playerType,
         batting_style: battingStyle,

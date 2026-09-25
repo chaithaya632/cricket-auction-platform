@@ -394,6 +394,47 @@ describe('Academic Domain — deriveAcademicProfile (Spec §4.1, §4.2, §5 & Ap
       expect(calculateAcademicYear(2026, 'btech_regular')).toBe(1);
     });
   });
+
+  describe('Regression Guard: no silent Year 1 / CSE / B.Tech default', () => {
+    it('does not default every roll number to Year 1 / CSE / B.Tech', () => {
+      // This test exists per the user's Point #19 mandate.
+      // If the original bug returns, ALL of these would produce Year 1 / CSE / B.Tech.
+      const cases = [
+        { roll: '25811A0403', expectedYear: 2, expectedBranch: 'ECE', expectedProgramme: 'btech_regular' },
+        { roll: '24811A0301', expectedYear: 3, expectedBranch: 'ME',  expectedProgramme: 'btech_regular' },
+        { roll: '23811A4201', expectedYear: 4, expectedBranch: 'CSM', expectedProgramme: 'btech_regular' },
+        { roll: '25815A0403', expectedYear: 3, expectedBranch: 'ECE', expectedProgramme: 'btech_lateral' },
+        { roll: '24597-CM-015', expectedYear: 3, expectedBranch: 'CM', expectedProgramme: 'diploma' },
+        { roll: '26597-EC-001', expectedYear: 1, expectedBranch: 'EC', expectedProgramme: 'diploma' },
+        { roll: '24811A0201', expectedYear: 3, expectedBranch: 'EEE', expectedProgramme: 'btech_regular' },
+      ];
+
+      for (const { roll, expectedYear, expectedBranch, expectedProgramme } of cases) {
+        const profile = deriveAcademicProfile(roll);
+        expect(profile.isValid).toBe(true);
+        expect(profile.programme).toBe(expectedProgramme);
+        expect(profile.academicYear).toBe(expectedYear);
+        expect(profile.branchName).toBe(expectedBranch);
+        // The bug would make ALL of these return Year 1 / CSE / B.Tech
+        if (expectedYear !== 1) {
+          expect(profile.academicYear).not.toBe(1);
+        }
+        if (expectedBranch !== 'CSE') {
+          expect(profile.branchName).not.toBe('CSE');
+        }
+      }
+    });
+
+    it('rejects invalid roll numbers instead of silently defaulting', () => {
+      const invalidRolls = ['GARBAGE123', 'ABC', '99999', 'not-a-roll'];
+      for (const roll of invalidRolls) {
+        const profile = deriveAcademicProfile(roll);
+        expect(profile.isValid).toBe(false);
+        // Must NOT silently produce valid Year 1 / CSE / B.Tech
+        expect(profile.programme).toBeUndefined();
+      }
+    });
+  });
 });
 
 

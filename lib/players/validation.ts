@@ -39,10 +39,8 @@ export const playerProfileSchema = z.object({
 export const playerRegistrationSchema = z.object({
   roll_number: z.string().trim().min(1, 'Roll number is required').max(50, 'Roll number must not exceed 50 characters'),
   programme: z
-    .enum(['btech_regular', 'btech_lateral', 'diploma', 'pg'])
-    .optional()
-    .default('btech_regular'),
-  academic_year: z.coerce.number().int().min(1).max(6).optional().default(1),
+    .enum(['btech_regular', 'btech_lateral', 'diploma', 'pg']),
+  academic_year: z.coerce.number().int().min(1).max(6),
   branch: z.string().trim().max(50).nullable().optional(),
   base_price: z
     .number()
@@ -105,10 +103,8 @@ export const adminCreatePlayerSchema = z.object({
     .nullable()
     .optional(),
   programme: z
-    .enum(['btech_regular', 'btech_lateral', 'diploma', 'pg'])
-    .optional()
-    .default('btech_regular'),
-  academic_year: z.coerce.number().int().min(1).max(6).optional().default(1),
+    .enum(['btech_regular', 'btech_lateral', 'diploma', 'pg']),
+  academic_year: z.coerce.number().int().min(1).max(6),
   branch: z.string().trim().max(50).nullable().optional(),
   base_price: z
     .number()

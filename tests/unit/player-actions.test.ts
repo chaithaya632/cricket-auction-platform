@@ -149,6 +149,8 @@ describe('Player Application — Registration Validation Schema', () => {
     for (const price of BASE_PRICE_LADDER) {
       const result = playerRegistrationSchema.safeParse({
         roll_number: '22811A0501',
+        programme: 'btech_regular' as const,
+        academic_year: 3,
         base_price: price,
       });
       expect(result.success).toBe(true);
@@ -169,6 +171,8 @@ describe('Player Application — Registration Validation Schema', () => {
   it('validates optional CricHeroes profile url and mobile', () => {
     const valid = {
       roll_number: '22811A0501',
+      programme: 'btech_regular' as const,
+      academic_year: 3,
       base_price: 20,
       cricheroes_url: 'https://cricheroes.com/player-profile/12345/player-name',
       cricheroes_registered_mobile: '9876543210',
@@ -177,10 +181,23 @@ describe('Player Application — Registration Validation Schema', () => {
 
     const invalidUrl = {
       roll_number: '22811A0501',
+      programme: 'btech_regular' as const,
+      academic_year: 3,
       base_price: 20,
       cricheroes_url: 'not-a-valid-url',
     };
     expect(playerRegistrationSchema.safeParse(invalidUrl).success).toBe(false);
+  });
+
+  it('rejects registration when programme or academic_year is omitted (no silent defaults)', () => {
+    // This is the critical regression test: prior to the fix, omitting programme/academic_year
+    // would silently default to btech_regular/1, masking the auto-detection bug.
+    const result = playerRegistrationSchema.safeParse({
+      roll_number: '22811A0501',
+      base_price: 100,
+      // programme and academic_year intentionally omitted
+    });
+    expect(result.success).toBe(false);
   });
 });
 
