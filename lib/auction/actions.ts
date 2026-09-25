@@ -1848,7 +1848,7 @@ export async function adminRegisterScoutedPlayerAction(params: {
  * Authoritative Draw Sequence (§10):
  * B.Tech 3rd year (B3) -> B.Tech 4th year (B4) -> B.Tech 2nd year (B2) -> Diploma (B5) -> B.Tech 1st year (B1) -> PG (last)
  */
-export const BUCKET_DRAW_SEQUENCE = ['B3', 'B4', 'B2', 'B5', 'B1', 'PG'] as const;
+const BUCKET_DRAW_SEQUENCE = ['B3', 'B4', 'B2', 'B5', 'B1', 'PG'] as const;
 
 /**
  * Super Admin / Operator Action to skip a lot (§10).

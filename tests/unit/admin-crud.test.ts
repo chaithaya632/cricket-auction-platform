@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { adminCreatePlayerSchema } from '@/lib/players/validation';
-import { adminCreateFranchiseSchema } from '@/lib/franchises/actions';
+import { adminCreateFranchiseSchema } from '@/lib/franchises/validation';
 import { parseRollNumber, calculateAcademicYear, deriveBucket } from '@/domain/academic';
 
 describe('Admin CRUD — Player Creation Validation', () => {
