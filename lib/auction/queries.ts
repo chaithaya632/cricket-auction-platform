@@ -124,19 +124,20 @@ export const getActiveLot = cache(async (
 });
 
 /**
- * Fetches upcoming lots in the queue for a given season.
+ * Fetches auction lots by status for a given season, populated with player & franchise details.
  * Memoized per server render cycle with React cache().
  */
-export const getAuctionQueue = cache(async (
+export const getAuctionLotsByStatus = cache(async (
   supabase: SupabaseClient,
   seasonId: string,
-  limit = 25
+  statuses: LotStatus[],
+  limit = 100
 ): Promise<AuctionLotWithDetails[]> => {
   const { data: lots, error } = await supabase
     .from('auction_lots')
     .select('*')
     .eq('season_id', seasonId)
-    .eq('status', 'pending')
+    .in('status', statuses)
     .order('round', { ascending: true })
     .order('draw_number', { ascending: true })
     .limit(limit);
@@ -158,8 +159,31 @@ export const getAuctionQueue = cache(async (
     }
   }
 
+  // Fetch franchise details for highest_bidder_franchise_id if present
+  const franchiseIds = Array.from(
+    new Set(lots.map((l) => l.highest_bidder_franchise_id).filter(Boolean))
+  ) as string[];
+
+  const franchiseMap = new Map<string, any>();
+  if (franchiseIds.length > 0) {
+    const { data: franchises } = await supabase
+      .from('public_franchises_view')
+      .select('franchise_id, name, short_name, color_primary, color_secondary')
+      .in('franchise_id', franchiseIds);
+
+    if (franchises) {
+      for (const f of franchises) {
+        franchiseMap.set(f.franchise_id, f);
+      }
+    }
+  }
+
   return lots.map((lot) => {
     const playerView = playerMap.get(lot.registration_id);
+    const bidderFranchise = lot.highest_bidder_franchise_id
+      ? franchiseMap.get(lot.highest_bidder_franchise_id)
+      : null;
+
     return {
       id: lot.id,
       season_id: lot.season_id,
@@ -177,7 +201,7 @@ export const getAuctionQueue = cache(async (
       updated_at: lot.updated_at,
       player: {
         id: playerView?.player_id || lot.registration_id,
-        full_name: playerView?.full_name || 'Upcoming Player',
+        full_name: playerView?.full_name || 'Tournament Player',
         photo_url: playerView?.photo_url || null,
       },
       registration: {
@@ -187,9 +211,70 @@ export const getAuctionQueue = cache(async (
         programme: playerView?.programme || '',
         cricheroes_profile_url: playerView?.cricheroes_url || null,
       },
-      highest_bidder: null,
+      highest_bidder: bidderFranchise
+        ? {
+            id: bidderFranchise.franchise_id,
+            name: bidderFranchise.name,
+            short_name: bidderFranchise.short_name,
+            primary_color: bidderFranchise.color_primary,
+            secondary_color: bidderFranchise.color_secondary,
+          }
+        : null,
     };
   });
+});
+
+/**
+ * Fetches upcoming pending lots in the queue for a given season.
+ * Memoized per server render cycle with React cache().
+ */
+export const getAuctionQueue = cache(async (
+  supabase: SupabaseClient,
+  seasonId: string,
+  limit = 25
+): Promise<AuctionLotWithDetails[]> => {
+  return getAuctionLotsByStatus(supabase, seasonId, ['pending'], limit);
+});
+
+/**
+ * Fetches unsold lots for a given season.
+ * Memoized per server render cycle with React cache().
+ */
+export const getUnsoldLots = cache(async (
+  supabase: SupabaseClient,
+  seasonId: string,
+  limit = 50
+): Promise<AuctionLotWithDetails[]> => {
+  return getAuctionLotsByStatus(supabase, seasonId, ['unsold'], limit);
+});
+
+/**
+ * Fetches completed/past lots (sold, unsold, skipped, allotted) for a given season.
+ * Memoized per server render cycle with React cache().
+ */
+export const getCompletedLots = cache(async (
+  supabase: SupabaseClient,
+  seasonId: string,
+  limit = 100
+): Promise<AuctionLotWithDetails[]> => {
+  return getAuctionLotsByStatus(supabase, seasonId, ['sold', 'unsold', 'skipped', 'allotted'], limit);
+});
+
+/**
+ * Fetches all auction lots regardless of status for a given season.
+ * Memoized per server render cycle with React cache().
+ */
+export const getAllAuctionLots = cache(async (
+  supabase: SupabaseClient,
+  seasonId: string,
+  limit = 500
+): Promise<AuctionLotWithDetails[]> => {
+  return getAuctionLotsByStatus(
+    supabase,
+    seasonId,
+    ['pending', 'in_progress', 'sold', 'unsold', 'skipped', 'recalled', 'allotted', 'scouted'],
+    limit
+  );
 });
 
 /**

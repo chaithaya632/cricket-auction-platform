@@ -49,6 +49,7 @@ export interface OperatorFranchiseOption {
 interface OperatorControlsProps {
   activeLot: AuctionLotWithDetails | null;
   upcomingLots: AuctionLotWithDetails[];
+  unsoldLots?: AuctionLotWithDetails[];
   lastSoldLotId?: string | null;
   soldLots?: OperatorSoldLotItem[];
   franchises?: OperatorFranchiseOption[];
@@ -60,6 +61,7 @@ interface OperatorControlsProps {
 export function OperatorControls({
   activeLot,
   upcomingLots,
+  unsoldLots = [],
   lastSoldLotId,
   soldLots = [],
   franchises = [],
@@ -69,6 +71,7 @@ export function OperatorControls({
 }: OperatorControlsProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [activeQueueTab, setActiveQueueTab] = useState<'upcoming' | 'unsold' | 'sold'>('upcoming');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showUndoModal, setShowUndoModal] = useState(false);
@@ -1025,61 +1028,206 @@ export function OperatorControls({
         </div>
       )}
 
-      {/* 3. UPCOMING PLAYER QUEUE SELECTOR */}
+      {/* 3. PLAYER QUEUE & LOT STATUS SELECTOR */}
       <div className={`rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl space-y-4 ${sessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-          <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-400">
-            Upcoming Lots in Queue ({upcomingLots.length})
-          </h3>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveQueueTab('upcoming')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeQueueTab === 'upcoming'
+                  ? 'bg-zinc-800 text-zinc-100 shadow border border-zinc-700'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              Upcoming ({upcomingLots.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveQueueTab('unsold')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeQueueTab === 'unsold'
+                  ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <span>Unsold Lots</span>
+              <span className="rounded-full bg-red-500/30 px-1.5 py-0.2 text-[10px] font-mono">
+                {unsoldLots.length}
+              </span>
+            </button>
+            {soldLots.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setActiveQueueTab('sold')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  activeQueueTab === 'sold'
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                <span>Sold ({soldLots.length})</span>
+              </button>
+            )}
+          </div>
           <span className="text-xs text-zinc-500 font-mono">
-            Organized by Round & Bucket
+            {activeQueueTab === 'upcoming'
+              ? 'Organized by Round & Bucket'
+              : activeQueueTab === 'unsold'
+              ? 'Round 2 Reopening Candidate (§13)'
+              : 'Completed Floor Sales'}
           </span>
         </div>
 
-        {upcomingLots.length === 0 ? (
-          <div className="text-center py-8 text-xs text-zinc-500">
-            No pending lots remaining in the auction queue.
-          </div>
-        ) : (
-          <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-            {upcomingLots.map((lot) => (
-              <div
-                key={lot.id}
-                className="rounded-xl bg-zinc-950/70 border border-zinc-800/80 p-3.5 flex items-center justify-between gap-3"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-mono font-bold text-zinc-300">
-                    #{lot.draw_number}
-                  </span>
-                  <span className="rounded bg-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-400">
-                    {lot.bucket}
-                  </span>
-                  <div className="min-w-0">
-                    <h4 className="text-xs font-bold text-zinc-200 truncate">
-                      {lot.player.full_name}
-                    </h4>
-                    <span className="text-[10px] text-zinc-500 block truncate">
-                      {lot.registration.branch} • Year {lot.registration.academic_year} •
-                      Base: ₹{lot.base_price}
+        {activeQueueTab === 'upcoming' && (
+          upcomingLots.length === 0 ? (
+            <div className="text-center py-8 space-y-2">
+              <p className="text-xs text-zinc-400">
+                No pending lots remaining in the active queue.
+              </p>
+              {unsoldLots.length > 0 && (
+                <div className="space-y-2 pt-1">
+                  <p className="text-[11px] text-zinc-500">
+                    {unsoldLots.length} player{unsoldLots.length === 1 ? '' : 's'} went unsold in Round 1 and will reopen in Round 2 (§13).
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveQueueTab('unsold')}
+                    className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 border border-zinc-700 cursor-pointer"
+                  >
+                    View Unsold Lots ({unsoldLots.length}) →
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              {upcomingLots.map((lot) => (
+                <div
+                  key={lot.id}
+                  className="rounded-xl bg-zinc-950/70 border border-zinc-800/80 p-3.5 flex items-center justify-between gap-3"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-mono font-bold text-zinc-300">
+                      #{lot.draw_number}
+                    </span>
+                    <span className="rounded bg-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-400">
+                      {lot.bucket}
+                    </span>
+                    <div className="min-w-0">
+                      <h4 className="text-xs font-bold text-zinc-200 truncate">
+                        {lot.player.full_name}
+                      </h4>
+                      <span className="text-[10px] text-zinc-500 block truncate">
+                        {lot.registration.branch} • Year {lot.registration.academic_year} •
+                        Base: ₹{lot.base_price}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSelectLot(lot.id)}
+                    disabled={Boolean(activeLot && activeLot.status === 'in_progress') || isPending || !isFloorActive}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 ${
+                      (!activeLot || activeLot.status !== 'in_progress') && isFloorActive
+                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer shadow'
+                        : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                    }`}
+                  >
+                    Bring to Floor
+                  </button>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+
+        {activeQueueTab === 'unsold' && (
+          unsoldLots.length === 0 ? (
+            <div className="text-center py-8 text-xs text-zinc-500">
+              No unsold players recorded.
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              {unsoldLots.map((lot) => (
+                <div
+                  key={lot.id}
+                  className="rounded-xl bg-zinc-950/70 border border-red-900/30 p-3.5 flex items-center justify-between gap-3"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-mono font-bold text-zinc-300">
+                      #{lot.draw_number}
+                    </span>
+                    <span className="rounded bg-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-400">
+                      {lot.bucket}
+                    </span>
+                    <span className="rounded bg-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-400 border border-red-500/30">
+                      UNSOLD
+                    </span>
+                    <div className="min-w-0">
+                      <h4 className="text-xs font-bold text-zinc-200 truncate">
+                        {lot.player.full_name}
+                      </h4>
+                      <span className="text-[10px] text-zinc-500 block truncate">
+                        {lot.registration.branch} • Year {lot.registration.academic_year} • Base: ₹{lot.base_price} • Round {lot.round}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <span className="text-[11px] text-zinc-400 font-mono block">
+                      Round 2 Reopening Candidate (§13)
                     </span>
                   </div>
                 </div>
+              ))}
+            </div>
+          )
+        )}
 
-                <button
-                  type="button"
-                  onClick={() => handleSelectLot(lot.id)}
-                  disabled={Boolean(activeLot && activeLot.status === 'in_progress') || isPending || !isFloorActive}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 ${
-                    (!activeLot || activeLot.status !== 'in_progress') && isFloorActive
-                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer shadow'
-                      : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-                  }`}
+        {activeQueueTab === 'sold' && (
+          soldLots.length === 0 ? (
+            <div className="text-center py-8 text-xs text-zinc-500">
+              No completed sales recorded yet.
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              {soldLots.map((sl) => (
+                <div
+                  key={sl.id}
+                  className="rounded-xl bg-zinc-950/70 border border-emerald-900/30 p-3.5 flex items-center justify-between gap-3"
                 >
-                  Bring to Floor
-                </button>
-              </div>
-            ))}
-          </div>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-mono font-bold text-zinc-300">
+                      #{sl.draw_number}
+                    </span>
+                    <span className="rounded bg-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-400">
+                      {sl.bucket}
+                    </span>
+                    <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30">
+                      SOLD
+                    </span>
+                    <div className="min-w-0">
+                      <h4 className="text-xs font-bold text-zinc-200 truncate">
+                        {sl.player_name}
+                      </h4>
+                      <span className="text-[10px] text-zinc-400 block truncate">
+                        Won by <strong className="text-emerald-400">{sl.franchise_name}</strong>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <span className="text-xs font-mono font-bold text-emerald-400 block">
+                      ₹{sl.price}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
         )}
       </div>
     </div>

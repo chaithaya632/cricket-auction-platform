@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/server';
 import {
   getActiveLot,
   getAuctionQueue,
+  getUnsoldLots,
   getRecentAuctionEvents,
   getSeasonAuctionConfig,
   getAuctionSessionState,
@@ -32,9 +33,10 @@ export default async function AdminAuctionPage() {
     adminContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 
   // 1. Fetch live operational data & session lifecycle state
-  const [activeLot, upcomingLots, recentEvents, config, sessionState] = await Promise.all([
+  const [activeLot, upcomingLots, unsoldLots, recentEvents, config, sessionState] = await Promise.all([
     getActiveLot(supabase, seasonId),
-    getAuctionQueue(supabase, seasonId, 25),
+    getAuctionQueue(supabase, seasonId, 50),
+    getUnsoldLots(supabase, seasonId, 50),
     getRecentAuctionEvents(supabase, seasonId, 20),
     getSeasonAuctionConfig(supabase, seasonId),
     getAuctionSessionState(supabase, seasonId),
@@ -144,6 +146,7 @@ export default async function AdminAuctionPage() {
           <OperatorControls
             activeLot={activeLot}
             upcomingLots={upcomingLots}
+            unsoldLots={unsoldLots}
             lastSoldLotId={lastSoldLotId}
             soldLots={soldLots}
             franchises={franchises}

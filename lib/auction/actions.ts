@@ -124,6 +124,7 @@ export async function selectLotAction(
     }
 
     revalidatePath('/admin/auction');
+    revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
 
@@ -431,6 +432,7 @@ export async function markUnsoldAction(
     }
 
     revalidatePath('/admin/auction');
+    revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
 
