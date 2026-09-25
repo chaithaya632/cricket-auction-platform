@@ -5,3 +5,4 @@
 export * from './parser';
 export * from './year-calculator';
 export * from './bucket-derivation';
+export * from './profile-derivation';

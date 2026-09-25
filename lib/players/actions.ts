@@ -737,7 +737,7 @@ export async function adminDeletePlayerAction(
     // 1. Fetch targeted player
     const { data: player, error: fetchErr } = await adminClient
       .from('players')
-      .select('id, full_name, roll_number')
+      .select('id, full_name, roll_number, photo_url')
       .eq('id', playerId)
       .maybeSingle();
 
@@ -799,6 +799,18 @@ export async function adminDeletePlayerAction(
     }
 
     // 5. Clean delete for unauctioned player (Case A)
+    // Delete photo from storage if present
+    if (player.photo_url) {
+      try {
+        const match = player.photo_url.match(/player-photos\/(.+)$/);
+        if (match && match[1]) {
+          await adminClient.storage.from('player-photos').remove([decodeURIComponent(match[1])]);
+        }
+      } catch {
+        // Non-fatal photo cleanup
+      }
+    }
+
     if (regIds.length > 0) {
       await adminClient.from('player_skill_profiles').delete().in('registration_id', regIds);
       await adminClient.from('franchise_referrals').delete().in('registration_id', regIds);
@@ -812,6 +824,15 @@ export async function adminDeletePlayerAction(
         success: false,
         error: `Could not delete player: ${deleteErr.message}`,
       };
+    }
+
+    // Delete associated user and auth record if present (frees roll number completely)
+    try {
+      await adminClient.from('season_roles').delete().eq('user_id', playerId);
+      await adminClient.from('users').delete().eq('id', playerId);
+      await adminClient.auth.admin.deleteUser(playerId);
+    } catch {
+      // Non-fatal if player was not an auth user
     }
 
     revalidatePath('/admin/players');

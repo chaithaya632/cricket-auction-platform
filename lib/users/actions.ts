@@ -183,3 +183,94 @@ export async function adminRevokeRoleAction(
     return { success: false, error: err?.message || 'Failed to revoke role.' };
   }
 }
+
+/**
+ * Privileged Admin Action to permanently delete a user account.
+ * Deletes:
+ * - Supabase Auth account (auth.users)
+ * - Public user profile (public.users)
+ * - Associated player record, season registration, skill profile, and storage photo (frees roll number for reuse!)
+ * - Franchise memberships and season roles
+ */
+export async function adminDeleteUserAction(
+  userId: string
+): Promise<{ success: boolean; error?: string; message?: string }> {
+  try {
+    const adminContext = await requireAdmin();
+    if (!adminContext.isSuperAdmin) {
+      return { success: false, error: 'Unauthorized: Only Super Admin can permanently delete user accounts.' };
+    }
+    const adminClient = createAdminClient();
+
+    // 1. Fetch user to verify existence
+    const { data: userRecord } = await adminClient
+      .from('users')
+      .select('id, full_name, email')
+      .eq('id', userId)
+      .maybeSingle();
+
+    // 2. Fetch associated player record if any
+    const { data: playerRecord } = await adminClient
+      .from('players')
+      .select('id, photo_url, roll_number')
+      .eq('id', userId)
+      .maybeSingle();
+
+    // 3. Delete photo from storage if present
+    if (playerRecord?.photo_url) {
+      try {
+        const match = playerRecord.photo_url.match(/player-photos\/(.+)$/);
+        if (match && match[1]) {
+          await adminClient.storage.from('player-photos').remove([decodeURIComponent(match[1])]);
+        }
+      } catch {
+        // Non-fatal photo cleanup error
+      }
+    }
+
+    // 4. Delete dependent player records (skill profiles, registrations, referrals)
+    const { data: registrations } = await adminClient
+      .from('player_season_registrations')
+      .select('id')
+      .eq('player_id', userId);
+
+    const regIds = registrations?.map((r) => r.id) || [];
+    if (regIds.length > 0) {
+      await adminClient.from('player_skill_profiles').delete().in('registration_id', regIds);
+      await adminClient.from('franchise_referrals').delete().in('registration_id', regIds);
+      await adminClient.from('auction_lots').delete().in('registration_id', regIds);
+      await adminClient.from('franchise_members').update({ player_registration_id: null }).in('player_registration_id', regIds);
+      await adminClient.from('player_season_registrations').delete().eq('player_id', userId);
+    }
+
+    // 5. Delete player record (frees roll number for reuse immediately!)
+    await adminClient.from('players').delete().eq('id', userId);
+
+    // 6. Delete franchise memberships and season roles
+    await adminClient.from('franchise_members').delete().eq('user_id', userId);
+    await adminClient.from('season_roles').delete().eq('user_id', userId);
+
+    // 7. Delete public user record
+    await adminClient.from('users').delete().eq('id', userId);
+
+    // 8. Delete from auth.users via Supabase Auth Admin API
+    try {
+      await adminClient.auth.admin.deleteUser(userId);
+    } catch {
+      // Non-fatal if user is not in auth.users
+    }
+
+    revalidatePath('/admin/users');
+    revalidatePath('/admin/players');
+    revalidatePath('/admin');
+    revalidatePath('/players');
+
+    return {
+      success: true,
+      message: `User ${userRecord?.full_name || userId} was permanently deleted. Roll number has been released for reuse.`,
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to delete user account.' };
+  }
+}
+

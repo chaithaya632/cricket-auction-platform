@@ -12,7 +12,12 @@ import {
   savePlayerSkillProfileAction,
   uploadPlayerPhotoAction,
 } from '@/lib/players/actions';
-import { parseRollNumber, calculateAcademicYear, deriveBucket } from '@/domain/academic';
+import {
+  parseRollNumber,
+  calculateAcademicYear,
+  deriveBucket,
+  deriveAcademicProfile,
+} from '@/domain/academic';
 import { derivePlayerType, validateSkills } from '@/domain/players';
 import { BASE_PRICE_LADDER, type BasePrice } from '@/lib/constants';
 import type { PlayerFullData } from '@/lib/players/types';
@@ -309,14 +314,14 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
   const handleRegRollChange = (val: string) => {
     const upper = val.toUpperCase();
     setRegRollNumber(upper);
-    const parsed = parseRollNumber(upper);
-    if (parsed.isValid && parsed.programme) {
-      setProgramme(parsed.programme);
-      if (parsed.admissionYear) {
-        setAcademicYear(calculateAcademicYear(parsed.admissionYear, parsed.programme));
+    const derived = deriveAcademicProfile(upper);
+    if (derived.isValid && derived.programme) {
+      setProgramme(derived.programme);
+      if (derived.academicYear) {
+        setAcademicYear(derived.academicYear);
       }
-      if (parsed.branchName) {
-        setBranch(parsed.branchName);
+      if (derived.branchName || derived.branchCode) {
+        setBranch(derived.branchName || derived.branchCode || '');
       }
     }
   };
@@ -1163,11 +1168,16 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
               <div>
-                <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1">
-                  Course / Programme *
+                <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1 flex items-center justify-between">
+                  <span>Course / Programme *</span>
+                  {programme !== 'pg' && (
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                      🔒 Auto-derived
+                    </span>
+                  )}
                 </label>
                 <select
-                  disabled={!isEditingReg || isEligible}
+                  disabled={programme !== 'pg' || !isEditingReg || isEligible}
                   value={programme}
                   onChange={(e) => setProgramme(e.target.value as any)}
                   className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
@@ -1180,11 +1190,16 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1">
-                  Academic Year *
+                <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1 flex items-center justify-between">
+                  <span>Academic Year *</span>
+                  {programme !== 'pg' && (
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                      🔒 Auto-derived
+                    </span>
+                  )}
                 </label>
                 <select
-                  disabled={!isEditingReg || isEligible}
+                  disabled={programme !== 'pg' || !isEditingReg || isEligible}
                   value={academicYear}
                   onChange={(e) => setAcademicYear(Number(e.target.value))}
                   className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
@@ -1199,12 +1214,17 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1">
-                  Branch / Group
+                <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1 flex items-center justify-between">
+                  <span>Branch / Group *</span>
+                  {programme !== 'pg' && (
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                      🔒 Auto-derived
+                    </span>
+                  )}
                 </label>
                 <input
                   type="text"
-                  disabled={!isEditingReg || isEligible}
+                  disabled={programme !== 'pg' || !isEditingReg || isEligible}
                   value={branch}
                   onChange={(e) => setBranch(e.target.value.toUpperCase())}
                   placeholder="e.g. CSE"

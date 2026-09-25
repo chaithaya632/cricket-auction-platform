@@ -105,7 +105,8 @@ export async function adminCreateFranchiseAction(
  * - If the franchise has no auction participation, safely deletes the record.
  */
 export async function adminDeleteFranchiseAction(
-  franchiseId: string
+  franchiseId: string,
+  options?: { forceHardDelete?: boolean }
 ): Promise<AdminFranchiseActionResult<{ franchiseId: string; message: string }>> {
   try {
     const adminContext = await requireAdmin();
@@ -125,6 +126,15 @@ export async function adminDeleteFranchiseAction(
       return { success: false, error: 'Franchise not found.' };
     }
 
+    // Protection for the 11 production franchises
+    const CANONICAL_PROD_CODES = new Set(['AT', 'CC', 'CCO', 'EE', 'GG', 'MM', 'NK', 'PP', 'RR', 'TT', 'VV']);
+    if (CANONICAL_PROD_CODES.has(franchise.short_name.toUpperCase())) {
+      return {
+        success: false,
+        error: `Production Safeguard: Franchise ${franchise.name} (${franchise.short_name}) is one of the 11 official ACC franchises and cannot be deleted.`,
+      };
+    }
+
     // 2. Check for auction event records
     const { count: eventCount } = await adminClient
       .from('auction_events')
@@ -138,8 +148,8 @@ export async function adminDeleteFranchiseAction(
 
     const hasAuctionHistory = (eventCount && eventCount > 0) || (lotCount && lotCount > 0);
 
-    // 3. Safe deactivation if auction history exists (Case B)
-    if (hasAuctionHistory) {
+    // 3. Safe deactivation if auction history exists and forceHardDelete is false
+    if (hasAuctionHistory && !options?.forceHardDelete) {
       await adminClient
         .from('franchises')
         .update({ is_active: false, updated_at: new Date().toISOString() })
@@ -169,8 +179,21 @@ export async function adminDeleteFranchiseAction(
       };
     }
 
-    // 4. Safe hard deletion for unparticipating franchise (Case A)
-    // Clean up dependent roles and memberships to prevent check constraint violations
+    // 4. Hard deletion for disposable test franchise
+    // Clean up dependent events and bids if forceHardDelete is requested
+    if (options?.forceHardDelete) {
+      await adminClient.from('auction_events').delete().eq('franchise_id', franchiseId);
+      await adminClient
+        .from('auction_lots')
+        .update({ highest_bidder_franchise_id: null, current_bid: 0 })
+        .eq('highest_bidder_franchise_id', franchiseId);
+      await adminClient
+        .from('auction_lots')
+        .update({ buyer_franchise_id: null, sale_price: null, status: 'unsold' })
+        .eq('buyer_franchise_id', franchiseId);
+    }
+
+    // Clean up dependent roles and memberships (franchise users become unassigned)
     await adminClient.from('season_roles').delete().eq('franchise_id', franchiseId);
     await adminClient.from('franchise_members').delete().eq('franchise_id', franchiseId);
     await adminClient.from('franchise_referrals').delete().eq('franchise_id', franchiseId);

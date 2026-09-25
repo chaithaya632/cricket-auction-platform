@@ -46,14 +46,16 @@ export function AssignRoleDialog({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [selectedRole, setSelectedRole] = useState<string>(user?.role || "player")
+  const initialRole = user?.role || (user?.intended_role === "franchise" ? "franchise" : "player")
+  const [selectedRole, setSelectedRole] = useState<string>(initialRole)
   const [selectedFranchiseId, setSelectedFranchiseId] = useState<string>(
     user?.franchise_id || (franchises[0]?.id ?? "")
   )
 
   useEffect(() => {
     if (user) {
-      setSelectedRole(user.role || "player")
+      const r = user.role || (user.intended_role === "franchise" ? "franchise" : "player")
+      setSelectedRole(r)
       setSelectedFranchiseId(user.franchise_id || (franchises[0]?.id ?? ""))
       setError(null)
     }

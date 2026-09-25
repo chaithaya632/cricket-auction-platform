@@ -10,6 +10,7 @@ import { loginSchema, signupSchema } from './validation';
 import { formatAuthError } from './errors';
 import { getCurrentUser } from './session';
 import { getUserPermissionContext } from '@/lib/permissions/context';
+import { createAdminClient } from '@/lib/supabase/admin';
 import type { LoginInput, SignupInput, AuthActionResult } from './types';
 
 /**
@@ -29,8 +30,8 @@ function sanitizeRedirect(target?: string | null): string {
 
 /**
  * Server action to register a new user with Supabase Auth.
- * Follows the principle of least privilege: users cannot self-assign
- * admin, franchise, or player roles during registration.
+ * Enforces role selection: 'player' or 'franchise' only.
+ * Administrative roles (super_admin, operator) cannot be chosen via signup.
  */
 export async function signupAction(
   input: SignupInput
@@ -45,7 +46,7 @@ export async function signupAction(
     };
   }
 
-  const { fullName, email, password } = validationResult.data;
+  const { fullName, email, password, role } = validationResult.data;
 
   try {
     const supabase = await createClient();
@@ -55,6 +56,7 @@ export async function signupAction(
       options: {
         data: {
           full_name: fullName,
+          intended_role: role,
         },
       },
     });
@@ -66,6 +68,46 @@ export async function signupAction(
       };
     }
 
+    // Provision user records in database
+    if (data.user?.id) {
+      try {
+        const adminClient = createAdminClient();
+        await adminClient.from('users').upsert(
+          {
+            id: data.user.id,
+            email,
+            full_name: fullName,
+            is_active: true,
+          },
+          { onConflict: 'id' }
+        );
+
+        if (role === 'player') {
+          const { data: season } = await adminClient
+            .from('seasons')
+            .select('id')
+            .eq('is_active', true)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          const activeSeasonId = season?.id || '00000000-0000-0000-0000-000000000001';
+          await adminClient.from('season_roles').upsert(
+            {
+              user_id: data.user.id,
+              season_id: activeSeasonId,
+              role: 'player',
+              franchise_id: null,
+              is_active: true,
+            },
+            { onConflict: 'user_id,season_id,role' }
+          );
+        }
+      } catch {
+        // Fallback gracefully
+      }
+    }
+
     // Check if email confirmation is required (user created without active session)
     if (data.user && !data.session) {
       return {
@@ -75,7 +117,7 @@ export async function signupAction(
       };
     }
 
-    // If session was established immediately, redirect to the safe onboarding view
+    // If session was established immediately, redirect to safe onboarding router
     return {
       success: true,
       emailConfirmationRequired: false,

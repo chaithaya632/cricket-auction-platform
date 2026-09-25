@@ -3,6 +3,7 @@ import {
   parseRollNumber,
   calculateAcademicYear,
   deriveBucket,
+  deriveAcademicProfile,
 } from '@/domain/academic';
 
 describe('Academic Domain — Roll Number Parser (Spec §9)', () => {
@@ -164,3 +165,90 @@ describe('Academic Domain — Bucket Derivation (Spec §10)', () => {
     expect(deriveBucket('btech_lateral', 4)).toBe('B4');
   });
 });
+
+describe('Academic Domain — deriveAcademicProfile (Spec §4.1, §4.2, §5 & Appendix A.5)', () => {
+  const ACC_2026_SEASON = new Date(2026, 8, 15); // Sept 15, 2026 (Academic Year 2026-27)
+
+  it('Case 19: 25811A0403 -> B.Tech, ECE, regular, 2nd year -> B2', () => {
+    const p = deriveAcademicProfile('25811A0403', undefined, ACC_2026_SEASON);
+    expect(p.isValid).toBe(true);
+    expect(p.group).toBe('B.Tech');
+    expect(p.programme).toBe('btech_regular');
+    expect(p.isLateral).toBe(false);
+    expect(p.branchName).toBe('ECE');
+    expect(p.academicYear).toBe(2);
+    expect(p.bucket).toBe('B2');
+  });
+
+  it('Case 20: 25815A0403 -> B.Tech, ECE, lateral entry, 3rd year -> B3', () => {
+    const p = deriveAcademicProfile('25815A0403', undefined, ACC_2026_SEASON);
+    expect(p.isValid).toBe(true);
+    expect(p.group).toBe('B.Tech');
+    expect(p.programme).toBe('btech_lateral');
+    expect(p.isLateral).toBe(true);
+    expect(p.branchName).toBe('ECE');
+    expect(p.academicYear).toBe(3);
+    expect(p.bucket).toBe('B3');
+  });
+
+  it('Case 21: 23811A4201 -> B.Tech, CSM, regular, 4th year -> B4', () => {
+    const p = deriveAcademicProfile('23811A4201', undefined, ACC_2026_SEASON);
+    expect(p.isValid).toBe(true);
+    expect(p.group).toBe('B.Tech');
+    expect(p.programme).toBe('btech_regular');
+    expect(p.isLateral).toBe(false);
+    expect(p.branchName).toBe('CSM');
+    expect(p.academicYear).toBe(4);
+    expect(p.bucket).toBe('B4');
+  });
+
+  it('Case 22: 24597-CM-015 -> Diploma, Computer Engineering, 3rd year -> B5', () => {
+    const p = deriveAcademicProfile('24597-CM-015', undefined, ACC_2026_SEASON);
+    expect(p.isValid).toBe(true);
+    expect(p.group).toBe('Diploma');
+    expect(p.programme).toBe('diploma');
+    expect(p.isLateral).toBe(false);
+    expect(p.branchCode).toBe('CM');
+    expect(p.branchFullName).toBe('Computer Engineering');
+    expect(p.academicYear).toBe(3);
+    expect(p.bucket).toBe('B5');
+  });
+
+  it('Case 23: 26597-M-041 -> Diploma, Mechanical, 1st year -> B5', () => {
+    const p = deriveAcademicProfile('26597-M-041', undefined, ACC_2026_SEASON);
+    expect(p.isValid).toBe(true);
+    expect(p.group).toBe('Diploma');
+    expect(p.programme).toBe('diploma');
+    expect(p.isLateral).toBe(false);
+    expect(p.branchCode).toBe('M');
+    expect(p.branchFullName).toBe('Mechanical');
+    expect(p.academicYear).toBe(1);
+    expect(p.bucket).toBe('B5');
+  });
+
+  it('Case 24: 26811A0501 -> B.Tech, CSE, regular, 1st year -> B1', () => {
+    const p = deriveAcademicProfile('26811A0501', undefined, ACC_2026_SEASON);
+    expect(p.isValid).toBe(true);
+    expect(p.group).toBe('B.Tech');
+    expect(p.programme).toBe('btech_regular');
+    expect(p.isLateral).toBe(false);
+    expect(p.branchName).toBe('CSE');
+    expect(p.academicYear).toBe(1);
+    expect(p.bucket).toBe('B1');
+  });
+
+  it('handles PG roll number with pg hint', () => {
+    const p = deriveAcademicProfile('25811D0501', 'pg', ACC_2026_SEASON);
+    expect(p.isValid).toBe(true);
+    expect(p.group).toBe('PG');
+    expect(p.programme).toBe('pg');
+    expect(p.bucket).toBe('PG');
+  });
+
+  it('gracefully returns invalid for malformed roll numbers', () => {
+    const p = deriveAcademicProfile('INVALID-ROLL');
+    expect(p.isValid).toBe(false);
+    expect(p.error).toBeDefined();
+  });
+});
+

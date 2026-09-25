@@ -49,18 +49,84 @@ export function PlayersTable({ players }: { players: Player[] }) {
   const [status, setStatus] = useState<string>("all")
   const [paymentFilter, setPaymentFilter] = useState<string>("all")
   const [eligibilityFilter, setEligibilityFilter] = useState<string>("all")
+  const [yearFilter, setYearFilter] = useState<string>("all")
+  const [branchFilter, setBranchFilter] = useState<string>("all")
+  const [groupFilter, setGroupFilter] = useState<string>("all")
   const [playerToDelete, setPlayerToDelete] = useState<Player | null>(null)
   const [playerToReview, setPlayerToReview] = useState<Player | null>(null)
+
+  // Dynamically extract unique branch codes/names from actual player data
+  const uniqueBranches = useMemo(() => {
+    const branchSet = new Set<string>()
+    for (const p of players) {
+      if (p.branch && p.branch.trim()) {
+        branchSet.add(p.branch.trim().toUpperCase())
+      }
+    }
+    return Array.from(branchSet).sort()
+  }, [players])
+
+  const isFiltered =
+    query.trim() !== "" ||
+    bucket !== "all" ||
+    status !== "all" ||
+    paymentFilter !== "all" ||
+    eligibilityFilter !== "all" ||
+    yearFilter !== "all" ||
+    branchFilter !== "all" ||
+    groupFilter !== "all"
+
+  function handleResetFilters() {
+    setQuery("")
+    setBucket("all")
+    setStatus("all")
+    setPaymentFilter("all")
+    setEligibilityFilter("all")
+    setYearFilter("all")
+    setBranchFilter("all")
+    setGroupFilter("all")
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return players.filter((p) => {
+      // 1. Bucket / Category filter
       if (bucket !== "all" && p.bucket !== bucket) return false
+
+      // 2. Status filter
       if (status !== "all" && p.status !== status) return false
+
+      // 3. Payment filter
       if (paymentFilter !== "all" && (p.paymentStatus || "unpaid") !== paymentFilter) return false
+
+      // 4. Eligibility filter
       if (eligibilityFilter === "eligible" && !p.isAuctionEligible) return false
       if (eligibilityFilter === "ineligible" && p.isAuctionEligible) return false
       if (eligibilityFilter === "discrepancies" && (!p.discrepancyNote || p.yearOverride)) return false
+
+      // 5. Academic Year filter
+      if (yearFilter !== "all" && String(p.yearOfStudy) !== yearFilter) return false
+
+      // 6. Dynamic Branch filter
+      if (branchFilter !== "all" && (p.branch || "").trim().toUpperCase() !== branchFilter) return false
+
+      // 7. Academic Group filter (B.Tech, Diploma, PG)
+      if (groupFilter !== "all") {
+        const progLower = (p.program || "").toLowerCase()
+        const course = (p.course || "").toUpperCase()
+        if (groupFilter === "btech") {
+          const isBtech = course === "UG" || progLower.includes("b.tech") || progLower.includes("btech")
+          if (!isBtech) return false
+        } else if (groupFilter === "diploma") {
+          const isDiploma = course === "DIPLOMA" || progLower.includes("diploma")
+          if (!isDiploma) return false
+        } else if (groupFilter === "pg") {
+          const isPg = course === "PG" || progLower.includes("pg") || progLower.includes("post")
+          if (!isPg) return false
+        }
+      }
+
+      // 8. Text Search query
       if (
         q &&
         !p.fullName.toLowerCase().includes(q) &&
@@ -70,7 +136,17 @@ export function PlayersTable({ players }: { players: Player[] }) {
       }
       return true
     })
-  }, [players, query, bucket, status, paymentFilter, eligibilityFilter])
+  }, [
+    players,
+    query,
+    bucket,
+    status,
+    paymentFilter,
+    eligibilityFilter,
+    yearFilter,
+    branchFilter,
+    groupFilter,
+  ])
 
   return (
     <div className="flex flex-col gap-4">
@@ -86,12 +162,55 @@ export function PlayersTable({ players }: { players: Player[] }) {
           />
         </div>
 
-        <Select value={bucket} onValueChange={(val) => setBucket(val ?? "all")}>
+        {/* Group Filter */}
+        <Select value={groupFilter} onValueChange={(val) => setGroupFilter(val ?? "all")}>
           <SelectTrigger className="w-full sm:w-36">
-            <SelectValue placeholder="Category" />
+            <SelectValue placeholder="Group" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All categories</SelectItem>
+            <SelectItem value="all">All groups</SelectItem>
+            <SelectItem value="btech">B.Tech</SelectItem>
+            <SelectItem value="diploma">Diploma</SelectItem>
+            <SelectItem value="pg">PG</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* Year Filter */}
+        <Select value={yearFilter} onValueChange={(val) => setYearFilter(val ?? "all")}>
+          <SelectTrigger className="w-full sm:w-32">
+            <SelectValue placeholder="Year" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All years</SelectItem>
+            <SelectItem value="1">1st Year</SelectItem>
+            <SelectItem value="2">2nd Year</SelectItem>
+            <SelectItem value="3">3rd Year</SelectItem>
+            <SelectItem value="4">4th Year</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* Dynamic Branch Filter */}
+        <Select value={branchFilter} onValueChange={(val) => setBranchFilter(val ?? "all")}>
+          <SelectTrigger className="w-full sm:w-36">
+            <SelectValue placeholder="Branch" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All branches</SelectItem>
+            {uniqueBranches.map((b) => (
+              <SelectItem key={b} value={b}>
+                {b}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* Category Bucket Filter */}
+        <Select value={bucket} onValueChange={(val) => setBucket(val ?? "all")}>
+          <SelectTrigger className="w-full sm:w-32">
+            <SelectValue placeholder="Bucket" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All buckets</SelectItem>
             {BUCKET_ORDER.map((b) => (
               <SelectItem key={b} value={b}>
                 {b}
@@ -100,8 +219,9 @@ export function PlayersTable({ players }: { players: Player[] }) {
           </SelectContent>
         </Select>
 
+        {/* Status Filter */}
         <Select value={status} onValueChange={(val) => setStatus(val ?? "all")}>
-          <SelectTrigger className="w-full sm:w-40">
+          <SelectTrigger className="w-full sm:w-36">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
@@ -114,8 +234,9 @@ export function PlayersTable({ players }: { players: Player[] }) {
           </SelectContent>
         </Select>
 
+        {/* Payment Filter */}
         <Select value={paymentFilter} onValueChange={(val) => setPaymentFilter(val ?? "all")}>
-          <SelectTrigger className="w-full sm:w-36">
+          <SelectTrigger className="w-full sm:w-32">
             <SelectValue placeholder="Payment" />
           </SelectTrigger>
           <SelectContent>
@@ -125,8 +246,9 @@ export function PlayersTable({ players }: { players: Player[] }) {
           </SelectContent>
         </Select>
 
+        {/* Eligibility Filter */}
         <Select value={eligibilityFilter} onValueChange={(val) => setEligibilityFilter(val ?? "all")}>
-          <SelectTrigger className="w-full sm:w-40">
+          <SelectTrigger className="w-full sm:w-36">
             <SelectValue placeholder="Eligibility" />
           </SelectTrigger>
           <SelectContent>
@@ -136,6 +258,19 @@ export function PlayersTable({ players }: { players: Player[] }) {
             <SelectItem value="discrepancies">⚠️ Flagged Discrepancies</SelectItem>
           </SelectContent>
         </Select>
+
+        {/* Reset Filters Button */}
+        {isFiltered && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={handleResetFilters}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            Reset Filters
+          </Button>
+        )}
       </div>
 
       {/* Main Players Table */}

@@ -13,6 +13,7 @@ export interface AdminUserListItem {
   franchise_id: string | null;
   franchise_name: string | null;
   franchise_short_code: string | null;
+  intended_role?: 'player' | 'franchise' | null;
   is_active: boolean;
 }
 

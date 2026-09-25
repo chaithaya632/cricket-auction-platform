@@ -15,6 +15,7 @@ export interface SignupInput {
   email: string;
   password: string;
   confirmPassword?: string;
+  role?: 'player' | 'franchise';
 }
 
 export interface AuthState {

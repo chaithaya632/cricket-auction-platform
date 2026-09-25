@@ -37,18 +37,32 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  // 1. Refresh session and retrieve user
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
   const pathname = request.nextUrl.pathname;
 
-  // 2. Route protection check
+  // 1. Route protection check
   const protectedPrefixes = ['/admin', '/franchise', '/player'];
   const isProtected = protectedPrefixes.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );
+
+  const allCookies = request.cookies.getAll();
+  const hasAuthCookie = allCookies.some((c) =>
+    c.name.includes('-auth-token')
+  );
+
+  // For unauthenticated public visitors, avoid redundant remote auth network calls
+  if (!isProtected && !hasAuthCookie) {
+    return supabaseResponse;
+  }
+
+  // 2. Refresh session and retrieve user
+  let user = null;
+  try {
+    const { data } = await supabase.auth.getUser();
+    user = data?.user ?? null;
+  } catch {
+    user = null;
+  }
 
   // 3. Redirect unauthenticated requests on protected routes
   if (isProtected && !user) {

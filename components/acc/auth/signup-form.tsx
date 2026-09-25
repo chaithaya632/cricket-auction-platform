@@ -19,6 +19,7 @@ function SignupFormFields() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+  const [role, setRole] = useState<"player" | "franchise">("player")
   const [show, setShow] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -26,6 +27,7 @@ function SignupFormFields() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
+    if (loading) return // prevent double-submission
     setError(null)
 
     if (!fullName.trim() || !email.trim() || !password || !confirmPassword) {
@@ -50,6 +52,7 @@ function SignupFormFields() {
         email: email.trim(),
         password,
         confirmPassword,
+        role,
       })
 
       if (!result.success) {
@@ -183,9 +186,51 @@ function SignupFormFields() {
           />
         </div>
 
-        <p className="text-xs text-muted-foreground">
-          Season roles (Admin, Franchise, or Player) are provisioned by tournament administrators after account creation.
-        </p>
+        <div className="flex flex-col gap-2 pt-1">
+          <Label>Account Type *</Label>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setRole("player")}
+              className={`flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition cursor-pointer ${
+                role === "player"
+                  ? "border-emerald-600 bg-emerald-500/10 text-foreground ring-1 ring-emerald-600"
+                  : "border-border bg-card hover:bg-muted/40 text-muted-foreground"
+              }`}
+            >
+              <div className="flex items-center gap-1.5 font-semibold text-xs text-foreground">
+                <span className="size-2 rounded-full bg-emerald-500" />
+                Player
+              </div>
+              <span className="text-[11px] leading-tight text-muted-foreground">
+                Student player registering for auction pool
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setRole("franchise")}
+              className={`flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition cursor-pointer ${
+                role === "franchise"
+                  ? "border-blue-600 bg-blue-500/10 text-foreground ring-1 ring-blue-600"
+                  : "border-border bg-card hover:bg-muted/40 text-muted-foreground"
+              }`}
+            >
+              <div className="flex items-center gap-1.5 font-semibold text-xs text-foreground">
+                <span className="size-2 rounded-full bg-blue-500" />
+                Franchise Rep
+              </div>
+              <span className="text-[11px] leading-tight text-muted-foreground">
+                Franchise team manager, bidder, or scout
+              </span>
+            </button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            {role === "player"
+              ? "You will be guided to enter your student roll number and register for ACC 2026."
+              : "Your account will be provisioned as a Franchise Representative. Super Admin assigns your specific franchise seat."}
+          </p>
+        </div>
 
         <Button type="submit" className="w-full" disabled={loading}>
           {loading ? (

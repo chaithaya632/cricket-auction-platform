@@ -26,6 +26,7 @@ function LoginFormFields() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
+    if (loading) return // Prevent duplicate concurrent authentication calls
     setError(null)
 
     if (!email || !password) {

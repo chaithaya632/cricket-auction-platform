@@ -23,12 +23,16 @@ export async function getAdminUsersList(
     let allUsers = users ? [...users] : [];
 
     // 2. Reconcile with auth.users if service role admin client is available
+    const intendedRoleMap = new Map<string, 'player' | 'franchise'>();
     try {
       if (supabase && 'auth' in supabase && 'admin' in (supabase as any).auth) {
         const { data: authData } = await (supabase as any).auth.admin.listUsers();
         if (authData?.users) {
           const existingIds = new Set(allUsers.map((u) => u.id));
           for (const au of authData.users) {
+            if (au.user_metadata?.intended_role) {
+              intendedRoleMap.set(au.id, au.user_metadata.intended_role);
+            }
             if (!existingIds.has(au.id)) {
               const syncedUser = {
                 id: au.id,
@@ -66,6 +70,12 @@ export async function getAdminUsersList(
       .select('id, name, short_name')
       .eq('season_id', seasonId);
 
+    // 5. Fetch player records to associate player identities
+    const { data: playerRecords } = await supabase
+      .from('players')
+      .select('id');
+    const playerIds = new Set((playerRecords || []).map((p) => p.id));
+
     const roleMap = new Map<string, any>();
     if (seasonRoles) {
       for (const r of seasonRoles) {
@@ -80,12 +90,19 @@ export async function getAdminUsersList(
       }
     }
 
-    // 5. Assemble merged user list
+    // 6. Assemble merged user list
     return allUsers.map((u) => {
       const assignedRole = roleMap.get(u.id);
       const assignedFranchise = assignedRole?.franchise_id
         ? franchiseMap.get(assignedRole.franchise_id)
         : null;
+
+      let effectiveRole = (assignedRole?.role as any) || null;
+      if (!effectiveRole && playerIds.has(u.id)) {
+        effectiveRole = 'player';
+      }
+
+      const intended = intendedRoleMap.get(u.id) || null;
 
       return {
         id: u.id,
@@ -93,11 +110,12 @@ export async function getAdminUsersList(
         full_name: u.full_name,
         phone: u.phone || null,
         created_at: u.created_at,
-        role: (assignedRole?.role as any) || null,
+        role: effectiveRole,
         role_id: assignedRole?.id || null,
         franchise_id: assignedRole?.franchise_id || null,
         franchise_name: assignedFranchise?.name || null,
         franchise_short_code: assignedFranchise?.short_name || null,
+        intended_role: intended,
         is_active: assignedRole ? assignedRole.is_active : u.is_active,
       };
     });
