@@ -2,7 +2,7 @@
 // ACC Auction Portal — Domain: Academic Year Calculation (Spec §9)
 // =============================================================================
 
-import { ACADEMIC_ROLLOVER_MONTH, ACADEMIC_ROLLOVER_DAY } from '@/lib/constants';
+import { ACADEMIC_ROLLOVER_MONTH, ACADEMIC_ROLLOVER_DAY, ACC_REFERENCE_DATE } from '@/lib/constants';
 import type { AcademicProgramme } from './parser';
 
 /**
@@ -10,15 +10,15 @@ import type { AcademicProgramme } from './parser';
  * and the reference date (with the July 1 academic rollover rule).
  *
  * An academic cycle runs from July 1 of Year Y to June 30 of Year Y+1.
- * For example, in March 2026 (ACC 2026):
- * - A regular B.Tech student admitted in 2023 is in Year 3.
- * - A regular B.Tech student admitted in 2025 is in Year 1.
- * - A lateral entry student admitted in 2024 entered directly into Year 2, so in March 2026 they are in Year 3.
+ * For the ACC 2026 season (referenceDate = October 1, 2026 per Spec §5):
+ * - Regular B.Tech:  Year = (2026 - YY) + 1  (e.g., 25811A0403 -> Year 2)
+ * - Lateral B.Tech:  Year = (2026 - YY) + 2  (e.g., 25815A0403 -> Year 3)
+ * - Diploma:         Year = (2026 - YY) + 1  (e.g., 24597-CM-015 -> Year 3)
  */
 export function calculateAcademicYear(
   admissionYear: number,
   programme: AcademicProgramme,
-  referenceDate: Date = new Date()
+  referenceDate: Date = ACC_REFERENCE_DATE
 ): number {
   const currentYear = referenceDate.getFullYear();
   const currentMonth = referenceDate.getMonth() + 1; // 1-indexed (1-12)

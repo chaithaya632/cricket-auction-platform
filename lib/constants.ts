@@ -101,6 +101,21 @@ export const ACADEMIC_ROLLOVER_MONTH = 7; // 1-indexed (July)
 export const ACADEMIC_ROLLOVER_DAY = 1;
 
 // ---------------------------------------------------------------------------
+// Tournament Academic Season Year & Registration Reference Date (Spec §4.1, §5)
+// Registration runs 1-10 October 2026. Academic cycle runs July 1 - June 30.
+// Using October 1, 2026 ensures:
+// - 25811A0403 (admitted 2025) -> Year 2 (Spec §4.1 Worked Example)
+// - 25815A0403 (admitted 2025 lateral) -> Year 3 (Spec §4.1 Worked Example)
+// - 23811A4201 (admitted 2023) -> Year 4
+// - 24597-CM-015 (admitted 2024 diploma) -> Year 3
+// - 26597-M-041 (admitted 2026 diploma) -> Year 1
+// - 26811A0501 (admitted 2026 regular) -> Year 1
+// ---------------------------------------------------------------------------
+export const ACC_SEASON_YEAR = 2026;
+export const ACC_REFERENCE_DATE = new Date(2026, 9, 1); // 1 October 2026 (Month is 0-indexed: 9 = October)
+
+
+// ---------------------------------------------------------------------------
 // Roll Number Patterns (spec §9)
 // ---------------------------------------------------------------------------
 // B.Tech regular: YY811Abbnn (supports alphanumeric sequences e.g. 24811A05F2)

@@ -5,6 +5,7 @@
 import { parseRollNumber, type AcademicProgramme, type ParsedRollNumber } from './parser';
 import { calculateAcademicYear } from './year-calculator';
 import { deriveBucket, type PlayerBucket } from './bucket-derivation';
+import { ACC_REFERENCE_DATE } from '@/lib/constants';
 
 export type AcademicGroup = 'B.Tech' | 'Diploma' | 'PG';
 
@@ -36,7 +37,7 @@ export interface DerivedAcademicProfile {
 export function deriveAcademicProfile(
   rawRoll: string,
   programmeHint?: AcademicProgramme,
-  referenceDate: Date = new Date()
+  referenceDate: Date = ACC_REFERENCE_DATE
 ): DerivedAcademicProfile {
   const parsed = parseRollNumber(rawRoll, programmeHint);
   if (!parsed.isValid || !parsed.programme) {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import {
   Dialog,
@@ -22,7 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { adminCreatePlayerAction } from "@/lib/players/actions"
-import { parseRollNumber, calculateAcademicYear, deriveBucket } from "@/domain/academic"
+import { parseRollNumber, calculateAcademicYear, deriveBucket, deriveAcademicProfile } from "@/domain/academic"
 import { BASE_PRICE_LADDER } from "@/lib/constants"
 import { toast } from "sonner"
 import { UserPlus, Loader2, AlertCircle, Award } from "lucide-react"
@@ -37,10 +37,10 @@ export function AddPlayerDialog() {
   const [rollNumber, setRollNumber] = useState("")
   const [mobile, setMobile] = useState("")
   const [programme, setProgramme] = useState<
-    "btech_regular" | "btech_lateral" | "diploma" | "pg"
-  >("btech_regular")
-  const [academicYear, setAcademicYear] = useState("1")
-  const [branch, setBranch] = useState("CSE")
+    "btech_regular" | "btech_lateral" | "diploma" | "pg" | ""
+  >("")
+  const [academicYear, setAcademicYear] = useState("")
+  const [branch, setBranch] = useState("")
   const [playerType, setPlayerType] = useState<
     "batter" | "bowler" | "all_rounder" | "wicket_keeper" | "wicket_keeper_batter" | "fielder"
   >("all_rounder")
@@ -49,34 +49,97 @@ export function AddPlayerDialog() {
   const [basePrice, setBasePrice] = useState("100")
   const [cricheroesUrl, setCricheroesUrl] = useState("")
 
-  const derivedBucket = deriveBucket(programme, parseInt(academicYear, 10) || 1)
+  const derivedBucket = useMemo(() => {
+    const yr = parseInt(academicYear, 10);
+    if (!programme || !yr || yr < 1) {
+      if (programme === 'diploma') return 'B5';
+      if (programme === 'pg') return 'PG';
+      return null;
+    }
+    return deriveBucket(programme as any, yr);
+  }, [programme, academicYear]);
 
   const handleRollChange = (val: string) => {
     const upper = val.toUpperCase().trim()
     setRollNumber(upper)
-    const parsed = parseRollNumber(upper)
-    if (parsed.isValid && parsed.programme) {
+    if (!upper) {
       setError(null)
-      setProgramme(parsed.programme)
-      if (parsed.admissionYear) {
-        const yr = calculateAcademicYear(parsed.admissionYear, parsed.programme)
-        setAcademicYear(String(yr))
+      if (programme !== "pg") {
+        setProgramme("")
+        setAcademicYear("")
+        setBranch("")
       }
-      if (parsed.branchName) {
-        setBranch(parsed.branchName)
+      return
+    }
+    if (programme === "pg") {
+      const parsedPg = parseRollNumber(upper, "pg")
+      if (parsedPg.isValid) {
+        setError(null)
+      } else {
+        setError(parsedPg.error || "Invalid roll number format.")
       }
-    } else if (upper) {
-      setError(parsed.error || "Invalid roll number format. Must match B.Tech regular (YY811Abbnn), B.Tech lateral (YY815Abbnn), or Diploma (YY597-BB-nnn).")
+      return
+    }
+    const derived = deriveAcademicProfile(upper)
+    if (derived.isValid && derived.programme) {
+      setError(null)
+      setProgramme(derived.programme)
+      if (derived.academicYear) {
+        setAcademicYear(String(derived.academicYear))
+      }
+      if (derived.branchName || derived.branchCode) {
+        setBranch(derived.branchName || derived.branchCode || "")
+      }
+    } else {
+      setProgramme("")
+      setAcademicYear("")
+      setBranch("")
+      setError(derived.error || "Invalid roll number format. Must match B.Tech regular (YY811Abbnn), B.Tech lateral (YY815Abbnn), or Diploma (YY597-BB-nnn).")
     }
   }
+
+  const handleProgrammeChange = (newProg: "btech_regular" | "btech_lateral" | "diploma" | "pg") => {
+    setProgramme(newProg);
+    if (newProg === "pg") {
+      if (!academicYear || parseInt(academicYear, 10) < 1 || parseInt(academicYear, 10) > 2) {
+        setAcademicYear("1");
+      }
+      if (!branch || branch === "CSE") setBranch("");
+      if (rollNumber) {
+        const parsed = parseRollNumber(rollNumber, "pg");
+        if (parsed.isValid) setError(null);
+      }
+    } else if (rollNumber) {
+      const derived = deriveAcademicProfile(rollNumber);
+      if (derived.isValid && derived.programme) {
+        setError(null);
+        setProgramme(derived.programme);
+        if (derived.academicYear) setAcademicYear(String(derived.academicYear));
+        if (derived.branchName || derived.branchCode) setBranch(derived.branchName || derived.branchCode || "");
+      }
+    }
+  };
+
+  const isAutoDerivedCourse =
+    Boolean(programme) &&
+    programme !== "pg" &&
+    parseRollNumber(rollNumber).isValid;
+  const isCourseDisabled = loading || isAutoDerivedCourse;
+  const isYearDisabled = loading || programme !== "pg";
+  const isBranchDisabled = loading || programme !== "pg";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
 
-    const parsed = parseRollNumber(rollNumber.trim().toUpperCase(), programme)
+    const parsed = parseRollNumber(rollNumber.trim().toUpperCase(), programme === "pg" ? "pg" : undefined)
     if (!parsed.isValid) {
       setError(parsed.error || "Invalid roll number format. Creation blocked.")
+      return
+    }
+
+    if (!programme || !academicYear || parseInt(academicYear, 10) <= 0) {
+      setError("Please enter a valid roll number to auto-derive programme and academic year.")
       return
     }
 
@@ -87,7 +150,7 @@ export function AddPlayerDialog() {
         full_name: fullName.trim(),
         roll_number: rollNumber.trim().toUpperCase(),
         mobile: mobile.trim(),
-        programme,
+        programme: programme as any,
         academic_year: parseInt(academicYear, 10) || 1,
         branch: branch.trim() || null,
         player_type: playerType,
@@ -109,9 +172,9 @@ export function AddPlayerDialog() {
       setFullName("")
       setRollNumber("")
       setMobile("")
-      setProgramme("btech_regular")
-      setAcademicYear("1")
-      setBranch("CSE")
+      setProgramme("")
+      setAcademicYear("")
+      setBranch("")
       setCricheroesUrl("")
       setBasePrice("100")
       router.refresh()
@@ -183,8 +246,10 @@ export function AddPlayerDialog() {
                   <Award className="size-3.5" />
                   Academic Classification & Bucket
                 </span>
-                <span className="rounded-full bg-emerald-600 text-white font-black text-xs px-2.5 py-0.5 shadow-sm">
-                  Bucket {derivedBucket}
+                <span className={`rounded-full font-black text-xs px-2.5 py-0.5 shadow-sm ${
+                  derivedBucket ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+                }`}>
+                  {derivedBucket ? `Bucket ${derivedBucket}` : 'Bucket Pending'}
                 </span>
               </div>
 
@@ -193,11 +258,11 @@ export function AddPlayerDialog() {
                   <Label className="text-xs">Programme *</Label>
                   <Select
                     value={programme}
-                    onValueChange={(val) => val && setProgramme(val as any)}
-                    disabled={loading || programme !== 'pg' || !parseRollNumber(rollNumber).isValid}
+                    onValueChange={(val) => val && handleProgrammeChange(val as any)}
+                    disabled={isCourseDisabled}
                   >
                     <SelectTrigger className="h-8 text-xs">
-                      <SelectValue placeholder="Programme" />
+                      <SelectValue placeholder="Select Programme" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="btech_regular">B.Tech (Regular)</SelectItem>
@@ -213,7 +278,7 @@ export function AddPlayerDialog() {
                   <Select
                     value={academicYear}
                     onValueChange={(val) => val && setAcademicYear(val)}
-                    disabled={loading || programme !== 'pg' || !parseRollNumber(rollNumber).isValid}
+                    disabled={isYearDisabled}
                   >
                     <SelectTrigger className="h-8 text-xs">
                       <SelectValue placeholder="Year" />
@@ -221,10 +286,14 @@ export function AddPlayerDialog() {
                     <SelectContent>
                       <SelectItem value="1">1st Year</SelectItem>
                       <SelectItem value="2">2nd Year</SelectItem>
-                      <SelectItem value="3">3rd Year</SelectItem>
-                      <SelectItem value="4">4th Year</SelectItem>
-                      <SelectItem value="5">5th Year</SelectItem>
-                      <SelectItem value="6">6th Year</SelectItem>
+                      {programme !== 'pg' && (
+                        <>
+                          <SelectItem value="3">3rd Year</SelectItem>
+                          <SelectItem value="4">4th Year</SelectItem>
+                          <SelectItem value="5">5th Year</SelectItem>
+                          <SelectItem value="6">6th Year</SelectItem>
+                        </>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -233,10 +302,10 @@ export function AddPlayerDialog() {
                   <Label htmlFor="branch" className="text-xs">Branch / Group</Label>
                   <Input
                     id="branch"
-                    placeholder="e.g. CSE"
+                    placeholder={programme === 'pg' ? "e.g. MCA, MBA, M.Tech" : "Auto-derived"}
                     value={branch}
                     onChange={(e) => setBranch(e.target.value.toUpperCase())}
-                    disabled={loading || programme !== 'pg' || !parseRollNumber(rollNumber).isValid}
+                    disabled={isBranchDisabled}
                     className="h-8 text-xs uppercase"
                   />
                 </div>

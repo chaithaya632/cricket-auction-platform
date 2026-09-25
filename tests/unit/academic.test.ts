@@ -313,5 +313,87 @@ describe('Academic Domain — deriveAcademicProfile (Spec §4.1, §4.2, §5 & Ap
       expect(lat.branchName).toBe(expectedName);
     }
   });
+
+  describe('Default Invocations (Spec §4.1 Worked Examples with no explicit date passed)', () => {
+    it('Spec Worked Example: 25811A0403 is automatically a 2nd year ECE student in Bucket B2', () => {
+      const profile = deriveAcademicProfile('25811A0403');
+      expect(profile.isValid).toBe(true);
+      expect(profile.group).toBe('B.Tech');
+      expect(profile.programme).toBe('btech_regular');
+      expect(profile.branchName).toBe('ECE');
+      expect(profile.academicYear).toBe(2);
+      expect(profile.bucket).toBe('B2');
+      expect(profile.isLateral).toBe(false);
+    });
+
+    it('Spec Worked Example: 25815A0403 is automatically a 3rd year ECE lateral student in Bucket B3', () => {
+      const profile = deriveAcademicProfile('25815A0403');
+      expect(profile.isValid).toBe(true);
+      expect(profile.group).toBe('B.Tech');
+      expect(profile.programme).toBe('btech_lateral');
+      expect(profile.branchName).toBe('ECE');
+      expect(profile.academicYear).toBe(3);
+      expect(profile.bucket).toBe('B3');
+      expect(profile.isLateral).toBe(true);
+    });
+
+    it('derives 4th year CSM student in Bucket B4: 23811A4201', () => {
+      const profile = deriveAcademicProfile('23811A4201');
+      expect(profile.isValid).toBe(true);
+      expect(profile.group).toBe('B.Tech');
+      expect(profile.programme).toBe('btech_regular');
+      expect(profile.branchName).toBe('CSM');
+      expect(profile.academicYear).toBe(4);
+      expect(profile.bucket).toBe('B4');
+    });
+
+    it('derives 3rd year Diploma student in Bucket B5: 24597-CM-015', () => {
+      const profile = deriveAcademicProfile('24597-CM-015');
+      expect(profile.isValid).toBe(true);
+      expect(profile.group).toBe('Diploma');
+      expect(profile.programme).toBe('diploma');
+      expect(profile.branchName).toBe('CM');
+      expect(profile.academicYear).toBe(3);
+      expect(profile.bucket).toBe('B5');
+    });
+
+    it('derives 1st year Diploma student in Bucket B5: 26597-M-041', () => {
+      const profile = deriveAcademicProfile('26597-M-041');
+      expect(profile.isValid).toBe(true);
+      expect(profile.group).toBe('Diploma');
+      expect(profile.programme).toBe('diploma');
+      expect(profile.branchName).toBe('M');
+      expect(profile.academicYear).toBe(1);
+      expect(profile.bucket).toBe('B5');
+    });
+
+    it('derives 1st year B.Tech regular student in Bucket B1: 26811A0501', () => {
+      const profile = deriveAcademicProfile('26811A0501');
+      expect(profile.isValid).toBe(true);
+      expect(profile.group).toBe('B.Tech');
+      expect(profile.programme).toBe('btech_regular');
+      expect(profile.branchName).toBe('CSE');
+      expect(profile.academicYear).toBe(1);
+      expect(profile.bucket).toBe('B1');
+    });
+
+    it('derives PG player when programmeHint is pg', () => {
+      const profile = deriveAcademicProfile('24811D0501', 'pg');
+      expect(profile.isValid).toBe(true);
+      expect(profile.group).toBe('PG');
+      expect(profile.programme).toBe('pg');
+      expect(profile.bucket).toBe('PG');
+    });
+
+    it('calculateAcademicYear defaults to ACC 2026 reference date correctly', () => {
+      expect(calculateAcademicYear(2025, 'btech_regular')).toBe(2);
+      expect(calculateAcademicYear(2025, 'btech_lateral')).toBe(3);
+      expect(calculateAcademicYear(2023, 'btech_regular')).toBe(4);
+      expect(calculateAcademicYear(2024, 'diploma')).toBe(3);
+      expect(calculateAcademicYear(2026, 'diploma')).toBe(1);
+      expect(calculateAcademicYear(2026, 'btech_regular')).toBe(1);
+    });
+  });
 });
+
 

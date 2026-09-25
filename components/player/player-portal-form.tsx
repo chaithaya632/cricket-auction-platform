@@ -286,18 +286,26 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
   // ---------------------------------------------------------------------------
   // 2. Season Registration State & Snapshot
   // ---------------------------------------------------------------------------
+  const initialRoll = initialData.player?.roll_number || rollNumber || '';
+  const initialDerived = initialRoll ? deriveAcademicProfile(initialRoll) : null;
+
   const [isEditingReg, setIsEditingReg] = useState(!initialData.registration);
   const [regRollNumber, setRegRollNumber] = useState(
     initialData.player?.roll_number || rollNumber
   );
   const [programme, setProgramme] = useState<
-    'btech_regular' | 'btech_lateral' | 'diploma' | 'pg'
-  >((initialData.registration?.programme as any) || 'btech_regular');
+    'btech_regular' | 'btech_lateral' | 'diploma' | 'pg' | ''
+  >(
+    (initialData.registration?.programme as any) ||
+    (initialDerived?.isValid && initialDerived.programme ? initialDerived.programme : '')
+  );
   const [academicYear, setAcademicYear] = useState<number>(
-    initialData.registration?.academic_year || 1
+    initialData.registration?.academic_year ||
+    (initialDerived?.isValid && initialDerived.academicYear ? initialDerived.academicYear : 0)
   );
   const [branch, setBranch] = useState<string>(
-    initialData.registration?.branch || 'CSE'
+    initialData.registration?.branch ||
+    (initialDerived?.isValid ? initialDerived.branchName || initialDerived.branchCode || '' : '')
   );
   const [basePrice, setBasePrice] = useState<BasePrice>(
     (initialData.registration?.base_price as BasePrice) || 20
@@ -310,33 +318,48 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
   );
 
   const derivedBucket = useMemo(() => {
-    return deriveBucket(programme, academicYear);
+    if (!programme || !academicYear || academicYear < 1) {
+      if (programme === 'diploma') return 'B5';
+      if (programme === 'pg') return 'PG';
+      return null;
+    }
+    return deriveBucket(programme as any, academicYear);
   }, [programme, academicYear]);
 
-  const handleRollChange = (val: string) => {
-    const upper = val.toUpperCase().trim();
-    setRollNumber(upper);
+  const applyAcademicDerivation = (
+    roll: string,
+    currentProgramme?: string
+  ) => {
+    const upper = roll.toUpperCase().trim();
     if (!upper) {
-      setRollError('College roll number is required.');
-    } else {
-      const parsed = parseRollNumber(upper);
-      if (!parsed.isValid) {
-        setRollError(parsed.error || 'Invalid roll number format. Must match B.Tech regular (YY811Abbnn), B.Tech lateral (YY815Abbnn), or Diploma (YY597-BB-nnn).');
-      } else {
-        setRollError(null);
+      if (currentProgramme !== 'pg') {
+        setProgramme('');
+        setAcademicYear(0);
+        setBranch('');
       }
-    }
-  };
-
-  const handleRegRollChange = (val: string) => {
-    const upper = val.toUpperCase().trim();
-    setRegRollNumber(upper);
-    if (!upper) {
-      setRegRollError('Roll number is required.');
       return;
     }
+
+    if (currentProgramme === 'pg') {
+      const parsedPg = parseRollNumber(upper, 'pg');
+      if (parsedPg.isValid) {
+        setRollError(null);
+        setRegRollError(null);
+        setProgramme('pg');
+        if (academicYear < 1 || academicYear > 2) {
+          setAcademicYear(1);
+        }
+      } else {
+        const err = parsedPg.error || 'Invalid roll number format.';
+        setRollError(err);
+        setRegRollError(err);
+      }
+      return;
+    }
+
     const derived = deriveAcademicProfile(upper);
     if (derived.isValid && derived.programme) {
+      setRollError(null);
       setRegRollError(null);
       setProgramme(derived.programme);
       if (derived.academicYear) {
@@ -346,9 +369,74 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
         setBranch(derived.branchName || derived.branchCode || '');
       }
     } else {
-      setRegRollError(derived.error || 'Invalid roll number format. Must match B.Tech regular (YY811Abbnn), B.Tech lateral (YY815Abbnn), or Diploma (YY597-BB-nnn).');
+      setProgramme('');
+      setAcademicYear(0);
+      setBranch('');
+      const err =
+        derived.error ||
+        'Invalid roll number format. Must match B.Tech regular (YY811Abbnn), B.Tech lateral (YY815Abbnn), or Diploma (YY597-BB-nnn).';
+      setRollError(err);
+      setRegRollError(err);
     }
   };
+
+  const handleRollChange = (val: string) => {
+    const upper = val.toUpperCase().trim();
+    setRollNumber(upper);
+    setRegRollNumber(upper);
+    if (!upper) {
+      setRollError('College roll number is required.');
+      setRegRollError('Roll number is required.');
+      applyAcademicDerivation('', programme);
+    } else {
+      applyAcademicDerivation(upper, programme);
+    }
+  };
+
+  const handleRegRollChange = (val: string) => {
+    const upper = val.toUpperCase().trim();
+    setRegRollNumber(upper);
+    setRollNumber(upper);
+    if (!upper) {
+      setRegRollError('Roll number is required.');
+      setRollError('College roll number is required.');
+      applyAcademicDerivation('', programme);
+    } else {
+      applyAcademicDerivation(upper, programme);
+    }
+  };
+
+  const handleProgrammeChange = (
+    newProg: 'btech_regular' | 'btech_lateral' | 'diploma' | 'pg'
+  ) => {
+    setProgramme(newProg);
+    const activeRoll = regRollNumber || rollNumber;
+    if (newProg === 'pg') {
+      if (academicYear < 1 || academicYear > 2) {
+        setAcademicYear(1);
+      }
+      if (!branch || branch === 'CSE') {
+        setBranch('');
+      }
+      if (activeRoll) {
+        const parsed = parseRollNumber(activeRoll, 'pg');
+        if (parsed.isValid) {
+          setRollError(null);
+          setRegRollError(null);
+        }
+      }
+    } else if (activeRoll) {
+      applyAcademicDerivation(activeRoll, newProg);
+    }
+  };
+
+  const isAutoDerivedCourse =
+    Boolean(programme) &&
+    programme !== 'pg' &&
+    parseRollNumber(regRollNumber || rollNumber).isValid;
+  const isCourseDisabled = !isEditingReg || isEligible || isAutoDerivedCourse;
+  const isYearDisabled = !isEditingReg || isEligible || programme !== 'pg';
+  const isBranchDisabled = !isEditingReg || isEligible || programme !== 'pg';
 
   // Registration Extras (CricHeroes Pending, Discrepancy, Referral)
   const initialParsedSkills = useMemo(
@@ -374,9 +462,15 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
 
   const [regSnapshot, setRegSnapshot] = useState({
     regRollNumber: initialData.player?.roll_number || rollNumber,
-    programme: (initialData.registration?.programme as any) || 'btech_regular',
-    academicYear: initialData.registration?.academic_year || 1,
-    branch: initialData.registration?.branch || 'CSE',
+    programme:
+      (initialData.registration?.programme as any) ||
+      (initialDerived?.isValid && initialDerived.programme ? initialDerived.programme : ''),
+    academicYear:
+      initialData.registration?.academic_year ||
+      (initialDerived?.isValid && initialDerived.academicYear ? initialDerived.academicYear : 0),
+    branch:
+      initialData.registration?.branch ||
+      (initialDerived?.isValid ? initialDerived.branchName || initialDerived.branchCode || '' : ''),
     basePrice: (initialData.registration?.base_price as BasePrice) || 20,
     cricheroesUrl: initialData.registration?.cricheroes_url || '',
     cricheroesMobile: initialData.registration?.cricheroes_registered_mobile || '',
@@ -599,7 +693,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
       return;
     }
 
-    const parsedProfileRoll = parseRollNumber(rollNumber);
+    const parsedProfileRoll = parseRollNumber(rollNumber, programme === 'pg' ? 'pg' : undefined);
     if (!parsedProfileRoll.isValid) {
       const err = parsedProfileRoll.error || 'Invalid roll number format. Must match B.Tech regular (YY811Abbnn), B.Tech lateral (YY815Abbnn), or Diploma (YY597-BB-nnn).';
       setRollError(err);
@@ -631,9 +725,16 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
     setMessage(null);
 
     const activeRoll = regRollNumber || rollNumber;
-    const parsedRegRoll = parseRollNumber(activeRoll);
+    const parsedRegRoll = parseRollNumber(activeRoll, programme === 'pg' ? 'pg' : undefined);
     if (!parsedRegRoll.isValid) {
       const err = parsedRegRoll.error || 'Invalid roll number format. Registration blocked.';
+      setRegRollError(err);
+      setMessage({ type: 'error', text: err });
+      return;
+    }
+
+    if (!programme || academicYear <= 0) {
+      const err = 'Please enter a valid roll number to auto-derive your course and academic year.';
       setRegRollError(err);
       setMessage({ type: 'error', text: err });
       return;
@@ -993,6 +1094,22 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               {rollError && (
                 <p className="text-[11px] text-destructive mt-1 font-medium">{rollError}</p>
               )}
+              {programme && academicYear > 0 && !rollError && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                  <span>✓ Verified:</span>
+                  <span className="font-semibold uppercase">{programme.replace('_', ' ')}</span>
+                  <span>•</span>
+                  <span>Year {academicYear}</span>
+                  {branch && (
+                    <>
+                      <span>•</span>
+                      <span className="font-semibold">{branch}</span>
+                    </>
+                  )}
+                  <span>•</span>
+                  <span className="font-bold">Bucket {derivedBucket}</span>
+                </div>
+              )}
             </div>
 
             <div>
@@ -1205,8 +1322,10 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                   Your tournament auction tier is derived strictly from your course and academic year.
                 </p>
               </div>
-              <span className="rounded-full bg-emerald-600 text-white font-black text-xs px-3 py-1 shadow-sm">
-                Bucket {derivedBucket}
+              <span className={`rounded-full font-black text-xs px-3 py-1 shadow-sm ${
+                derivedBucket ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+              }`}>
+                {derivedBucket ? `Bucket ${derivedBucket}` : 'Bucket Pending'}
               </span>
             </div>
 
@@ -1214,18 +1333,19 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               <div>
                 <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1 flex items-center justify-between">
                   <span>Course / Programme *</span>
-                  {programme !== 'pg' && (
+                  {programme && programme !== 'pg' && (
                     <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
                       🔒 Auto-derived
                     </span>
                   )}
                 </label>
                 <select
-                  disabled={programme !== 'pg' || !isEditingReg || isEligible || !parseRollNumber(regRollNumber || rollNumber).isValid}
+                  disabled={isCourseDisabled}
                   value={programme}
-                  onChange={(e) => setProgramme(e.target.value as any)}
+                  onChange={(e) => handleProgrammeChange(e.target.value as any)}
                   className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                 >
+                  <option value="" disabled>Select or enter roll number</option>
                   <option value="btech_regular">B.Tech (Regular)</option>
                   <option value="btech_lateral">B.Tech (Lateral Entry)</option>
                   <option value="diploma">Diploma</option>
@@ -1236,31 +1356,36 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               <div>
                 <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1 flex items-center justify-between">
                   <span>Academic Year *</span>
-                  {programme !== 'pg' && (
+                  {programme && programme !== 'pg' && (
                     <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
                       🔒 Auto-derived
                     </span>
                   )}
                 </label>
                 <select
-                  disabled={programme !== 'pg' || !isEditingReg || isEligible || !parseRollNumber(regRollNumber || rollNumber).isValid}
+                  disabled={isYearDisabled}
                   value={academicYear}
                   onChange={(e) => setAcademicYear(Number(e.target.value))}
                   className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                 >
+                  <option value={0} disabled>Awaiting valid roll number</option>
                   <option value={1}>1st Year</option>
                   <option value={2}>2nd Year</option>
-                  <option value={3}>3rd Year</option>
-                  <option value={4}>4th Year</option>
-                  <option value={5}>5th Year</option>
-                  <option value={6}>6th Year</option>
+                  {programme !== 'pg' && (
+                    <>
+                      <option value={3}>3rd Year</option>
+                      <option value={4}>4th Year</option>
+                      <option value={5}>5th Year</option>
+                      <option value={6}>6th Year</option>
+                    </>
+                  )}
                 </select>
               </div>
 
               <div>
                 <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1 flex items-center justify-between">
                   <span>Branch / Group *</span>
-                  {programme !== 'pg' && (
+                  {programme && programme !== 'pg' && (
                     <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
                       🔒 Auto-derived
                     </span>
@@ -1268,10 +1393,10 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                 </label>
                 <input
                   type="text"
-                  disabled={programme !== 'pg' || !isEditingReg || isEligible || !parseRollNumber(regRollNumber || rollNumber).isValid}
+                  disabled={isBranchDisabled}
                   value={branch}
                   onChange={(e) => setBranch(e.target.value.toUpperCase())}
-                  placeholder="e.g. CSE"
+                  placeholder={programme === 'pg' ? "e.g. MCA, MBA, M.Tech" : "Auto-derived from roll number"}
                   className="w-full rounded-md border px-2.5 py-1.5 text-xs shadow-sm uppercase bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-800/60"
                 />
               </div>

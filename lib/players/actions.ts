@@ -13,6 +13,7 @@ import { writeAuditLog } from '@/lib/audit/logger';
 import { validateSkills, derivePlayerType } from '@/domain/players';
 import { evaluatePlayerEligibility } from '@/domain/players/eligibility';
 import type { CricHeroesStatus, RegistrationStatus } from '@/lib/constants';
+import { ACC_REFERENCE_DATE } from '@/lib/constants';
 import {
   playerProfileSchema,
   playerRegistrationSchema,
@@ -158,7 +159,7 @@ export async function registerPlayerSeasonAction(
     const programme = parsedRoll.programme;
     const academicYear = isPg
       ? (inputYear || 1)
-      : calculateAcademicYear(parsedRoll.admissionYear!, programme, new Date());
+      : calculateAcademicYear(parsedRoll.admissionYear!, programme, ACC_REFERENCE_DATE);
     const branch = isPg
       ? (inputBranch || 'PG')
       : (parsedRoll.branchName || null);
@@ -620,7 +621,7 @@ export async function adminCreatePlayerAction(
     const programme = parsedRoll.programme;
     const academicYear = isPg
       ? (data.academic_year || 1)
-      : calculateAcademicYear(parsedRoll.admissionYear!, programme, new Date());
+      : calculateAcademicYear(parsedRoll.admissionYear!, programme, ACC_REFERENCE_DATE);
     const branch = isPg
       ? (data.branch || 'PG')
       : (parsedRoll.branchName || null);
