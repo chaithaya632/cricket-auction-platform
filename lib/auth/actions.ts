@@ -64,7 +64,7 @@ export async function signupAction(
     if (error) {
       return {
         success: false,
-        error: formatAuthError(error),
+        error: formatAuthError(error, 'signup'),
       };
     }
 
@@ -126,7 +126,7 @@ export async function signupAction(
   } catch (err) {
     return {
       success: false,
-      error: formatAuthError(err),
+      error: formatAuthError(err, 'signup'),
     };
   }
 }
@@ -161,7 +161,7 @@ export async function loginAction(
     if (error) {
       return {
         success: false,
-        error: formatAuthError(error),
+        error: formatAuthError(error, 'login'),
       };
     }
 
@@ -208,7 +208,7 @@ export async function loginAction(
   } catch (err) {
     return {
       success: false,
-      error: formatAuthError(err),
+      error: formatAuthError(err, 'login'),
     };
   }
 }

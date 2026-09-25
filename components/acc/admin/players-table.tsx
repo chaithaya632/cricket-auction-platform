@@ -5,6 +5,7 @@
 // =============================================================================
 
 import { useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -28,8 +29,10 @@ import { PlayerStatusBadge } from "@/components/acc/status-badges"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { formatCredits, BUCKET_ORDER, STATUS_CONFIG } from "@/lib/acc/config"
 import type { Player, PlayerStatus } from "@/lib/acc/types"
-import { Search, Users, Trash2, ShieldCheck, CheckCircle2, AlertTriangle, Eye, ShieldAlert } from "lucide-react"
+import { Search, Users, Trash2, ShieldCheck, CheckCircle2, AlertTriangle, Eye, ShieldAlert, RotateCcw, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { reAuctionUnsoldLotAction } from "@/lib/auction/actions"
+import { toast } from "sonner"
 import { DeletePlayerDialog } from "./delete-player-dialog"
 import { PlayerReviewDialog } from "./player-review-dialog"
 
@@ -54,6 +57,33 @@ export function PlayersTable({ players }: { players: Player[] }) {
   const [groupFilter, setGroupFilter] = useState<string>("all")
   const [playerToDelete, setPlayerToDelete] = useState<Player | null>(null)
   const [playerToReview, setPlayerToReview] = useState<Player | null>(null)
+  const [reAuctioningId, setReAuctioningId] = useState<string | null>(null)
+  const router = useRouter()
+
+  async function handleReAuction(player: Player) {
+    const targetId = player.registrationId || player.id
+    const confirmed = window.confirm(
+      `Re-auction ${player.fullName}?\n\nThis will re-enter the player into the auction queue as pending at their original base price of ${formatCredits(player.basePrice)}.`
+    )
+    if (!confirmed) return
+
+    setReAuctioningId(player.id)
+    try {
+      const res = await reAuctionUnsoldLotAction(targetId)
+      if (!res.success) {
+        toast.error(res.error || "Failed to re-auction player.")
+      } else {
+        toast.success(
+          `${player.fullName} re-entered the lot queue at base price ${formatCredits(res.data?.basePrice || player.basePrice)}!`
+        )
+        router.refresh()
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to re-auction player.")
+    } finally {
+      setReAuctioningId(null)
+    }
+  }
 
   // Dynamically extract unique branch codes/names from actual player data
   const uniqueBranches = useMemo(() => {
@@ -396,9 +426,27 @@ export function PlayersTable({ players }: { players: Player[] }) {
                     )}
                   </TableCell>
 
-                  {/* Action Column: Review + Delete */}
+                  {/* Action Column: Review + Re-auction + Delete */}
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1.5">
+                      {p.status === "UNSOLD" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 px-2.5 text-xs font-semibold gap-1 border-amber-500/40 text-amber-500 hover:bg-amber-500/10 hover:text-amber-400"
+                          disabled={reAuctioningId !== null}
+                          onClick={() => handleReAuction(p)}
+                          title={`Re-auction ${p.fullName} at base price`}
+                        >
+                          {reAuctioningId === p.id ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <RotateCcw className="size-3.5" />
+                          )}
+                          <span>Re-auction</span>
+                        </Button>
+                      )}
+
                       <Button
                         variant="outline"
                         size="sm"

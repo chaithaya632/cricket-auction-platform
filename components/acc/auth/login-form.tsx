@@ -57,7 +57,7 @@ function LoginFormFields() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2 text-center lg:text-left">
+      <div className="flex flex-col gap-1.5 text-center">
         <h2 className="text-2xl font-bold tracking-tight">Sign in to your portal</h2>
         <p className="text-sm text-muted-foreground">
           Enter your credentials to access the ACC auction platform.

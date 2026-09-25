@@ -152,14 +152,21 @@ export async function placeBidAction(
     const franchiseId = franchiseContext.assignedFranchise.id;
     const adminClient = createAdminClient();
 
-    // 2. Fetch active lot
-    const { data: lot, error: lotErr } = await adminClient
-      .from('auction_lots')
-      .select('*')
-      .eq('id', lotId)
-      .single();
+    // 2. Fetch active lot, session config, and franchise squad concurrently
+    const targetSeasonId = franchiseContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
+    const [lotRes, sessionConfigRes, squadData] = await Promise.all([
+      adminClient.from('auction_lots').select('*').eq('id', lotId).single(),
+      adminClient
+        .from('season_config')
+        .select('value')
+        .eq('season_id', targetSeasonId)
+        .eq('key', 'auction_session_status')
+        .maybeSingle(),
+      getFranchiseSquadData(adminClient, franchiseId, targetSeasonId),
+    ]);
 
-    if (lotErr || !lot) {
+    const lot = lotRes.data;
+    if (lotRes.error || !lot) {
       return { success: false, error: 'Lot not found.' };
     }
 
@@ -167,14 +174,7 @@ export async function placeBidAction(
       return { success: false, error: 'Lot is no longer in progress.' };
     }
 
-    // Check auction session status
-    const { data: sessionConfig } = await adminClient
-      .from('season_config')
-      .select('value')
-      .eq('season_id', lot.season_id)
-      .eq('key', 'auction_session_status')
-      .maybeSingle();
-
+    const sessionConfig = sessionConfigRes.data;
     if (sessionConfig?.value === 'paused') {
       return { success: false, error: 'Cannot place bid: auction session is currently paused.' };
     }
@@ -182,18 +182,11 @@ export async function placeBidAction(
       return { success: false, error: 'Cannot place bid: auction session has ended.' };
     }
 
-    // 3. Fetch franchise squad and financial position (Spec §20)
-    const squadData = await getFranchiseSquadData(
-      adminClient,
-      franchiseId,
-      lot.season_id
-    );
-
     if (!squadData) {
       return { success: false, error: 'Franchise data could not be retrieved.' };
     }
 
-    // 4. Determine next legal bid and validate full domain eligibility
+    // 3. Determine next legal bid and validate full domain eligibility
     const mandatoryBucketDeficits = squadData.bucketProgress.buckets
       .filter((b) => b.isMandatory)
       .map((b) => ({
@@ -234,7 +227,7 @@ export async function placeBidAction(
     const nextBid = validation.expectedBid;
     const now = new Date().toISOString();
 
-    // 5. Execute atomic mutation flow
+    // 4. Execute atomic mutation flow
     const mutation = await executeAuctionMutationFlow(
       adminClient,
       lot,
@@ -264,12 +257,6 @@ export async function placeBidAction(
     if (!mutation.success) {
       return { success: false, error: mutation.error };
     }
-
-    revalidatePath('/admin/auction');
-    revalidatePath('/live');
-    revalidatePath('/live/projector');
-    revalidatePath('/franchise');
-    revalidatePath('/franchise/squad');
 
     return { success: true, data: { newPrice: nextBid } };
   } catch (err: any) {
@@ -2179,6 +2166,242 @@ export async function callGuestDrawNumberAction(
     };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Guest draw failed.' };
+  }
+}
+
+/**
+ * Admin Action to re-auction an unsold player (§13).
+ * Directly resets an unsold lot to 'pending' at their ORIGINAL base price
+ * (NOT ₹20, preserving original base price without altering Round 2 logic).
+ * Appends a 'RE_ENTER' event to auction_events for authoritative audit trail.
+ */
+export async function reAuctionUnsoldLotAction(
+  lotOrRegistrationId: string
+): Promise<AuctionActionResult<{ lotId: string; drawNumber: number; basePrice: number }>> {
+  try {
+    const adminContext = await requireAdmin();
+    const adminClient = createAdminClient();
+
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lotOrRegistrationId);
+    if (!isUuid) {
+      return { success: false, error: 'Invalid lot or registration ID.' };
+    }
+
+    // 1. Fetch targeted lot (supports either lot ID or registration ID)
+    const { data: lots, error: fetchErr } = await adminClient
+      .from('auction_lots')
+      .select(`
+        id,
+        season_id,
+        registration_id,
+        draw_number,
+        status,
+        round,
+        base_price,
+        player_season_registrations!inner (
+          id,
+          base_price,
+          bucket,
+          is_auction_eligible,
+          players!inner (
+            id,
+            full_name,
+            is_active
+          )
+        )
+      `)
+      .or(`id.eq.${lotOrRegistrationId},registration_id.eq.${lotOrRegistrationId}`)
+      .limit(1);
+
+    const lot: any = lots?.[0];
+    if (fetchErr || !lot) {
+      return { success: false, error: 'Unsold lot not found in auction records.' };
+    }
+
+    if (lot.status !== 'unsold') {
+      return {
+        success: false,
+        error: `Cannot re-auction lot. Status is '${lot.status}', expected 'unsold'.`,
+      };
+    }
+
+    const reg = Array.isArray(lot.player_season_registrations)
+      ? lot.player_season_registrations[0]
+      : lot.player_season_registrations;
+    const player = Array.isArray(reg?.players) ? reg.players[0] : reg?.players;
+
+    if (player?.is_active === false) {
+      return {
+        success: false,
+        error: 'Cannot re-auction player: Player account is currently blocked.',
+      };
+    }
+
+    // 2. Authoritative original base price from player registration (NOT ₹20)
+    const originalBasePrice = reg?.base_price ?? lot.base_price;
+    const now = new Date().toISOString();
+
+    // 3. Update existing lot to 'pending'
+    const { error: updateErr } = await adminClient
+      .from('auction_lots')
+      .update({
+        status: 'pending',
+        base_price: originalBasePrice,
+        current_price: originalBasePrice,
+        highest_bidder_franchise_id: null,
+        started_at: null,
+        ended_at: null,
+        updated_at: now,
+      })
+      .eq('id', lot.id);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message || 'Failed to update lot status.' };
+    }
+
+    // 4. Record RE_ENTER event in auction_events
+    await adminClient.from('auction_events').insert({
+      season_id: lot.season_id,
+      auction_lot_id: lot.id,
+      event_type: 'RE_ENTER',
+      actor_user_id: adminContext.user.id,
+      reason: 'Unsold player re-entered lot queue at original base price by operator',
+      payload: {
+        registration_id: lot.registration_id,
+        draw_number: lot.draw_number,
+        base_price: originalBasePrice,
+        previous_status: 'unsold',
+      },
+      created_at: now,
+    });
+
+    // 5. Revalidate paths
+    revalidatePath('/admin/queue');
+    revalidatePath('/admin/players');
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin');
+    revalidatePath('/live');
+
+    return {
+      success: true,
+      data: {
+        lotId: lot.id,
+        drawNumber: lot.draw_number,
+        basePrice: originalBasePrice,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to re-auction unsold player.' };
+  }
+}
+
+/**
+ * Automatically populates the lot queue for all auction-eligible registered players
+ * who are not yet queued in auction_lots for the active season.
+ * Ensures approved players are immediately available as 'pending' lots without manual intervention.
+ */
+export async function autoQueueEligiblePlayers(
+  adminClient: any,
+  seasonId: string,
+  actorUserId?: string
+): Promise<{ addedCount: number }> {
+  try {
+    // 1. Fetch all eligible registrations and existing lots concurrently
+    const [regsResult, lotsResult] = await Promise.all([
+      adminClient
+        .from('player_season_registrations')
+        .select(`
+          id,
+          season_id,
+          bucket,
+          base_price,
+          is_auction_eligible,
+          players!inner (
+            id,
+            full_name,
+            is_active
+          )
+        `)
+        .eq('season_id', seasonId)
+        .eq('is_auction_eligible', true),
+      adminClient
+        .from('auction_lots')
+        .select('id, registration_id, draw_number')
+        .eq('season_id', seasonId),
+    ]);
+
+    const eligibleRegs = regsResult.data || [];
+    const existingLots = lotsResult.data || [];
+
+    const queuedRegistrationIds = new Set(existingLots.map((l: any) => l.registration_id));
+
+    // Find eligible active players not yet queued
+    const unqueuedRegs = eligibleRegs.filter((r: any) => {
+      const player = Array.isArray(r.players) ? r.players[0] : r.players;
+      return !queuedRegistrationIds.has(r.id) && player?.is_active !== false;
+    });
+
+    if (unqueuedRegs.length === 0) {
+      return { addedCount: 0 };
+    }
+
+    // Determine starting draw_number
+    let currentMaxDrawNumber = existingLots.reduce(
+      (max: number, l: any) => Math.max(max, l.draw_number ?? 0),
+      0
+    );
+
+    const now = new Date().toISOString();
+    const lotsToInsert = unqueuedRegs.map((r: any) => {
+      currentMaxDrawNumber += 1;
+      return {
+        season_id: seasonId,
+        registration_id: r.id,
+        bucket: r.bucket,
+        draw_number: currentMaxDrawNumber,
+        base_price: r.base_price,
+        current_price: r.base_price,
+        round: 1,
+        status: 'pending',
+        created_at: now,
+        updated_at: now,
+      };
+    });
+
+    const { data: insertedLots, error: insertErr } = await adminClient
+      .from('auction_lots')
+      .insert(lotsToInsert)
+      .select('id, registration_id, draw_number, bucket, base_price');
+
+    if (insertErr || !insertedLots) {
+      console.error('[autoQueueEligiblePlayers] Insert error:', insertErr);
+      return { addedCount: 0 };
+    }
+
+    // Log LOT_CREATED events
+    if (actorUserId) {
+      const events = insertedLots.map((lot: any) => ({
+        season_id: seasonId,
+        auction_lot_id: lot.id,
+        event_type: 'LOT_CREATED',
+        actor_user_id: actorUserId,
+        reason: 'Player auto-queued upon auction eligibility',
+        payload: {
+          registration_id: lot.registration_id,
+          draw_number: lot.draw_number,
+          bucket: lot.bucket,
+          base_price: lot.base_price,
+        },
+        created_at: now,
+      }));
+
+      await adminClient.from('auction_events').insert(events);
+    }
+
+    return { addedCount: insertedLots.length };
+  } catch (err: any) {
+    console.error('[autoQueueEligiblePlayers] Error:', err);
+    return { addedCount: 0 };
   }
 }
 

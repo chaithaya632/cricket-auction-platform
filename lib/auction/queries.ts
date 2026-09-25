@@ -25,14 +25,35 @@ export const getActiveLot = cache(async (
   supabase: SupabaseClient,
   seasonId: string
 ): Promise<AuctionLotWithDetails | null> => {
-  const { data: lot, error: lotErr } = await supabase
+  // 1. Fetch current in-progress lot
+  const { data: activeLot } = await supabase
     .from('auction_lots')
     .select('*')
     .eq('season_id', seasonId)
     .eq('status', 'in_progress')
     .maybeSingle();
 
-  if (lotErr || !lot) {
+  let lot = activeLot;
+
+  // 2. If no lot is actively in progress, retrieve the most recently concluded lot (sold or unsold)
+  // so the hammer / "SOLD TO" banner remains prominently visible across all 5 operational views
+  // until the next player is brought to the floor.
+  if (!lot) {
+    const { data: recentLots } = await supabase
+      .from('auction_lots')
+      .select('*')
+      .eq('season_id', seasonId)
+      .in('status', ['sold', 'unsold'])
+      .order('ended_at', { ascending: false, nullsFirst: false })
+      .order('updated_at', { ascending: false })
+      .limit(1);
+
+    if (recentLots && recentLots.length > 0) {
+      lot = recentLots[0];
+    }
+  }
+
+  if (!lot) {
     return null;
   }
 
@@ -76,6 +97,23 @@ export const getActiveLot = cache(async (
         primary_color: franchiseView.color_primary,
         secondary_color: franchiseView.color_secondary,
       };
+    } else {
+      // Fallback directly to franchises table if view didn't return
+      const { data: fRaw } = await supabase
+        .from('franchises')
+        .select('id, name, short_name, color_primary, color_secondary')
+        .eq('id', lot.highest_bidder_franchise_id)
+        .maybeSingle();
+
+      if (fRaw) {
+        highestBidder = {
+          id: fRaw.id,
+          name: fRaw.name,
+          short_name: fRaw.short_name,
+          primary_color: fRaw.color_primary,
+          secondary_color: fRaw.color_secondary,
+        };
+      }
     }
   }
 

@@ -12,6 +12,7 @@ import { parseRollNumber, calculateAcademicYear, deriveBucket } from '@/domain/a
 import { writeAuditLog } from '@/lib/audit/logger';
 import { validateSkills, derivePlayerType } from '@/domain/players';
 import { evaluatePlayerEligibility } from '@/domain/players/eligibility';
+import { autoQueueEligiblePlayers } from '@/lib/auction/actions';
 import type { CricHeroesStatus, RegistrationStatus } from '@/lib/constants';
 import { ACC_REFERENCE_DATE } from '@/lib/constants';
 import {
@@ -711,7 +712,11 @@ export async function adminCreatePlayerAction(
       bowling_style: data.bowling_style || null,
     });
 
+    // Auto-queue the newly created player in lot queue
+    await autoQueueEligiblePlayers(adminClient, targetSeasonId, adminContext.user.id);
+
     revalidatePath('/admin/players');
+    revalidatePath('/admin/queue');
     revalidatePath('/admin');
     revalidatePath('/players');
 
@@ -1028,6 +1033,10 @@ async function syncPlayerEligibility(
       updated_at: new Date().toISOString(),
     })
     .eq('id', registrationId);
+
+  if (breakdown.isEligible && reg.season_id) {
+    await autoQueueEligiblePlayers(adminClient, reg.season_id);
+  }
 
   return {
     isEligible: breakdown.isEligible,

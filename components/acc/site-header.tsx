@@ -126,16 +126,10 @@ export function SiteHeader() {
 
 export function SiteFooter() {
   return (
-    <footer className="border-t border-border/60">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-10 md:flex-row md:items-center md:justify-between md:px-6">
-        <div className="flex flex-col gap-3">
-          <AccLogo />
-          <p className="max-w-sm text-sm text-muted-foreground">
-            The Avanthi Cricket Championship auction portal — where campus talent meets the bidding
-            floor.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm text-muted-foreground">
+    <footer className="border-t border-border/60 bg-background">
+      <div className="mx-auto flex w-full max-w-7xl flex-col items-center gap-6 px-4 py-8 text-center md:flex-row md:justify-between md:px-6 md:text-left">
+        <AccLogo />
+        <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-2 text-sm text-muted-foreground">
           <Link href="/auction" className="hover:text-foreground">
             Live Auction
           </Link>
@@ -150,9 +144,9 @@ export function SiteFooter() {
           </Link>
         </div>
       </div>
-      <div className="border-t border-border/60 py-4">
-        <p className="mx-auto max-w-7xl px-4 text-xs text-muted-foreground md:px-6">
-          © 2026 Avanthi Institutions. For demonstration purposes.
+      <div className="border-t border-border/60 py-4 text-center">
+        <p className="mx-auto max-w-7xl px-4 text-xs text-muted-foreground font-medium md:px-6">
+          Avanthi Institutions · Secure auction operations
         </p>
       </div>
     </footer>

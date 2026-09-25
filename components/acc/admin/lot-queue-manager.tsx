@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge"
 import { CategoryBadge } from "@/components/acc/category-badge"
 import { formatCredits } from "@/lib/acc/config"
 import { GripVertical, Play, UserPlus, Layers, Loader2, Shuffle, Mic, RotateCcw } from "lucide-react"
-import { selectLotAction, drawNextAutoLotAction, callGuestDrawNumberAction, recallSkippedLotAction } from "@/lib/auction/actions"
+import { selectLotAction, drawNextAutoLotAction, callGuestDrawNumberAction, recallSkippedLotAction, reAuctionUnsoldLotAction } from "@/lib/auction/actions"
 import { toast } from "sonner"
 import type { SessionUser } from "@/lib/acc/session"
 import type { AuctionLotWithDetails } from "@/lib/auction/types"
@@ -55,10 +55,35 @@ export function LotQueueManager({
   const [activeTab, setActiveTab] = useState<'upcoming' | 'unsold' | 'completed' | 'all'>('upcoming')
   const [recallingId, setRecallingId] = useState<string | null>(null)
   const [selectingId, setSelectingId] = useState<string | null>(null)
+  const [reAuctioningId, setReAuctioningId] = useState<string | null>(null)
   const [isAutoDrawing, setIsAutoDrawing] = useState(false)
   const [guestDrawNumber, setGuestDrawNumber] = useState("")
   const [guestBucket, setGuestBucket] = useState("B3")
   const [isGuestDrawing, setIsGuestDrawing] = useState(false)
+
+  async function handleReAuction(lot: AuctionLotWithDetails) {
+    const confirmed = window.confirm(
+      `Re-auction ${lot.player.full_name}?\n\nThis will re-enter the player into the queue as pending at their original base price of ${formatCredits(lot.base_price)}.`
+    )
+    if (!confirmed) return
+
+    setReAuctioningId(lot.id)
+    try {
+      const res = await reAuctionUnsoldLotAction(lot.id)
+      if (!res.success) {
+        toast.error(res.error || "Failed to re-auction player.")
+      } else {
+        toast.success(
+          `${lot.player.full_name} re-entered the lot queue at base price ${formatCredits(res.data?.basePrice || lot.base_price)}!`
+        )
+        router.refresh()
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to re-auction player.")
+    } finally {
+      setReAuctioningId(null)
+    }
+  }
 
   async function handleAutoDraw() {
     setIsAutoDrawing(true)
@@ -494,6 +519,20 @@ export function LotQueueManager({
                     <Badge variant="outline" className="hidden font-mono tabular-nums sm:inline-flex text-muted-foreground">
                       Base: {formatCredits(lot.base_price)}
                     </Badge>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0 border-amber-500/40 text-amber-500 hover:bg-amber-500/10 hover:text-amber-400 font-semibold text-xs h-8 px-2.5"
+                      disabled={reAuctioningId !== null}
+                      onClick={() => handleReAuction(lot)}
+                    >
+                      {reAuctioningId === lot.id ? (
+                        <Loader2 className="size-3.5 animate-spin mr-1" />
+                      ) : (
+                        <RotateCcw className="size-3.5 mr-1" />
+                      )}
+                      Re-auction
+                    </Button>
                   </CardContent>
                 </Card>
               ))}

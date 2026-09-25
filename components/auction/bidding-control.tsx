@@ -49,8 +49,6 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
       const res = await placeBidAction(lot.id, lot.current_price);
       if (!res.success) {
         setErrorMsg(res.error || 'Failed to place bid.');
-      } else {
-        router.refresh();
       }
     });
   };
@@ -141,7 +139,10 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
         }`}
       >
         {isPending ? (
-          <span>Placing Bid...</span>
+          <span className="flex items-center gap-2">
+            <span className="inline-block size-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            <span>Submitting ₹{nextBid}...</span>
+          </span>
         ) : isHighestBidder ? (
           <span>Leading Bidder (₹{lot.current_price})</span>
         ) : exceedsMaxBid ? (

@@ -108,7 +108,7 @@ function SignupFormFields() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2 text-center lg:text-left">
+      <div className="flex flex-col gap-1.5 text-center">
         <h2 className="text-2xl font-bold tracking-tight">Create your ACC account</h2>
         <p className="text-sm text-muted-foreground">
           Enter your personal details to register on the Avanthi Cricket Championship portal.

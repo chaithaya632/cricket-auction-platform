@@ -133,9 +133,12 @@ describe('Safe Auth Error Formatting (formatAuthError)', () => {
     expect(message).toContain('Email confirmation pending');
   });
 
-  it('handles rate limit error safely', () => {
-    const message = formatAuthError('over_email_send_rate_limit: too many requests');
-    expect(message).toBe('Too many login attempts. Please wait a moment and try again.');
+  it('handles rate limit error safely and distinguishes login vs signup', () => {
+    const signupMessage = formatAuthError('over_email_send_rate_limit: too many requests', 'signup');
+    expect(signupMessage).toBe('Registration is temporarily rate limited. Please try again shortly.');
+
+    const loginMessage = formatAuthError('rate limit exceeded: too many requests', 'login');
+    expect(loginMessage).toBe('Too many login attempts. Please wait a moment and try again.');
   });
 
   it('masks PostgreSQL internal errors and does not expose SQL syntax', () => {

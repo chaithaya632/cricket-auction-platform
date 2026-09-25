@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react"
 import Link from "next/link"
+import Image from "next/image"
 import { usePathname } from "next/navigation"
 import {
   Sidebar,
@@ -64,8 +65,14 @@ export function DashboardShell({
         <SidebarHeader>
           <div className="flex items-center gap-2 px-1 py-1.5 group-data-[collapsible=icon]:justify-center">
             <AccLogo subtitle={meta.label} className="group-data-[collapsible=icon]:hidden" />
-            <div className="hidden size-8 items-center justify-center rounded-md bg-primary font-mono text-xs font-bold text-primary-foreground group-data-[collapsible=icon]:flex">
-              ACC
+            <div className="hidden size-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white p-0.5 border border-border/40 group-data-[collapsible=icon]:flex">
+              <Image
+                src="/images/avanthi-logo.png"
+                alt="Avanthi Logo"
+                width={32}
+                height={32}
+                className="h-full w-full object-contain"
+              />
             </div>
           </div>
         </SidebarHeader>

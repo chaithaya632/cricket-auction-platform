@@ -5,7 +5,7 @@
 // Never exposes database internals, stack traces, SQL errors, or credentials.
 // =============================================================================
 
-export function formatAuthError(error: unknown): string {
+export function formatAuthError(error: unknown, context?: 'login' | 'signup'): string {
   if (!error) {
     return 'An unexpected error occurred. Please try again.';
   }
@@ -52,12 +52,15 @@ export function formatAuthError(error: unknown): string {
     return 'Email confirmation pending. Please check your inbox to verify your account.';
   }
 
-  // Rate limiting / abuse protection
+  // Rate limiting / abuse protection — carefully distinguished between login and signup
   if (
     lower.includes('rate limit') ||
     lower.includes('too many requests') ||
     lower.includes('over_email_send_rate_limit')
   ) {
+    if (context === 'signup' || lower.includes('over_email_send') || lower.includes('signup')) {
+      return 'Registration is temporarily rate limited. Please try again shortly.';
+    }
     return 'Too many login attempts. Please wait a moment and try again.';
   }
 

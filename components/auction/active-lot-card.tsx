@@ -54,15 +54,17 @@ export function ActiveLotCard({ lot, size = 'normal' }: ActiveLotCardProps) {
 
         <div className="flex items-center gap-2">
           <span
-            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wider ${
+            className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wider ${
               lot.status === 'in_progress'
-                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 animate-pulse'
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 animate-pulse'
                 : lot.status === 'sold'
-                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-extrabold'
+                : lot.status === 'unsold'
+                ? 'bg-red-500/20 text-red-400 border border-red-500/30'
                 : 'bg-zinc-800 text-zinc-400'
             }`}
           >
-            {lot.status.replace('_', ' ')}
+            {lot.status === 'in_progress' ? 'LIVE ON FLOOR' : lot.status.toUpperCase()}
           </span>
         </div>
       </div>
@@ -148,54 +150,124 @@ export function ActiveLotCard({ lot, size = 'normal' }: ActiveLotCardProps) {
 
         {/* Pricing & Highest Bidder Column */}
         <div className="md:col-span-8 flex flex-col justify-center space-y-4">
-          {/* Current Price Display */}
-          <div className="rounded-xl bg-zinc-950/80 border border-zinc-800/80 p-5">
-            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-              {lot.current_price !== null ? 'Current Highest Bid' : 'Opening Base Price'}
-            </span>
-            <div
-              className={`font-mono font-black text-emerald-400 tracking-tight mt-1 ${
-                isProjector ? 'text-6xl' : 'text-5xl'
-              }`}
-            >
-              {priceDisplay}
-            </div>
-            <div className="text-xs text-zinc-500 mt-1">
-              Base Price: ₹{lot.base_price}
-            </div>
-          </div>
+          {lot.status === 'sold' ? (
+            <div className="rounded-2xl bg-gradient-to-br from-amber-500/15 via-zinc-950 to-emerald-950/30 border-2 border-amber-500/60 p-6 md:p-8 shadow-2xl relative overflow-hidden">
+              <div className="flex items-center justify-between gap-4">
+                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/20 px-4 py-1.5 text-sm font-black uppercase tracking-widest text-emerald-400 border border-emerald-500/50 shadow-sm animate-pulse">
+                  🔨 SOLD
+                </span>
+                <span className="font-mono text-xs text-zinc-400 uppercase tracking-wider font-semibold">
+                  Hammer Price
+                </span>
+              </div>
 
-          {/* Highest Bidder Franchise Display */}
-          <div className="rounded-xl bg-zinc-950/80 border border-zinc-800/80 p-5">
-            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-              Current Leading Franchise
-            </span>
+              <div
+                className={`font-mono font-black text-emerald-400 tracking-tight mt-3 ${
+                  isProjector ? 'text-7xl' : 'text-6xl'
+                }`}
+              >
+                ₹{lot.current_price !== null ? lot.current_price : lot.base_price}
+              </div>
 
-            {lot.highest_bidder ? (
-              <div className="flex items-center gap-3 mt-2">
+              <div className="mt-6 pt-5 border-t border-zinc-800">
+                <span className="text-xs font-extrabold uppercase tracking-widest text-amber-400 block mb-3">
+                  SOLD TO
+                </span>
+                {lot.highest_bidder ? (
+                  <div className="flex items-center gap-4 p-4 rounded-xl bg-zinc-900/90 border border-amber-500/30 shadow-inner">
+                    <div
+                      className="size-14 rounded-xl flex items-center justify-center font-black text-xl text-zinc-950 shadow-md shrink-0"
+                      style={{
+                        backgroundColor: lot.highest_bidder.primary_color || '#eab308',
+                      }}
+                    >
+                      {lot.highest_bidder.short_name}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-black text-zinc-100 text-2xl md:text-3xl tracking-tight truncate leading-tight">
+                        {lot.highest_bidder.name}
+                      </h3>
+                      <p className="text-xs text-emerald-400 font-mono font-semibold mt-1">
+                        Winning Franchise · Acquired for ₹{lot.current_price !== null ? lot.current_price : lot.base_price}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-sm font-semibold text-zinc-400 italic">
+                    Allotted to Franchise
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : lot.status === 'unsold' ? (
+            <div className="rounded-2xl bg-zinc-950 border-2 border-red-500/40 p-6 md:p-8 shadow-xl">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/20 px-3.5 py-1 text-xs font-black uppercase tracking-widest text-red-400 border border-red-500/40">
+                UNSOLD
+              </span>
+              <div
+                className={`font-mono font-black text-zinc-400 tracking-tight mt-3 ${
+                  isProjector ? 'text-6xl' : 'text-5xl'
+                }`}
+              >
+                ₹{lot.base_price}
+              </div>
+              <p className="text-xs text-zinc-400 mt-3">
+                Passed without bids at opening base price. Available for re-auction or Round 2.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Current Price Display during active bidding */}
+              <div className="rounded-xl bg-zinc-950/80 border border-zinc-800/80 p-5">
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                  <span className="size-2 rounded-full bg-emerald-400 animate-ping" />
+                  {lot.current_price !== null ? 'CURRENT BID' : 'OPENING BASE PRICE'}
+                </span>
                 <div
-                  className="w-10 h-10 rounded-lg flex items-center justify-center font-bold text-zinc-900 shadow"
-                  style={{
-                    backgroundColor: lot.highest_bidder.primary_color || '#10b981',
-                  }}
+                  className={`font-mono font-black text-emerald-400 tracking-tight mt-1 ${
+                    isProjector ? 'text-6xl' : 'text-5xl'
+                  }`}
                 >
-                  {lot.highest_bidder.short_name}
+                  {priceDisplay}
                 </div>
-                <div>
-                  <h4 className="font-bold text-zinc-100 text-lg">
-                    {lot.highest_bidder.name}
-                  </h4>
-                  <p className="text-xs text-zinc-400">
-                    Holding highest bid at ₹{lot.current_price}
-                  </p>
+                <div className="text-xs text-zinc-500 mt-1">
+                  Base Price: ₹{lot.base_price}
                 </div>
               </div>
-            ) : (
-              <div className="mt-2 text-zinc-400 text-sm italic">
-                Waiting for opening bid from any eligible franchise...
+
+              {/* Highest Bidder Franchise Display during active bidding */}
+              <div className="rounded-xl bg-zinc-950/80 border border-zinc-800/80 p-5">
+                <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                  HIGHEST BIDDER
+                </span>
+
+                {lot.highest_bidder ? (
+                  <div className="flex items-center gap-3 mt-2">
+                    <div
+                      className="size-11 rounded-lg flex items-center justify-center font-bold text-zinc-950 shadow shrink-0"
+                      style={{
+                        backgroundColor: lot.highest_bidder.primary_color || '#10b981',
+                      }}
+                    >
+                      {lot.highest_bidder.short_name}
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-zinc-100 text-lg">
+                        {lot.highest_bidder.name}
+                      </h4>
+                      <p className="text-xs text-zinc-400">
+                        Holding highest bid at ₹{lot.current_price}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 text-zinc-400 text-sm italic">
+                    Waiting for opening bid from any eligible franchise...
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
 
           {/* Self-Declared Career Stats / Questionnaire Summary (§14) */}
           {lot.skills?.parsed_stats && (
