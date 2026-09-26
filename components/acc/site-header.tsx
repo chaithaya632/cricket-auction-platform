@@ -6,13 +6,12 @@ import { useState } from "react"
 import { buttonVariants } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { AccLogo } from "@/components/acc/brand"
-import { LiveIndicator } from "@/components/acc/status-badges"
 import { cn } from "@/lib/utils"
 import { Menu } from "lucide-react"
 
 const LINKS = [
   { title: "Home", href: "/" },
-  { title: "Live Auction", href: "/auction", live: true },
+  { title: "Live Auction", href: "/auction" },
   { title: "Teams", href: "/teams" },
   { title: "Players", href: "/players" },
 ]
@@ -43,12 +42,6 @@ export function SiteHeader() {
                 )}
               >
                 {link.title}
-                {link.live && (
-                  <span className="relative flex size-1.5">
-                    <span className="absolute inline-flex size-full animate-live-pulse rounded-full bg-live" />
-                    <span className="relative inline-flex size-1.5 rounded-full bg-live" />
-                  </span>
-                )}
               </Link>
             )
           })}
@@ -95,7 +88,6 @@ export function SiteHeader() {
                     )}
                   >
                     {link.title}
-                    {link.live && <LiveIndicator />}
                   </Link>
                 ))}
                 <div className="mt-4 flex flex-col gap-2">

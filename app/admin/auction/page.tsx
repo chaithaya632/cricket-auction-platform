@@ -20,7 +20,7 @@ import { OperatorControls, type OperatorSoldLotItem } from '@/components/auction
 import { RecentActivityStream } from '@/components/auction/recent-activity-stream';
 import { DashboardShell } from '@/components/acc/dashboard-shell';
 import { getSessionUser } from '@/lib/acc/server-session';
-import { LiveIndicator } from '@/components/acc/status-badges';
+import { AuctionSessionIndicator } from '@/components/acc/status-badges';
 import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
 
 export default async function AdminAuctionPage() {
@@ -95,7 +95,7 @@ export default async function AdminAuctionPage() {
       role="admin"
       user={sessionUser}
       breadcrumb="Live Console"
-      actions={<LiveIndicator />}
+      actions={<AuctionSessionIndicator status={sessionState.status} />}
     >
       <AuctionRealtimeSync seasonId={seasonId} />
       <div className="space-y-8 max-w-7xl mx-auto">

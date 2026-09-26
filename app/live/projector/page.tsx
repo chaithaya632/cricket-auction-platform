@@ -79,6 +79,12 @@ export default async function ProjectorPage() {
                   ⏸ AUCTION PAUSED
                 </span>
               </div>
+            ) : sessionState.isCompleted ? (
+              <div className="flex items-center gap-2 rounded-full bg-blue-950/80 border border-blue-800 px-4 py-1.5">
+                <span className="text-xs font-bold uppercase tracking-widest text-blue-400">
+                  AUCTION ENDED
+                </span>
+              </div>
             ) : (
               <div className="flex items-center gap-2 rounded-full bg-red-950/80 border border-red-800 px-4 py-1.5">
                 <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />

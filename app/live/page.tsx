@@ -23,6 +23,7 @@ import { RecentActivityStream } from '@/components/auction/recent-activity-strea
 import { LiveExitBar } from '@/components/auction/live-exit-bar';
 import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
 import { FranchiseLeaderboardTable } from '@/components/auction/franchise-status-bar';
+import { AuctionSessionIndicator } from '@/components/acc/status-badges';
 
 export default async function LiveAuctionPage() {
   const { appUser } = await getCurrentUser();
@@ -110,10 +111,7 @@ export default async function LiveAuctionPage() {
         {/* Header Bar */}
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800 pb-5">
           <div className="flex items-center gap-3">
-          <div className="relative flex h-3.5 w-3.5 items-center justify-center">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
-          </div>
+          <AuctionSessionIndicator status={sessionState.status} />
           <div>
             <h1 className="text-2xl font-black text-zinc-100 tracking-tight flex items-center gap-2">
               <span>ACC Live Auction</span>

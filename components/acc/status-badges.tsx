@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { STATUS_CONFIG, AUCTION_STATUS_CONFIG } from "@/lib/acc/config"
 import type { PlayerStatus, AuctionStatus } from "@/lib/acc/types"
+import type { AuctionSessionStatus } from "@/lib/auction/types"
 
 const DEFAULT_PLAYER_STATUS_CONFIG = {
   label: "Under Review",
@@ -83,19 +84,78 @@ export function AuctionStatusBadge({
   )
 }
 
-export function LiveIndicator({ className }: { className?: string }) {
+const SESSION_INDICATOR_CONFIG: Record<
+  AuctionSessionStatus,
+  { label: string; dotClass: string; textClass: string; borderClass: string; bgClass: string; animate: boolean }
+> = {
+  not_started: {
+    label: 'Not Started',
+    dotClass: 'bg-zinc-400',
+    textClass: 'text-zinc-400',
+    borderClass: 'border-zinc-500/50',
+    bgClass: 'bg-zinc-500/10',
+    animate: false,
+  },
+  live: {
+    label: 'Live',
+    dotClass: 'bg-live',
+    textClass: 'text-live',
+    borderClass: 'border-live/50',
+    bgClass: 'bg-live/10',
+    animate: true,
+  },
+  paused: {
+    label: 'Paused',
+    dotClass: 'bg-amber-400',
+    textClass: 'text-amber-400',
+    borderClass: 'border-amber-500/50',
+    bgClass: 'bg-amber-500/10',
+    animate: false,
+  },
+  completed: {
+    label: 'Ended',
+    dotClass: 'bg-blue-400',
+    textClass: 'text-blue-400',
+    borderClass: 'border-blue-500/50',
+    bgClass: 'bg-blue-500/10',
+    animate: false,
+  },
+};
+
+export function AuctionSessionIndicator({
+  status,
+  className,
+}: {
+  status: AuctionSessionStatus;
+  className?: string;
+}) {
+  const config = SESSION_INDICATOR_CONFIG[status] || SESSION_INDICATOR_CONFIG.not_started;
+
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border border-live/50 bg-live/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-live",
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide",
+        config.borderClass,
+        config.bgClass,
+        config.textClass,
         className,
       )}
     >
       <span className="relative flex size-2">
-        <span className="absolute inline-flex size-full animate-live-pulse rounded-full bg-live" />
-        <span className="relative inline-flex size-2 rounded-full bg-live" />
+        {config.animate && (
+          <span className={cn("absolute inline-flex size-full animate-live-pulse rounded-full", config.dotClass)} />
+        )}
+        <span className={cn("relative inline-flex size-2 rounded-full", config.dotClass)} />
       </span>
-      Live
+      {config.label}
     </span>
-  )
+  );
+}
+
+/**
+ * @deprecated Use AuctionSessionIndicator with the real session status instead.
+ * Kept temporarily for backwards compatibility during migration.
+ */
+export function LiveIndicator({ className }: { className?: string }) {
+  return <AuctionSessionIndicator status="live" className={className} />;
 }

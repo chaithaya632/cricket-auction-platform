@@ -5,6 +5,7 @@ import {
   getActiveLot,
   getRecentAuctionEvents,
   getSeasonAuctionConfig,
+  getAuctionSessionState,
 } from '@/lib/auction/queries';
 import { getFranchiseSquadData } from '@/lib/franchises/queries';
 import { ActiveLotCard } from '@/components/auction/active-lot-card';
@@ -13,7 +14,7 @@ import { BiddingControl } from '@/components/auction/bidding-control';
 import { RecentActivityStream } from '@/components/auction/recent-activity-stream';
 import { DashboardShell } from '@/components/acc/dashboard-shell';
 import { getSessionUser } from '@/lib/acc/server-session';
-import { LiveIndicator } from '@/components/acc/status-badges';
+import { AuctionSessionIndicator } from '@/components/acc/status-badges';
 import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
 
 export const metadata: Metadata = { title: 'Live Auction · Franchise' };
@@ -25,12 +26,13 @@ export default async function FranchiseAuctionPage() {
 
   const seasonId = activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 
-  const [activeLot, recentEvents, config, squadData, sessionUser] = await Promise.all([
+  const [activeLot, recentEvents, config, squadData, sessionUser, sessionState] = await Promise.all([
     getActiveLot(supabase, seasonId),
     getRecentAuctionEvents(supabase, seasonId, 20),
     getSeasonAuctionConfig(supabase, seasonId),
     getFranchiseSquadData(supabase, assignedFranchise.id, seasonId),
     getSessionUser('franchise'),
+    getAuctionSessionState(supabase, seasonId),
   ]);
 
   const timerDuration = activeLot?.highest_bidder_franchise_id
@@ -58,7 +60,7 @@ export default async function FranchiseAuctionPage() {
       role="franchise"
       user={sessionUser}
       breadcrumb="Live Auction"
-      actions={<LiveIndicator />}
+      actions={<AuctionSessionIndicator status={sessionState.status} />}
     >
       <AuctionRealtimeSync seasonId={seasonId} />
       <div className="space-y-8 max-w-7xl mx-auto">
