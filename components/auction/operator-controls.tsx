@@ -24,6 +24,7 @@ import {
   adminRelaxBucketMinimumAction,
   bringDownUnsoldLotAction,
   reAuctionUnsoldLotAction,
+  adminAuctionRestartRecoveryAction,
 } from '@/lib/auction/actions';
 import type {
   AuctionLotWithDetails,
@@ -31,7 +32,7 @@ import type {
   RestoreToMode,
 } from '@/lib/auction/types';
 import type { BucketScarcityReport } from '@/domain/scarcity';
-import { Play, Pause, Square, Loader2, AlertCircle, ShieldAlert, Users, RotateCcw, Award } from 'lucide-react';
+import { Play, Pause, Square, Loader2, AlertCircle, ShieldAlert, Users, RotateCcw, Award, History } from 'lucide-react';
 
 export interface OperatorSoldLotItem {
   id: string;
@@ -40,6 +41,14 @@ export interface OperatorSoldLotItem {
   franchise_name: string;
   price: number;
   bucket: string;
+}
+
+export interface OperatorRecoveryLotItem {
+  id: string;
+  draw_number: number;
+  player_name: string;
+  bucket: string;
+  status: string;
 }
 
 export interface OperatorFranchiseOption {
@@ -58,6 +67,7 @@ interface OperatorControlsProps {
   sessionState: AuctionSessionState;
   isSuperAdmin?: boolean;
   scarcityReport?: BucketScarcityReport | null;
+  recoveryLots?: OperatorRecoveryLotItem[];
 }
 
 export function OperatorControls({
@@ -70,6 +80,7 @@ export function OperatorControls({
   sessionState,
   isSuperAdmin = false,
   scarcityReport = null,
+  recoveryLots = [],
 }: OperatorControlsProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -96,6 +107,57 @@ export function OperatorControls({
   const [relaxReason, setRelaxReason] = useState<string>(
     'Uniform bucket relaxation under §13 endgame procedures'
   );
+
+  // Super Admin Auction Restart & Recovery state (§12.4)
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState<'full' | 'selective'>('full');
+  const [recoveryTargetLotId, setRecoveryTargetLotId] = useState<string>('');
+  const [recoveryReason, setRecoveryReason] = useState<string>('');
+
+  const handleOpenRecoveryModal = () => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    setRecoveryMode('full');
+    setRecoveryReason('');
+    const firstLotId =
+      recoveryLots[0]?.id || upcomingLots[0]?.id || soldLots[0]?.id || unsoldLots[0]?.id || '';
+    setRecoveryTargetLotId(firstLotId);
+    setShowRecoveryModal(true);
+  };
+
+  const handleExecuteRecovery = () => {
+    if (!recoveryReason.trim()) {
+      setErrorMsg('Administrative reason is required for auction restart and recovery.');
+      return;
+    }
+    if (recoveryMode === 'selective' && !recoveryTargetLotId) {
+      setErrorMsg('Please select a target player for selective restart.');
+      return;
+    }
+
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    startTransition(async () => {
+      const res = await adminAuctionRestartRecoveryAction({
+        mode: recoveryMode,
+        targetLotId: recoveryMode === 'selective' ? recoveryTargetLotId : undefined,
+        reason: recoveryReason.trim(),
+      });
+
+      if (!res.success) {
+        setErrorMsg(res.error || 'Failed to execute auction recovery.');
+      } else {
+        const modeLabel = recoveryMode === 'full' ? 'Full Restart' : 'Selective Restart';
+        setSuccessMsg(
+          `Auction recovery successful (${modeLabel}). ${res.data?.affectedLotsCount} lot(s) affected, ${res.data?.reversedSoldLotsCount} sale(s) reversed. Auction is paused; explicitly resume and CALL PLAYER when ready.`
+        );
+        setShowRecoveryModal(false);
+        setRecoveryReason('');
+        router.refresh();
+      }
+    });
+  };
 
   const [localSessionState, setLocalSessionState] = useState<AuctionSessionState>(sessionState);
 
@@ -789,7 +851,7 @@ export function OperatorControls({
             </span>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 pt-1">
             {/* Proxy Bid on Active Lot */}
             <button
               type="button"
@@ -836,6 +898,18 @@ export function OperatorControls({
               <span className="text-sm">⚖</span>
               <span>Relax Bucket</span>
               <span className="text-[10px] font-normal text-zinc-400">Lower quota (§7, §40)</span>
+            </button>
+
+            {/* Super Admin Auction Restart & Recovery */}
+            <button
+              type="button"
+              onClick={handleOpenRecoveryModal}
+              disabled={isPending}
+              className="p-3 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 text-red-300 font-bold text-xs border border-red-500/30 transition flex flex-col items-center justify-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <History className="size-4 text-red-400" />
+              <span>Restart Auction</span>
+              <span className="text-[10px] font-normal text-zinc-400">Draw recovery (§12.4)</span>
             </button>
           </div>
         </div>
@@ -1111,6 +1185,153 @@ export function OperatorControls({
                 className="px-4 py-2 rounded-lg text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white shadow cursor-pointer"
               >
                 {isPending ? 'Applying Relaxation...' : 'Apply Uniform Relaxation'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Super Admin Auction Restart & Recovery Modal (§12.4) */}
+      {showRecoveryModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="rounded-2xl border border-red-500/60 bg-zinc-900 p-6 max-w-lg w-full shadow-2xl space-y-4">
+            <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+              <History className="size-5 text-red-400" />
+              <span>Auction Restart & Recovery (§12.4)</span>
+            </h3>
+
+            <div className="rounded-xl bg-red-950/40 border border-red-500/30 p-3 text-xs text-red-300 space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-red-400">
+                <ShieldAlert className="size-4 shrink-0" />
+                <span>Super Admin Floor Recovery</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-zinc-300">
+                This operation will restore lot statuses to <code>pending</code>, append immutable <code>UNDO_SALE</code> audit events for affected sales, release franchise purses and squad quotas, and leave the auction floor <strong>PAUSED</strong>. Original draw numbers and buckets are strictly preserved.
+              </p>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <label className="text-zinc-300 font-semibold block">
+                Recovery Scope:
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <label className={`flex flex-col p-3 rounded-xl border cursor-pointer transition ${
+                  recoveryMode === 'full'
+                    ? 'border-red-500/80 bg-red-500/10 text-white'
+                    : 'border-zinc-800 bg-zinc-950/60 text-zinc-400 hover:border-zinc-700'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="recoveryMode"
+                      value="full"
+                      checked={recoveryMode === 'full'}
+                      onChange={() => setRecoveryMode('full')}
+                      className="text-red-500"
+                    />
+                    <span className="font-bold text-zinc-200">Full Restart</span>
+                  </div>
+                  <span className="text-[11px] text-zinc-400 mt-1.5 leading-relaxed">
+                    Recovers all lots back to Draw #1. All sold, unsold, skipped, and in-progress lots are reset to pending.
+                  </span>
+                </label>
+
+                <label className={`flex flex-col p-3 rounded-xl border cursor-pointer transition ${
+                  recoveryMode === 'selective'
+                    ? 'border-amber-500/80 bg-amber-500/10 text-white'
+                    : 'border-zinc-800 bg-zinc-950/60 text-zinc-400 hover:border-zinc-700'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="recoveryMode"
+                      value="selective"
+                      checked={recoveryMode === 'selective'}
+                      onChange={() => setRecoveryMode('selective')}
+                      className="text-amber-500"
+                    />
+                    <span className="font-bold text-zinc-200">Selective Restart</span>
+                  </div>
+                  <span className="text-[11px] text-zinc-400 mt-1.5 leading-relaxed">
+                    Recovers from a selected player forward (<code>draw_number &gt;= target</code>). Prior lots remain intact.
+                  </span>
+                </label>
+              </div>
+
+              {recoveryMode === 'selective' && (
+                <div className="space-y-1.5 pt-1">
+                  <label className="text-zinc-300 font-semibold block">
+                    Select Target Starting Player:
+                  </label>
+                  <select
+                    value={recoveryTargetLotId}
+                    onChange={(e) => setRecoveryTargetLotId(e.target.value)}
+                    className="w-full rounded-lg bg-zinc-950 border border-zinc-700 px-3 py-2 text-xs text-zinc-200 font-mono"
+                  >
+                    {recoveryLots.length > 0 ? (
+                      recoveryLots.map((lot) => (
+                        <option key={lot.id} value={lot.id}>
+                          Draw #{lot.draw_number} — {lot.player_name} ({lot.bucket}) [{lot.status.toUpperCase()}]
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">No lots available</option>
+                    )}
+                  </select>
+                  <p className="text-[10px] text-zinc-400">
+                    Lots prior to this player will NOT be modified. This player and all subsequent lots will be reset to pending.
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-zinc-300 font-semibold block">
+                  Mandatory Administrative Reason:
+                </label>
+                <textarea
+                  rows={2}
+                  value={recoveryReason}
+                  onChange={(e) => setRecoveryReason(e.target.value)}
+                  placeholder="E.g., Floor malfunction during Lot 5; restarting from Lot 5 per committee approval."
+                  className="w-full rounded-lg bg-zinc-950 border border-zinc-700 p-2.5 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-red-500"
+                />
+              </div>
+
+              <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-2.5 text-[11px] text-amber-300/90 space-y-1">
+                <p className="font-semibold">Preflight Invariant:</p>
+                <p className="text-zinc-400">
+                  If any lot in the affected recovery range has been <code>allotted</code> or <code>scouted</code>, recovery will abort immediately with 0 mutations.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setShowRecoveryModal(false)}
+                disabled={isPending}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-zinc-400 hover:text-zinc-200 cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteRecovery}
+                disabled={isPending || !recoveryReason.trim() || (recoveryMode === 'selective' && !recoveryTargetLotId)}
+                className="px-5 py-2.5 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-950/50 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+              >
+                {isPending ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <span>Executing Recovery...</span>
+                  </>
+                ) : (
+                  <>
+                    <History className="size-3.5" />
+                    <span>Confirm & Execute Recovery</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

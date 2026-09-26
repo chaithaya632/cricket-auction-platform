@@ -42,8 +42,8 @@ export default async function AdminAuctionPage() {
     getAuctionSessionState(supabase, seasonId),
   ]);
 
-  // 2. Fetch scarcity report, recent sold lots, and active franchises
-  const [scarcityReport, soldLotsResult, franchisesResult] = await Promise.all([
+  // 2. Fetch scarcity report, recent sold lots, active franchises, and all season lots
+  const [scarcityReport, soldLotsResult, franchisesResult, allSeasonLotsResult] = await Promise.all([
     activeLot?.bucket ? getActiveLotScarcity(supabase, seasonId, activeLot.bucket) : null,
     supabase
       .from('auction_lots')
@@ -58,6 +58,11 @@ export default async function AdminAuctionPage() {
       .eq('season_id', seasonId)
       .eq('is_active', true)
       .order('name', { ascending: true }),
+    supabase
+      .from('auction_lots')
+      .select('id, draw_number, bucket, status, registration:player_season_registrations(player:players(full_name))')
+      .eq('season_id', seasonId)
+      .order('draw_number', { ascending: true }),
   ]);
 
   const soldLots: OperatorSoldLotItem[] = (soldLotsResult.data || []).map((l: any) => ({
@@ -67,6 +72,14 @@ export default async function AdminAuctionPage() {
     franchise_name: l.highest_bidder?.name || 'Franchise',
     price: l.current_price || 20,
     bucket: l.bucket,
+  }));
+
+  const recoveryLots = (allSeasonLotsResult.data || []).map((l: any) => ({
+    id: l.id,
+    draw_number: l.draw_number,
+    player_name: l.registration?.player?.full_name || 'Player',
+    bucket: l.bucket,
+    status: l.status,
   }));
 
   const lastSoldLotId = soldLots[0]?.id || null;
@@ -153,6 +166,7 @@ export default async function AdminAuctionPage() {
             sessionState={sessionState}
             isSuperAdmin={adminContext.isSuperAdmin}
             scarcityReport={scarcityReport}
+            recoveryLots={recoveryLots}
           />
         </div>
 

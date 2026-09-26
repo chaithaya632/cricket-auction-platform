@@ -25,7 +25,12 @@ import { calculateNextBid } from '@/domain/auction/bid-increment';
 import { getFranchiseSquadData } from '@/lib/franchises/queries';
 import { executeAuctionMutationFlow } from './transaction';
 import { writeAuditLog } from '@/lib/audit/logger';
-import type { AuctionActionResult, RestoreToMode } from './types';
+import type {
+  AuctionActionResult,
+  RestoreToMode,
+  AdminAuctionRestartRecoveryParams,
+  AuctionRecoveryResult,
+} from './types';
 
 /**
  * Selects an upcoming lot from the queue and transitions it to 'in_progress'.
@@ -746,16 +751,19 @@ export async function startAuctionAgainAction(): Promise<
         { onConflict: 'season_id,key' }
       );
 
-    // 4. Record audit event in auction_events
-    await adminClient.from('auction_events').insert({
-      season_id: activeSeason.id,
-      auction_lot_id: '00000000-0000-0000-0000-000000000000',
-      event_type: 'SESSION_RESET',
-      actor_user_id: adminContext.user.id,
-      reason: 'Auction session restarted by operator (START AUCTION AGAIN)',
-      payload: { restarted_at: now, multi_session: true },
-      created_at: now,
-    });
+    // 4. Record session reopen audit in audit_logs (valid audit ledger, no FK or CHECK violation)
+    await writeAuditLog(
+      {
+        seasonId: activeSeason.id,
+        actorUserId: adminContext.user.id,
+        action: 'AUCTION_SESSION_REOPENED',
+        entityType: 'auction_session',
+        entityId: activeSeason.id,
+        reason: 'Auction session reopened by operator (START AUCTION AGAIN)',
+        metadata: { restarted_at: now, multi_session: true },
+      },
+      adminClient
+    );
 
     revalidatePath('/admin/auction');
     revalidatePath('/admin');
@@ -2564,4 +2572,295 @@ export async function autoQueueEligiblePlayers(
     return { addedCount: 0 };
   }
 }
+
+/**
+ * Super Admin Auction Restart & Recovery Action (§12.4).
+ * Operational recovery mechanism for correcting auction-recording errors.
+ *
+ * MODES:
+ * 1. 'full': Restores all original auction lots for the active season to the beginning of the draw.
+ * 2. 'selective': Restores auction state starting from a specific target lot (draw_number >= target.draw_number).
+ *    All lots prior to target remain completely untouched.
+ *
+ * NON-NEGOTIABLE SAFETY CONSTRAINTS:
+ * - Restricted strictly to Super Admin (adminContext.isSuperAdmin === true). Operators are rejected.
+ * - ZERO-MUTATION PREFLIGHT: If ANY affected lot has status 'allotted' or 'scouted', execution aborts
+ *   immediately with 0 mutations, preserving endgame state.
+ * - HISTORICAL IMMUTABILITY: Events in auction_events are NEVER updated or deleted.
+ * - Every affected SOLD lot receives an UNDO_SALE event appending to auction_events.
+ * - Original draw_number, round, bucket, and lot identity are 100% preserved.
+ * - Session remains PAUSED after recovery; Super Admin must explicitly resume and CALL PLAYER.
+ * - Centralized audit entry written to audit_logs (AUCTION_RECOVERY_FULL or AUCTION_RECOVERY_SELECTIVE).
+ */
+export async function adminAuctionRestartRecoveryAction(
+  params: AdminAuctionRestartRecoveryParams
+): Promise<AuctionActionResult<AuctionRecoveryResult>> {
+  try {
+    // 1. Authenticate and enforce strict Super Admin authorization
+    const adminContext = await requireAdmin();
+    if (!adminContext.isSuperAdmin) {
+      return {
+        success: false,
+        error: 'Unauthorized: Only Super Admin has authority to perform auction restart and recovery (§12.4).',
+      };
+    }
+
+    // 2. Validate input parameters
+    const { mode, targetLotId, reason } = params || {};
+    if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+      return {
+        success: false,
+        error: 'Administrative reason is required for auction restart and recovery.',
+      };
+    }
+
+    if (mode !== 'full' && mode !== 'selective') {
+      return {
+        success: false,
+        error: 'Invalid recovery mode. Expected "full" or "selective".',
+      };
+    }
+
+    if (mode === 'selective' && (!targetLotId || typeof targetLotId !== 'string')) {
+      return {
+        success: false,
+        error: 'Target lot ID is required for selective restart and recovery.',
+      };
+    }
+
+    // 3. Resolve active season
+    const activeSeason = adminContext.activeSeason;
+    if (!activeSeason) {
+      return { success: false, error: 'No active season found for auction recovery.' };
+    }
+
+    const adminClient = createAdminClient();
+
+    // 4. Resolve affected lots
+    let affectedLots: any[] = [];
+    let targetDrawNumber: number | null = null;
+    let targetPlayerName: string | null = null;
+
+    if (mode === 'full') {
+      const { data: allLots, error: fetchErr } = await adminClient
+        .from('auction_lots')
+        .select(`
+          id,
+          registration_id,
+          bucket,
+          draw_number,
+          round,
+          status,
+          current_price,
+          highest_bidder_franchise_id,
+          base_price,
+          player_season_registrations (
+            players (
+              full_name
+            )
+          )
+        `)
+        .eq('season_id', activeSeason.id)
+        .order('draw_number', { ascending: true });
+
+      if (fetchErr || !allLots || allLots.length === 0) {
+        return { success: false, error: 'No auction lots found for this season to recover.' };
+      }
+      affectedLots = allLots;
+    } else {
+      // Selective restart: fetch target lot first
+      const { data: targetLot, error: targetErr } = await adminClient
+        .from('auction_lots')
+        .select(`
+          id,
+          registration_id,
+          bucket,
+          draw_number,
+          round,
+          status,
+          current_price,
+          highest_bidder_franchise_id,
+          base_price,
+          player_season_registrations (
+            players (
+              full_name
+            )
+          )
+        `)
+        .eq('id', targetLotId)
+        .eq('season_id', activeSeason.id)
+        .maybeSingle();
+
+      if (targetErr || !targetLot) {
+        return { success: false, error: 'Target lot not found in active season.' };
+      }
+
+      targetDrawNumber = targetLot.draw_number;
+      const reg: any = Array.isArray(targetLot.player_season_registrations)
+        ? targetLot.player_season_registrations[0]
+        : targetLot.player_season_registrations;
+      const player: any = Array.isArray(reg?.players) ? reg.players[0] : reg?.players;
+      targetPlayerName = player?.full_name || null;
+
+      // Select all lots with draw_number >= targetDrawNumber
+      const { data: scopedLots, error: scopeErr } = await adminClient
+        .from('auction_lots')
+        .select(`
+          id,
+          registration_id,
+          bucket,
+          draw_number,
+          round,
+          status,
+          current_price,
+          highest_bidder_franchise_id,
+          base_price
+        `)
+        .eq('season_id', activeSeason.id)
+        .gte('draw_number', targetDrawNumber)
+        .order('draw_number', { ascending: true });
+
+      if (scopeErr || !scopedLots || scopedLots.length === 0) {
+        return { success: false, error: 'No auction lots found in the target recovery range.' };
+      }
+      affectedLots = scopedLots;
+    }
+
+    // 5. CRITICAL ZERO-MUTATION PREFLIGHT SAFETY CHECK
+    // If ANY affected lot is 'allotted' or 'scouted', abort immediately with 0 changes.
+    const unsafeLot = affectedLots.find(
+      (l) => l.status === 'allotted' || l.status === 'scouted'
+    );
+    if (unsafeLot) {
+      return {
+        success: false,
+        error:
+          'Recovery cannot proceed because Round 2 allotment/scouting records are present in the affected range. No changes were made.',
+      };
+    }
+
+    const now = new Date().toISOString();
+
+    // 6. Freeze/Pause Auction Session (ensures zero concurrent bidding during recovery)
+    await adminClient
+      .from('season_config')
+      .upsert(
+        {
+          season_id: activeSeason.id,
+          key: 'auction_session_status',
+          value: 'paused',
+          value_type: 'text',
+          updated_at: now,
+        },
+        { onConflict: 'season_id,key' }
+      );
+
+    // 7. Append immutable UNDO_SALE events for all affected SOLD lots
+    const soldLots = affectedLots.filter((l) => l.status === 'sold');
+    if (soldLots.length > 0) {
+      const undoEvents = soldLots.map((lot) => ({
+        season_id: activeSeason.id,
+        auction_lot_id: lot.id,
+        event_type: 'UNDO_SALE',
+        actor_user_id: adminContext.user.id,
+        franchise_id: lot.highest_bidder_franchise_id,
+        price: lot.current_price,
+        reason: `Auction recovery (${mode}) by Super Admin. Reason: ${reason.trim()}`,
+        payload: {
+          restored_to: 'return_to_queue',
+          recovery_mode: mode,
+          target_draw_number: mode === 'selective' ? targetDrawNumber : null,
+          refunded_franchise_id: lot.highest_bidder_franchise_id,
+          refunded_price: lot.current_price,
+          reason: reason.trim(),
+        },
+        created_at: now,
+      }));
+
+      const { error: undoErr } = await adminClient.from('auction_events').insert(undoEvents);
+      if (undoErr) {
+        console.error('[adminAuctionRestartRecoveryAction] Failed to insert UNDO_SALE events:', undoErr);
+        return { success: false, error: 'Failed to record recovery sale reversal events.' };
+      }
+    }
+
+    // 8. Reset operational lot states to 'pending'
+    // Preserves original draw_number, round, bucket, and base_price.
+    const nonPendingLots = affectedLots.filter((l) => l.status !== 'pending');
+    if (nonPendingLots.length > 0) {
+      const resetIds = nonPendingLots.map((l) => l.id);
+      const { error: resetErr } = await adminClient
+        .from('auction_lots')
+        .update({
+          status: 'pending',
+          current_price: null,
+          highest_bidder_franchise_id: null,
+          started_at: null,
+          ended_at: null,
+          updated_at: now,
+        })
+        .in('id', resetIds);
+
+      if (resetErr) {
+        console.error('[adminAuctionRestartRecoveryAction] Failed to reset lot states:', resetErr);
+        return { success: false, error: 'Failed to reset operational lots to pending.' };
+      }
+    }
+
+    // 9. Write centralized audit log entry
+    const refundedFranchises = Array.from(
+      new Set(soldLots.map((l) => l.highest_bidder_franchise_id).filter(Boolean))
+    );
+
+    await writeAuditLog(
+      {
+        seasonId: activeSeason.id,
+        actorUserId: adminContext.user.id,
+        action: mode === 'full' ? 'AUCTION_RECOVERY_FULL' : 'AUCTION_RECOVERY_SELECTIVE',
+        entityType: 'auction_session',
+        entityId: activeSeason.id,
+        reason: reason.trim(),
+        metadata: {
+          restart_type: mode,
+          target_lot_id: targetLotId ?? null,
+          target_draw_number: mode === 'selective' ? targetDrawNumber : null,
+          target_player_name: targetPlayerName ?? null,
+          affected_lots_count: affectedLots.length,
+          reversed_sold_lots_count: soldLots.length,
+          reset_lots_count: nonPendingLots.length,
+          refunded_franchises: refundedFranchises,
+          timestamp: now,
+        },
+      },
+      adminClient
+    );
+
+    // 10. Revalidate server-rendered paths
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin');
+    revalidatePath('/admin/queue');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/auction');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+    revalidatePath('/franchise');
+    revalidatePath('/franchise/squad');
+    revalidatePath('/player');
+
+    return {
+      success: true,
+      data: {
+        mode,
+        targetDrawNumber: mode === 'selective' ? targetDrawNumber : null,
+        affectedLotsCount: affectedLots.length,
+        reversedSoldLotsCount: soldLots.length,
+      },
+    };
+  } catch (err: any) {
+    console.error('[adminAuctionRestartRecoveryAction] Error:', err);
+    return { success: false, error: err?.message || 'Failed to execute auction restart and recovery.' };
+  }
+}
+
 

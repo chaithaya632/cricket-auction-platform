@@ -123,3 +123,17 @@ export interface FranchiseLiveSummaryItem {
   status: 'leading' | 'in_play' | 'blocked';
   blockReason?: string;
 }
+
+export interface AdminAuctionRestartRecoveryParams {
+  mode: 'full' | 'selective';
+  targetLotId?: string;
+  reason: string;
+}
+
+export interface AuctionRecoveryResult {
+  mode: 'full' | 'selective';
+  targetDrawNumber: number | null;
+  affectedLotsCount: number;
+  reversedSoldLotsCount: number;
+}
+
