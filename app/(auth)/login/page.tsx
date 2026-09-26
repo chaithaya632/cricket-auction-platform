@@ -5,7 +5,7 @@ import { LoginForm } from "@/components/acc/auth/login-form"
 
 export const metadata: Metadata = {
   title: "Sign in",
-  description: "Sign in to the Avanthi Cricket Championship auction portal.",
+  description: "Sign in to the Avanthi Cricket Carnival auction portal.",
 }
 
 export default function LoginPage() {
@@ -23,7 +23,7 @@ export default function LoginPage() {
       >
         <Image
           src="/images/cricket-hero-bg.png"
-          alt="Avanthi Cricket Championship Stadium"
+          alt="Avanthi Cricket Carnival Stadium"
           fill
           priority
           unoptimized
@@ -35,7 +35,13 @@ export default function LoginPage() {
       </div>
 
       {/* CENTERED BRANDING + LOGIN CARD + FOOTER */}
-      <AccBrandingPanel>
+      <AccBrandingPanel
+        title={
+          <>
+            Avanthi Cricket <span className="text-amber-400">Carnival</span>
+          </>
+        }
+      >
         <LoginForm />
       </AccBrandingPanel>
     </main>

@@ -4,6 +4,8 @@ import Image from "next/image"
 import { cn } from "@/lib/utils"
 
 export interface AccBrandingPanelProps {
+  /** Optional custom title (defaults to "Avanthi Cricket Championship") */
+  title?: ReactNode
   /** Optional supporting description text */
   description?: string | ReactNode
   /** Optional action buttons (e.g. Home CTAs) */
@@ -32,6 +34,7 @@ export interface AccBrandingPanelProps {
  * 5. Centered Footer: "Avanthi Institutions · Secure auction operations"
  */
 export function AccBrandingPanel({
+  title,
   description,
   actions,
   children,
@@ -67,7 +70,11 @@ export function AccBrandingPanel({
       {/* 2. Tournament & Institutional Identity — Centered */}
       <div className="flex flex-col items-center gap-2.5">
         <h1 className="text-balance text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-white drop-shadow-md">
-          Avanthi Cricket <span className="text-amber-400">Championship</span>
+          {title ?? (
+            <>
+              Avanthi Cricket <span className="text-amber-400">Championship</span>
+            </>
+          )}
         </h1>
 
         {/* Institutional Identity — RENDERED ONLY ONCE */}
