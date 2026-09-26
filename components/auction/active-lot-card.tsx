@@ -361,7 +361,7 @@ export function ActiveLotCard({
           {lot.skills?.parsed_stats && (
             <div className="rounded-xl bg-zinc-950/90 border border-zinc-800/80 p-4 space-y-2">
               <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 block">
-                Player Profile Details (§14)
+                Player Profile Details
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
                 {lot.skills.parsed_stats.bowlingRoles && Array.isArray(lot.skills.parsed_stats.bowlingRoles) && (

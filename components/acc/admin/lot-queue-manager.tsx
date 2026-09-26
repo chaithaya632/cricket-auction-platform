@@ -151,7 +151,7 @@ export function LotQueueManager({
       if (!res.success) {
         toast.error(res.error || "Failed to recall lot.")
       } else {
-        toast.success("Skipped player recalled back to auction queue (§10).")
+        toast.success("Skipped player recalled back to auction queue.")
         router.refresh()
       }
     } catch (err: any) {
@@ -216,7 +216,7 @@ export function LotQueueManager({
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/80 pb-3">
             <div>
               <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-200 flex items-center gap-2">
-                <span>🎲</span> Draw Modes (§10)
+                <span>🎲</span> Draw Modes
               </h3>
               <p className="text-xs text-zinc-400 mt-0.5">
                 Official Bucket Sequence: <strong>B3 → B4 → B2 → B5 → B1 → PG</strong>. Switch between Auto and Guest modes at any time.
@@ -268,7 +268,7 @@ export function LotQueueManager({
                   </span>
                 </div>
                 <p className="text-[11px] text-zinc-400">
-                  Honorary guest calls a number aloud; operator enters it and that player comes to the floor. No number is ever called twice (§10).
+                  Honorary guest calls a number aloud; operator enters it and that player comes to the floor. No number is ever called twice.
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -374,7 +374,7 @@ export function LotQueueManager({
               {unsoldLots.length > 0 ? (
                 <>
                   <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-                    {unsoldLots.length} player{unsoldLots.length === 1 ? '' : 's'} went unsold in Round 1 and will reopen in Round 2 (§13).
+                    {unsoldLots.length} player{unsoldLots.length === 1 ? '' : 's'} went unsold in Round 1 and will reopen in Round 2.
                   </p>
                   <div className="flex items-center gap-2 mt-4">
                     <Button
@@ -512,7 +512,7 @@ export function LotQueueManager({
                           ? ` · Year ${lot.registration.academic_year}`
                           : ""}
                         {" · "}Round {lot.round}
-                        {" · "}Reopens in Round 2 (§13)
+                        {" · "}Reopens in Round 2
                       </span>
                     </div>
                     <CategoryBadge bucket={lot.bucket as Bucket} />
@@ -601,7 +601,7 @@ export function LotQueueManager({
                         ) : (
                           <RotateCcw className="size-3.5 mr-1" />
                         )}
-                        Recall (§10)
+                        Recall
                       </Button>
                     )}
                   </CardContent>

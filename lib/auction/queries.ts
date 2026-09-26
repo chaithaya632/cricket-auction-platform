@@ -467,6 +467,81 @@ export const getSeasonAuctionConfig = cache(async (
  * Evaluates seasons.status ('draft', 'registration', 'auction', 'completed'),
  * season_config ('auction_session_status' = 'live' | 'paused'),
  * and current active lot in progress.
+/**
+ * Determines whether referenceDate is on a calendar day strictly after eventDate.
+ * Authoritatively governed by Indian Standard Time (UTC+05:30, official ACC jurisdiction),
+ * immune to Vercel/server timezone, container timezone, or browser client offsets.
+ */
+export function isLaterCalendarDay(eventDate: Date, referenceDate: Date): boolean {
+  // Indian Standard Time (UTC+05:30)
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const eventIst = new Date(eventDate.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+  const refIst = new Date(referenceDate.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+  return refIst > eventIst;
+}
+
+/**
+ * Pure, authoritative resolution of the current operational auction session status.
+ *
+ * State Model:
+ * 1. Active auction: seasonStatus === 'auction' -> 'paused' (if configured) or 'live'
+ * 2. Explicitly completed auction:
+ *    - Persists as 'completed' for the active session and subsequent visits on the same day.
+ *    - Automatically resolves to 'not_started' if visited on a subsequent calendar day
+ *      WITHOUT mutating the database, events, or historical lots.
+ * 3. Default: 'not_started'
+ */
+export function resolveAuctionSessionStatus(params: {
+  seasonStatus: string;
+  sessionConfigStatus?: string | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  referenceDate?: Date;
+}): 'not_started' | 'live' | 'paused' | 'completed' {
+  const {
+    seasonStatus,
+    sessionConfigStatus,
+    endedAt,
+    referenceDate = new Date(),
+  } = params;
+
+  // 1. If season or session was explicitly marked completed
+  const isExplicitlyCompleted =
+    seasonStatus === 'completed' ||
+    seasonStatus === 'archived' ||
+    sessionConfigStatus === 'completed';
+
+  if (isExplicitlyCompleted) {
+    const sessionEndTime = endedAt || null;
+
+    if (sessionEndTime) {
+      const endDate = new Date(sessionEndTime);
+      if (!isNaN(endDate.getTime())) {
+        // If returning on a later calendar day without explicitly starting a new session:
+        if (isLaterCalendarDay(endDate, referenceDate)) {
+          return 'not_started';
+        }
+      }
+    }
+
+    // Persists for the current completed session
+    return 'completed';
+  }
+
+  // 2. If currently in operational auction mode
+  if (seasonStatus === 'auction') {
+    if (sessionConfigStatus === 'paused') {
+      return 'paused';
+    }
+    return 'live';
+  }
+
+  // 3. Unstarted (draft, registration, etc.)
+  return 'not_started';
+}
+
+/**
+ * Retrieves the current session status for an active season.
  * Memoized per server render cycle with React cache().
  */
 export const getAuctionSessionState = cache(async (
@@ -476,14 +551,14 @@ export const getAuctionSessionState = cache(async (
   const [seasonResult, configRowsResult, activeLotResult] = await Promise.all([
     supabase
       .from('seasons')
-      .select('id, name, status')
+      .select('id, name, status, updated_at')
       .eq('id', seasonId)
       .maybeSingle(),
     supabase
       .from('season_config')
       .select('key, value')
       .eq('season_id', seasonId)
-      .in('key', ['auction_session_status', 'auction_started_at']),
+      .in('key', ['auction_session_status', 'auction_started_at', 'auction_ended_at']),
     supabase
       .from('auction_lots')
       .select('id')
@@ -506,20 +581,16 @@ export const getAuctionSessionState = cache(async (
   const seasonStatus = season?.status || 'draft';
   const sessionStatusConfig = configMap['auction_session_status'];
   const startedAt = configMap['auction_started_at'] || null;
+  const endedAt =
+    configMap['auction_ended_at'] ||
+    (seasonStatus === 'completed' ? season?.updated_at : null);
 
-  let computedStatus: 'not_started' | 'live' | 'paused' | 'completed' = 'not_started';
-
-  if (seasonStatus === 'completed' || seasonStatus === 'archived' || sessionStatusConfig === 'completed') {
-    computedStatus = 'completed';
-  } else if (seasonStatus === 'auction') {
-    if (sessionStatusConfig === 'paused') {
-      computedStatus = 'paused';
-    } else {
-      computedStatus = 'live';
-    }
-  } else {
-    computedStatus = 'not_started';
-  }
+  const computedStatus = resolveAuctionSessionStatus({
+    seasonStatus,
+    sessionConfigStatus: sessionStatusConfig,
+    startedAt,
+    endedAt,
+  });
 
   return {
     status: computedStatus,

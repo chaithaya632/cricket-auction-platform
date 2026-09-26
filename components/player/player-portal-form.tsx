@@ -802,7 +802,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
     if (effectiveFielderOnly && !confirmedFielderOnly) {
       setMessage({
         type: 'error',
-        text: 'You have not selected batting, bowling, or wicket-keeping. Please confirm registration as a Fielder only before saving (§5.1).',
+        text: 'You have not selected batting, bowling, or wicket-keeping. Please confirm registration as a Fielder only before saving.',
       });
       return;
     }
@@ -1487,7 +1487,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               </label>
               {isCricheroesPending && (
                 <div className="mt-2 text-xs text-amber-800 dark:text-amber-300 space-y-1 pl-6">
-                  <p className="font-semibold">How to create your CricHeroes profile (§5.2):</p>
+                  <p className="font-semibold">How to create your CricHeroes profile:</p>
                   <ol className="list-decimal pl-4 space-y-0.5 text-[11px]">
                     <li>Download the <strong>CricHeroes</strong> app from Google Play Store or Apple App Store.</li>
                     <li>Sign up with your phone number and create your player profile.</li>
@@ -1512,7 +1512,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
               {hasYearDiscrepancy && (
                 <div className="mt-2 pl-6 space-y-2">
                   <p className="text-[11px] text-blue-800 dark:text-blue-300">
-                    Students with academic discrepancies are not blocked from registering (§4.1). Select your actual current year in the dropdown above, and provide a note below. Super Admin will verify and apply the official academic year override.
+                    Students with academic discrepancies are not blocked from registering. Select your actual current year in the dropdown above, and provide a note below. Super Admin will verify and apply the official academic year override.
                   </p>
                   <input
                     type="text"
@@ -1536,7 +1536,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                   onChange={(e) => setIsAccReferred(e.target.checked)}
                   className="rounded text-purple-600 h-4 w-4"
                 />
-                Did you join Avanthi through the ACC Reference Program? (§5.2, Case 24)
+                Did you join Avanthi through the ACC Reference Program?
               </label>
               {isAccReferred && (
                 <div className="mt-2 pl-6 space-y-2">
@@ -1720,7 +1720,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
             {isBatter && (
               <div className="p-4 rounded-lg border border-emerald-200 bg-emerald-50/30 dark:border-emerald-900/50 dark:bg-emerald-950/20 space-y-4">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
-                  Batting Profile (§5.1)
+                  Batting Profile
                 </h3>
                 <div className="grid gap-4 sm:grid-cols-3">
                   <div>
@@ -1772,7 +1772,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
             {isBowler && (
               <div className="p-4 rounded-lg border border-blue-200 bg-blue-50/30 dark:border-blue-900/50 dark:bg-blue-950/20 space-y-4">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-blue-800 dark:text-blue-300">
-                  Bowling Profile (§5.1)
+                  Bowling Profile
                 </h3>
                 <div className="grid gap-4 sm:grid-cols-3">
                   <div>
@@ -1869,7 +1869,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
             {!isWicketKeeper ? (
               <div className="p-4 rounded-lg border border-purple-200 bg-purple-50/30 dark:border-purple-900/50 dark:bg-purple-950/20 space-y-4">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-purple-800 dark:text-purple-300">
-                  Fielding Preferences (§5.1)
+                  Fielding Preferences
                 </h3>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
@@ -1924,7 +1924,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
             {/* 4. EXPERIENCE & CAREER HIGHLIGHTS */}
             <div className="p-4 rounded-lg border bg-gray-50/50 dark:bg-gray-800/30 space-y-4">
               <h3 className="text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300">
-                Playing Experience &amp; Highlights (§5.1)
+                Playing Experience &amp; Highlights
               </h3>
               <div className="grid gap-4 sm:grid-cols-3">
                 <div>
@@ -2008,7 +2008,7 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
                   <span className="text-amber-600 font-bold text-base">⚠️</span>
                   <div>
                     <h4 className="text-xs font-bold text-amber-900 dark:text-amber-200">
-                      Fielder-Only Classification (§5.1)
+                      Fielder-Only Classification
                     </h4>
                     <p className="text-xs text-amber-800 dark:text-amber-300 mt-0.5">
                       You have selected &quot;No&quot; for batting, bowling, and wicket-keeping. Under tournament rules, you will be auctioned strictly as a <strong>Fielder only</strong>.

@@ -48,7 +48,7 @@ export function SettingsForm() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Bid ladder</CardTitle>
-          <CardDescription>Increment steps applied as the current bid rises (§11).</CardDescription>
+          <CardDescription>Increment steps applied as the current bid rises.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-5 sm:grid-cols-3">
           <div className="flex flex-col gap-2">
@@ -97,7 +97,7 @@ export function SettingsForm() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Tournament Dataset Export (§16, §49)</CardTitle>
+          <CardTitle className="text-base">Tournament Dataset Export</CardTitle>
           <CardDescription>
             Download the authoritative tournament spreadsheet containing players, franchises, squads, auction lots, and the complete audit event ledger.
           </CardDescription>

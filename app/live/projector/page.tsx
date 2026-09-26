@@ -113,7 +113,7 @@ export default async function ProjectorPage() {
                     ⚠️ SCARCITY WARNING: Only {scarcityReport.unsoldSupply} player(s) remaining for {scarcityReport.totalPlayersNeeded} needed slots across franchises in Bucket {scarcityReport.bucket}!
                   </p>
                   <p className="text-xs text-amber-200/80 mt-1">
-                    Free-market bidding remains open (§12.3). Franchises with satisfied quotas may continue bidding.
+                    Free-market bidding remains open. Franchises with satisfied quotas may continue bidding.
                   </p>
                 </div>
               )}

@@ -31,7 +31,7 @@ export function FranchiseStatusBar({
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <span className="text-xs font-black uppercase tracking-widest text-zinc-400">
-            11-Franchise Live Telemetry (§14)
+            11-Franchise Live Telemetry
           </span>
           {activeLotDrawNumber && (
             <span className="text-[11px] font-mono text-zinc-500">
@@ -143,7 +143,7 @@ export function FranchiseLeaderboardTable({ franchises }: FranchiseLeaderboardPr
       <div className="p-5 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-black uppercase tracking-wider text-zinc-100 flex items-center gap-2">
-            <span>🛡</span> Franchise Live Leaderboard & Quotas (§15)
+            <span>🛡</span> Franchise Live Leaderboard & Quotas
           </h3>
           <p className="text-xs text-zinc-400 mt-0.5">
             Authoritative real-time balance, maximum permissible bids, and mandatory bucket completion

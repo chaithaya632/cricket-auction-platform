@@ -105,7 +105,7 @@ export function OperatorControls({
   const [relaxBucket, setRelaxBucket] = useState<string>('B1');
   const [relaxMinimum, setRelaxMinimum] = useState<number>(1);
   const [relaxReason, setRelaxReason] = useState<string>(
-    'Uniform bucket relaxation under §13 endgame procedures'
+    'Uniform bucket relaxation under endgame procedures'
   );
 
   // Super Admin Auction Restart & Recovery state (§12.4)
@@ -337,11 +337,11 @@ export function OperatorControls({
     setErrorMsg(null);
     setSuccessMsg(null);
     startTransition(async () => {
-      const res = await skipLotAction(activeLot.id, 'Skipped by operator (§10)');
+      const res = await skipLotAction(activeLot.id, 'Skipped by operator');
       if (!res.success) {
         setErrorMsg(res.error || 'Failed to skip lot.');
       } else {
-        setSuccessMsg(`Player #${activeLot.draw_number} (${activeLot.player.full_name}) skipped. Can be recalled at the end of Bucket ${activeLot.bucket} (§10).`);
+        setSuccessMsg(`Player #${activeLot.draw_number} (${activeLot.player.full_name}) skipped. Can be recalled at the end of Bucket ${activeLot.bucket}.`);
         router.refresh();
       }
     });
@@ -390,7 +390,7 @@ export function OperatorControls({
       if (!res.success) {
         setErrorMsg(res.error || 'Proxy bid failed.');
       } else {
-        setSuccessMsg(`Proxy bid of ₹${proxyBidAmount} placed successfully (§16).`);
+        setSuccessMsg(`Proxy bid of ₹${proxyBidAmount} placed successfully.`);
         setShowProxyModal(false);
         router.refresh();
       }
@@ -405,7 +405,7 @@ export function OperatorControls({
       if (!res.success) {
         setErrorMsg(res.error || 'Failed to start Round 2.');
       } else {
-        setSuccessMsg(`Round 2 activated! Reopened ${res.data?.reopenedCount} unsold player(s) at base price 20 credits (§13).`);
+        setSuccessMsg(`Round 2 activated! Reopened ${res.data?.reopenedCount} unsold player(s) at base price 20 credits.`);
         setShowRoundTwoModal(false);
         router.refresh();
       }
@@ -421,7 +421,7 @@ export function OperatorControls({
       if (!res.success) {
         setErrorMsg(res.error || 'Auto-allotment failed.');
       } else {
-        setSuccessMsg(`Player ALLOTTED to ${res.data?.franchiseName} at 20 credits under §13 endgame rules.`);
+        setSuccessMsg(`Player ALLOTTED to ${res.data?.franchiseName} at 20 credits under endgame rules.`);
         router.refresh();
       }
     });
@@ -435,7 +435,7 @@ export function OperatorControls({
       if (!res.success) {
         setErrorMsg(res.error || 'Failed to relax bucket quota.');
       } else {
-        setSuccessMsg(`Bucket ${res.data?.bucket} quota relaxed to ${res.data?.newMinimum} uniformly across all franchises (§13, §40).`);
+        setSuccessMsg(`Bucket ${res.data?.bucket} quota relaxed to ${res.data?.newMinimum} uniformly across all franchises.`);
         setShowRelaxBucketModal(false);
         router.refresh();
       }
@@ -461,11 +461,11 @@ export function OperatorControls({
             <span className="text-2xl">⚠️</span>
             <div>
               <span className="font-black uppercase tracking-wider text-amber-300 block text-sm">
-                SCARCITY WARNING: Bucket {scarcityReport.bucket} (§12.3)
+                SCARCITY WARNING: Bucket {scarcityReport.bucket}
               </span>
               <p className="text-[11px] text-amber-200/90 mt-0.5">
                 {scarcityReport.unsoldSupply} unsold player(s) remaining for {scarcityReport.totalPlayersNeeded} player need(s) across {scarcityReport.franchisesNeedingCount} franchise(s).
-                Threshold: <strong>{scarcityReport.threshold}</strong>. Bidding is not blocked (§12.3).
+                Threshold: <strong>{scarcityReport.threshold}</strong>. Bidding is not blocked.
               </p>
             </div>
           </div>
@@ -533,7 +533,7 @@ export function OperatorControls({
         <div className="rounded-2xl border-2 border-dashed border-amber-500/40 bg-zinc-900/90 p-8 text-center space-y-5 shadow-2xl">
           <div className="inline-flex items-center gap-2 rounded-full bg-amber-500/15 px-3.5 py-1 text-xs font-bold text-amber-400 border border-amber-500/30 uppercase tracking-widest">
             <span className="inline-block size-2 rounded-full bg-amber-400" />
-            AUCTION NOT STARTED
+            Session Status: NOT STARTED
           </div>
           <div className="max-w-md mx-auto space-y-2">
             <h2 className="text-xl font-black text-zinc-100 tracking-tight">
@@ -585,7 +585,7 @@ export function OperatorControls({
                   : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
               }`}
             >
-              {localSessionState.isLive ? 'AUCTION LIVE' : 'AUCTION PAUSED'}
+              {localSessionState.isLive ? 'AUCTION SESSION ACTIVE' : 'AUCTION SESSION PAUSED'}
             </span>
             {activeLot && (
               <span className="hidden sm:inline text-xs text-zinc-400 font-mono">
@@ -812,7 +812,7 @@ export function OperatorControls({
             <span className="text-xl">⏭</span>
             <span>SKIP LOT</span>
             <span className="text-[10px] font-normal opacity-80">
-              Recalled at bucket end (§10)
+              Recalled at bucket end
             </span>
           </button>
 
@@ -830,20 +830,20 @@ export function OperatorControls({
             <span className="text-xl">↩</span>
             <span>UNDO SALE</span>
             <span className="text-[10px] font-normal opacity-80">
-              Deterministic recovery (§12.4)
+              Deterministic recovery
             </span>
           </button>
         </div>
       </div>
 
-      {/* 2.5 SUPER ADMIN GOVERNANCE CONTROLS (§12.4, §13, §16, §40) */}
+      {/* 2.5 SUPER ADMIN GOVERNANCE CONTROLS */}
       {isSuperAdmin && (
         <div className="rounded-2xl border border-amber-500/40 bg-zinc-900/90 p-5 shadow-xl space-y-3">
           <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
             <div className="flex items-center gap-2">
               <ShieldAlert className="size-4 text-amber-400" />
               <h3 className="text-xs font-black uppercase tracking-wider text-amber-400">
-                Super Admin Governance Suite (§12.4, §13, §16, §40)
+                Super Admin Governance Suite
               </h3>
             </div>
             <span className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-400 border border-amber-500/30 uppercase">
@@ -861,7 +861,7 @@ export function OperatorControls({
             >
               <Users className="size-4 text-blue-400" />
               <span>Proxy Bid</span>
-              <span className="text-[10px] font-normal text-zinc-400">On behalf of team (§16)</span>
+              <span className="text-[10px] font-normal text-zinc-400">On behalf of team</span>
             </button>
 
             {/* Auto-Allot Active Lot */}
@@ -873,7 +873,7 @@ export function OperatorControls({
             >
               <Award className="size-4 text-emerald-400" />
               <span>Auto-Allot</span>
-              <span className="text-[10px] font-normal text-zinc-400">Endgame priority (§13)</span>
+              <span className="text-[10px] font-normal text-zinc-400">Endgame priority</span>
             </button>
 
             {/* Start Round 2 */}
@@ -885,7 +885,7 @@ export function OperatorControls({
             >
               <RotateCcw className="size-4 text-amber-400" />
               <span>Start Round 2</span>
-              <span className="text-[10px] font-normal text-zinc-400">Reopen unsold at ₹20 (§13)</span>
+              <span className="text-[10px] font-normal text-zinc-400">Reopen unsold at ₹20</span>
             </button>
 
             {/* Uniform Bucket Relaxation */}
@@ -897,7 +897,7 @@ export function OperatorControls({
             >
               <span className="text-sm">⚖</span>
               <span>Relax Bucket</span>
-              <span className="text-[10px] font-normal text-zinc-400">Lower quota (§7, §40)</span>
+              <span className="text-[10px] font-normal text-zinc-400">Lower quota</span>
             </button>
 
             {/* Super Admin Auction Restart & Recovery */}
@@ -909,7 +909,7 @@ export function OperatorControls({
             >
               <History className="size-4 text-red-400" />
               <span>Restart Auction</span>
-              <span className="text-[10px] font-normal text-zinc-400">Draw recovery (§12.4)</span>
+              <span className="text-[10px] font-normal text-zinc-400">Auction recovery</span>
             </button>
           </div>
         </div>
@@ -920,7 +920,7 @@ export function OperatorControls({
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="rounded-2xl border border-zinc-700 bg-zinc-900 p-6 max-w-md w-full shadow-2xl space-y-4">
             <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
-              <span className="text-amber-400">⚠</span> Confirm Undo Sale (§12.4)
+              <span className="text-amber-400">⚠</span> Confirm Undo Sale
             </h3>
 
             <p className="text-xs text-zinc-400 leading-relaxed">
@@ -1014,12 +1014,12 @@ export function OperatorControls({
         </div>
       )}
 
-      {/* Proxy Bid Modal (§16) */}
+      {/* Proxy Bid Modal */}
       {showProxyModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="rounded-2xl border border-zinc-700 bg-zinc-900 p-6 max-w-md w-full shadow-2xl space-y-4">
             <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
-              <span className="text-blue-400">🛡</span> Submit Proxy Bid (§16)
+              <span className="text-blue-400">🛡</span> Submit Proxy Bid
             </h3>
 
             <p className="text-xs text-zinc-400 leading-relaxed">
@@ -1080,12 +1080,12 @@ export function OperatorControls({
         </div>
       )}
 
-      {/* Start Round 2 Confirmation Modal (§13) */}
+      {/* Start Round 2 Confirmation Modal */}
       {showRoundTwoModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="rounded-2xl border border-amber-500/60 bg-zinc-900 p-6 max-w-md w-full shadow-2xl space-y-4">
             <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
-              <span className="text-amber-400">🔄</span> Start Round 2 (§13)
+              <span className="text-amber-400">🔄</span> Start Round 2
             </h3>
 
             <p className="text-xs text-zinc-400 leading-relaxed">
@@ -1113,12 +1113,12 @@ export function OperatorControls({
         </div>
       )}
 
-      {/* Uniform Bucket Relaxation Modal (§7, §13, §40) */}
+      {/* Uniform Bucket Relaxation Modal */}
       {showRelaxBucketModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="rounded-2xl border border-purple-500/60 bg-zinc-900 p-6 max-w-md w-full shadow-2xl space-y-4">
             <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
-              <span className="text-purple-400">⚖</span> Relax Bucket Minimum (§7, §13, §40)
+              <span className="text-purple-400">⚖</span> Relax Bucket Minimum
             </h3>
 
             <p className="text-xs text-zinc-400 leading-relaxed">
@@ -1191,13 +1191,13 @@ export function OperatorControls({
         </div>
       )}
 
-      {/* Super Admin Auction Restart & Recovery Modal (§12.4) */}
+      {/* Super Admin Auction Restart & Recovery Modal */}
       {showRecoveryModal && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="rounded-2xl border border-red-500/60 bg-zinc-900 p-6 max-w-lg w-full shadow-2xl space-y-4">
             <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
               <History className="size-5 text-red-400" />
-              <span>Auction Restart & Recovery (§12.4)</span>
+              <span>Auction Restart & Recovery</span>
             </h3>
 
             <div className="rounded-xl bg-red-950/40 border border-red-500/30 p-3 text-xs text-red-300 space-y-1">
@@ -1385,7 +1385,7 @@ export function OperatorControls({
             {activeQueueTab === 'upcoming'
               ? 'Organized by Round & Bucket'
               : activeQueueTab === 'unsold'
-              ? 'Round 2 Reopening Candidate (§13)'
+              ? 'Round 2 Reopening Candidate'
               : 'Completed Floor Sales'}
           </span>
         </div>
@@ -1399,7 +1399,7 @@ export function OperatorControls({
               {unsoldLots.length > 0 && (
                 <div className="space-y-2 pt-1">
                   <p className="text-[11px] text-zinc-500">
-                    {unsoldLots.length} player{unsoldLots.length === 1 ? '' : 's'} went unsold in Round 1 and will reopen in Round 2 (§13).
+                    {unsoldLots.length} player{unsoldLots.length === 1 ? '' : 's'} went unsold in Round 1 and will reopen in Round 2.
                   </p>
                   <button
                     type="button"

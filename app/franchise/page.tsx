@@ -109,7 +109,7 @@ export default async function FranchiseDashboard() {
               🎯 Max Permissible Bid
             </h3>
             <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-              Authoritative (Spec §20)
+              Authoritative Calculation
             </span>
           </div>
           <p className="mt-2 text-3xl font-extrabold text-gray-900 dark:text-gray-100">

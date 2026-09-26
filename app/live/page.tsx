@@ -154,7 +154,7 @@ export default async function LiveAuctionPage() {
                 ⚠️ SCARCITY WARNING: Only {scarcityReport.unsoldSupply} player(s) remaining for {scarcityReport.totalPlayersNeeded} needed slots across franchises in Bucket {scarcityReport.bucket}!
               </p>
               <p className="text-[11px] text-amber-200/70 mt-0.5">
-                Bidding is not blocked (§12.3). Teams with quotas met may still place bids.
+                Bidding is not blocked. Teams with quotas met may still place bids.
               </p>
             </div>
           )}

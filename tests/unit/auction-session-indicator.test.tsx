@@ -3,9 +3,10 @@ import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { AuctionSessionIndicator } from '@/components/acc/status-badges';
 import type { AuctionSessionStatus } from '@/lib/auction/types';
+import { resolveAuctionSessionStatus } from '@/lib/auction/queries';
 
 // =============================================================================
-// § AuctionSessionIndicator — State-Driven Badge Tests
+// AuctionSessionIndicator — State-Driven Badge Tests
 // =============================================================================
 
 describe('AuctionSessionIndicator — renders correct label for each session status', () => {
@@ -58,29 +59,18 @@ describe('AuctionSessionIndicator — visual styling per status', () => {
 });
 
 // =============================================================================
-// § Season status → AuctionSessionStatus mapping (mirrors getAuctionSessionState logic)
+// Season status → AuctionSessionStatus mapping
 // =============================================================================
 
 describe('Season status → AuctionSessionStatus mapping', () => {
-  /**
-   * This mirrors the exact logic in lib/auction/queries.ts getAuctionSessionState
-   * to verify the status derivation matches the required behavior.
-   */
   function computeSessionStatus(
     seasonStatus: string,
     sessionStatusConfig?: string
   ): AuctionSessionStatus {
-    if (seasonStatus === 'completed' || seasonStatus === 'archived' || sessionStatusConfig === 'completed') {
-      return 'completed';
-    } else if (seasonStatus === 'auction') {
-      if (sessionStatusConfig === 'paused') {
-        return 'paused';
-      } else {
-        return 'live';
-      }
-    } else {
-      return 'not_started';
-    }
+    return resolveAuctionSessionStatus({
+      seasonStatus,
+      sessionConfigStatus: sessionStatusConfig,
+    });
   }
 
   // User-required mapping:
@@ -130,9 +120,7 @@ describe('Season status → AuctionSessionStatus mapping', () => {
   });
 });
 
-// =============================================================================
-// § Shared usage — all consumer pages use the same indicator component
-// =============================================================================
+// Shared usage — all consumer pages use the same indicator component
 
 describe('AuctionSessionIndicator — shared across all pages', () => {
   it('renders consistently regardless of which page uses it', () => {

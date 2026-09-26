@@ -277,7 +277,7 @@ export function PlayerReviewDialog({
             <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-xs space-y-2">
               <div className="flex items-center gap-2 font-bold text-amber-600 dark:text-amber-400">
                 <AlertTriangle className="size-4 shrink-0" />
-                <span>Student-Flagged Academic Year Discrepancy (§4.1 Detained Student Queue):</span>
+                <span>Student-Flagged Academic Year Discrepancy (Detained Student Queue):</span>
               </div>
               <p className="font-mono text-xs bg-background/80 p-2.5 rounded-lg border border-amber-500/20 text-foreground">
                 &ldquo;{player.discrepancyNote}&rdquo;
@@ -576,7 +576,7 @@ export function PlayerReviewDialog({
             {showOverride && (
               <div className="p-3 rounded-lg border bg-muted/20 space-y-3 mt-2 text-xs">
                 <span className="font-bold text-xs block">
-                  Override Academic Year (§4.1 Detained Student Policy)
+                  Override Academic Year (Detained Student Policy)
                 </span>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
