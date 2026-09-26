@@ -128,7 +128,7 @@ export default async function AdminAuctionPage() {
         {/* Left Column: Active Floor & Controls */}
         <div className="lg:col-span-8 space-y-6">
           {/* Active Lot Display */}
-          <ActiveLotCard lot={activeLot} />
+          <ActiveLotCard lot={activeLot} isAdmin={true} />
 
           {/* Countdown Timer */}
           {activeLot && (

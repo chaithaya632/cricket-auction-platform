@@ -22,6 +22,8 @@ import {
   adminStartRoundTwoAction,
   adminAutoAllotLotAction,
   adminRelaxBucketMinimumAction,
+  bringDownUnsoldLotAction,
+  reAuctionUnsoldLotAction,
 } from '@/lib/auction/actions';
 import type {
   AuctionLotWithDetails,
@@ -95,6 +97,12 @@ export function OperatorControls({
     'Uniform bucket relaxation under §13 endgame procedures'
   );
 
+  const [localSessionState, setLocalSessionState] = useState<AuctionSessionState>(sessionState);
+
+  useEffect(() => {
+    setLocalSessionState(sessionState);
+  }, [sessionState]);
+
   useEffect(() => {
     if (lastSoldLotId) {
       setSelectedUndoLotId(lastSoldLotId);
@@ -132,6 +140,7 @@ export function OperatorControls({
   };
 
   const handlePauseAuction = () => {
+    if (isPending) return;
     setErrorMsg(null);
     setSuccessMsg(null);
     startTransition(async () => {
@@ -139,6 +148,12 @@ export function OperatorControls({
       if (!res.success) {
         setErrorMsg(res.error || 'Failed to pause auction.');
       } else {
+        setLocalSessionState((prev) => ({
+          ...prev,
+          status: 'paused',
+          isLive: false,
+          isPaused: true,
+        }));
         setSuccessMsg('Auction session PAUSED.');
         router.refresh();
       }
@@ -146,6 +161,7 @@ export function OperatorControls({
   };
 
   const handleResumeAuction = () => {
+    if (isPending) return;
     setErrorMsg(null);
     setSuccessMsg(null);
     startTransition(async () => {
@@ -153,7 +169,43 @@ export function OperatorControls({
       if (!res.success) {
         setErrorMsg(res.error || 'Failed to resume auction.');
       } else {
+        setLocalSessionState((prev) => ({
+          ...prev,
+          status: 'live',
+          isLive: true,
+          isPaused: false,
+        }));
         setSuccessMsg('Auction session RESUMED and LIVE.');
+        router.refresh();
+      }
+    });
+  };
+
+  const handleBringDownUnsoldLot = (lotId: string) => {
+    if (isPending) return;
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    startTransition(async () => {
+      const res = await bringDownUnsoldLotAction(lotId);
+      if (!res.success) {
+        setErrorMsg(res.error || 'Failed to return player to lot queue.');
+      } else {
+        setSuccessMsg('Player moved back to Lot Queue.');
+        router.refresh();
+      }
+    });
+  };
+
+  const handleReAuctionUnsoldLot = (lotId: string) => {
+    if (isPending) return;
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    startTransition(async () => {
+      const res = await reAuctionUnsoldLotAction(lotId);
+      if (!res.success) {
+        setErrorMsg(res.error || 'Failed to re-auction player.');
+      } else {
+        setSuccessMsg(`Player queued for re-auction at base price ₹${res.data?.basePrice}.`);
         router.refresh();
       }
     });
@@ -452,7 +504,7 @@ export function OperatorControls({
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-5 shadow-xl flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-              {sessionState.isLive ? (
+              {localSessionState.isLive ? (
                 <span className="flex size-3 relative">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex rounded-full size-3 bg-emerald-500" />
@@ -466,12 +518,12 @@ export function OperatorControls({
             </div>
             <span
               className={`px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider ${
-                sessionState.isLive
+                localSessionState.isLive
                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                   : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
               }`}
             >
-              {sessionState.isLive ? 'AUCTION LIVE' : 'AUCTION PAUSED'}
+              {localSessionState.isLive ? 'AUCTION LIVE' : 'AUCTION PAUSED'}
             </span>
             {activeLot && (
               <span className="hidden sm:inline text-xs text-zinc-400 font-mono">
@@ -481,7 +533,7 @@ export function OperatorControls({
           </div>
 
           <div className="flex items-center gap-2">
-            {sessionState.isLive ? (
+            {localSessionState.isLive ? (
               <button
                 type="button"
                 onClick={handlePauseAuction}
@@ -598,17 +650,54 @@ export function OperatorControls({
       )}
 
       {/* 2. ACTIVE LOT EXECUTION PANEL */}
-      <div className={`rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl space-y-4 ${sessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
+      <div className={`rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl space-y-4 ${localSessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-400">
             Auctioneer Floor Controls
           </h3>
-          {sessionState.isPaused && (
+          {localSessionState.isPaused && (
             <span className="text-xs text-amber-400 font-semibold">
               ⏸ Controls paused — click Resume above to proceed
             </span>
           )}
         </div>
+
+        {activeLot?.status === 'unsold' && (
+          <div className="rounded-xl border border-red-500/40 bg-zinc-950 p-5 shadow-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black uppercase tracking-widest text-red-400 flex items-center gap-1.5">
+                <span className="size-2 rounded-full bg-red-400" />
+                Unsold Player On Floor
+              </span>
+              <span className="text-xs font-mono font-bold text-zinc-400">
+                Base Price: ₹{activeLot.base_price}
+              </span>
+            </div>
+            <p className="text-xs text-zinc-400">
+              Player #{activeLot.draw_number} ({activeLot.player.full_name}) received no bids. Choose an action to proceed:
+            </p>
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => handleBringDownUnsoldLot(activeLot.id)}
+                disabled={isPending}
+                className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm shadow-md transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                <span>⬇️</span>
+                <span>BRING DOWN TO LOT QUEUE</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleReAuctionUnsoldLot(activeLot.id)}
+                disabled={isPending}
+                className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm shadow-md transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                <span>🔄</span>
+                <span>RE-AUCTION</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {/* HAMMER / SELL */}
@@ -1176,10 +1265,27 @@ export function OperatorControls({
                     </div>
                   </div>
 
-                  <div className="text-right shrink-0">
-                    <span className="text-[11px] text-zinc-400 font-mono block">
-                      Round 2 Reopening Candidate (§13)
-                    </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleBringDownUnsoldLot(lot.id)}
+                      disabled={isPending}
+                      className="px-2.5 py-1.5 rounded-lg bg-amber-600/80 hover:bg-amber-600 disabled:opacity-50 text-white font-bold text-xs shadow transition-all cursor-pointer disabled:cursor-not-allowed flex items-center gap-1"
+                      title="Return player to lot queue at original base price"
+                    >
+                      <span>⬇️</span>
+                      <span>Queue</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleReAuctionUnsoldLot(lot.id)}
+                      disabled={isPending}
+                      className="px-2.5 py-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 disabled:opacity-50 text-white font-bold text-xs shadow transition-all cursor-pointer disabled:cursor-not-allowed flex items-center gap-1"
+                      title="Re-auction player at original base price"
+                    >
+                      <span>🔄</span>
+                      <span>Re-Auction</span>
+                    </button>
                   </div>
                 </div>
               ))}

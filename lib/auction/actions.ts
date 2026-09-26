@@ -792,6 +792,18 @@ export async function pauseAuctionAction(): Promise<
     const adminClient = createAdminClient();
     const now = new Date().toISOString();
 
+    // 0. Idempotency: if already paused, return success immediately
+    const { data: currentConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', activeSeason.id)
+      .eq('key', 'auction_session_status')
+      .maybeSingle();
+
+    if (currentConfig?.value === 'paused') {
+      return { success: true, data: { status: 'paused' } };
+    }
+
     // 1. Set auction_session_status to 'paused'
     await adminClient
       .from('season_config')
@@ -854,6 +866,18 @@ export async function resumeAuctionAction(): Promise<
 
     const adminClient = createAdminClient();
     const now = new Date().toISOString();
+
+    // 0. Idempotency: if already live, return success immediately
+    const { data: currentConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', activeSeason.id)
+      .eq('key', 'auction_session_status')
+      .maybeSingle();
+
+    if (currentConfig?.value === 'live') {
+      return { success: true, data: { status: 'live' } };
+    }
 
     // 1. Set auction_session_status to 'live'
     await adminClient
@@ -2218,17 +2242,30 @@ export async function reAuctionUnsoldLotAction(
       return { success: false, error: 'Unsold lot not found in auction records.' };
     }
 
+    const reg = Array.isArray(lot.player_season_registrations)
+      ? lot.player_season_registrations[0]
+      : lot.player_season_registrations;
+    const player = Array.isArray(reg?.players) ? reg.players[0] : reg?.players;
+    const originalBasePrice = reg?.base_price ?? lot.base_price;
+
+    // 1b. Idempotency: if lot is already pending, return success immediately
+    if (lot.status === 'pending') {
+      return {
+        success: true,
+        data: {
+          lotId: lot.id,
+          drawNumber: lot.draw_number,
+          basePrice: originalBasePrice,
+        },
+      };
+    }
+
     if (lot.status !== 'unsold') {
       return {
         success: false,
         error: `Cannot re-auction lot. Status is '${lot.status}', expected 'unsold'.`,
       };
     }
-
-    const reg = Array.isArray(lot.player_season_registrations)
-      ? lot.player_season_registrations[0]
-      : lot.player_season_registrations;
-    const player = Array.isArray(reg?.players) ? reg.players[0] : reg?.players;
 
     if (player?.is_active === false) {
       return {
@@ -2238,7 +2275,6 @@ export async function reAuctionUnsoldLotAction(
     }
 
     // 2. Authoritative original base price from player registration (NOT ₹20)
-    const originalBasePrice = reg?.base_price ?? lot.base_price;
     const now = new Date().toISOString();
 
     // 3. Update existing lot to 'pending'
@@ -2281,6 +2317,7 @@ export async function reAuctionUnsoldLotAction(
     revalidatePath('/admin/auction');
     revalidatePath('/admin');
     revalidatePath('/live');
+    revalidatePath('/live/projector');
 
     return {
       success: true,
@@ -2292,6 +2329,129 @@ export async function reAuctionUnsoldLotAction(
     };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to re-auction unsold player.' };
+  }
+}
+
+/**
+ * Brings an unsold player down from the active auction board to the Lot Queue.
+ *
+ * Operational invariants:
+ * 1. Admin/Super Admin authorization check (server-enforced).
+ * 2. Idempotent: If lot is already 'pending', returns success immediately.
+ * 3. Validates lot exists and status === 'unsold'.
+ * 4. Preserves player's authoritative original base price from player registration (NOT ₹20 Round 2 reset).
+ * 5. Updates auction_lots: status = 'pending', base_price = originalBasePrice, current_price = originalBasePrice, started_at = null, ended_at = null, highest_bidder_franchise_id = null.
+ * 6. Preserves existing UNSOLD event in auction_events (zero deletion, zero history rewriting).
+ * 7. Does NOT auto-start auction, does NOT auto-call player, does NOT create sale, does NOT alter purse/squad.
+ * 8. Revalidates paths: /admin/auction, /admin/queue, /live, /live/projector.
+ */
+export async function bringDownUnsoldLotAction(
+  lotOrRegistrationId: string
+): Promise<AuctionActionResult<{ lotId: string; drawNumber: number; basePrice: number; playerName: string }>> {
+  try {
+    const adminContext = await requireAdmin();
+    const adminClient = createAdminClient();
+
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lotOrRegistrationId);
+    if (!isUuid) {
+      return { success: false, error: 'Invalid lot or registration ID.' };
+    }
+
+    // 1. Fetch targeted lot (supports either lot ID or registration ID)
+    const { data: lots, error: fetchErr } = await adminClient
+      .from('auction_lots')
+      .select(`
+        id,
+        season_id,
+        registration_id,
+        draw_number,
+        status,
+        round,
+        base_price,
+        player_season_registrations!inner (
+          id,
+          base_price,
+          bucket,
+          is_auction_eligible,
+          players!inner (
+            id,
+            full_name,
+            is_active
+          )
+        )
+      `)
+      .or(`id.eq.${lotOrRegistrationId},registration_id.eq.${lotOrRegistrationId}`)
+      .limit(1);
+
+    const lot: any = lots?.[0];
+    if (fetchErr || !lot) {
+      return { success: false, error: 'Target lot not found in auction records.' };
+    }
+
+    const reg = Array.isArray(lot.player_season_registrations)
+      ? lot.player_season_registrations[0]
+      : lot.player_season_registrations;
+    const player = Array.isArray(reg?.players) ? reg.players[0] : reg?.players;
+    const playerName = player?.full_name || 'Player';
+    const originalBasePrice = reg?.base_price ?? lot.base_price;
+
+    // Idempotency: If already returned to pending queue, return success immediately
+    if (lot.status === 'pending') {
+      return {
+        success: true,
+        data: {
+          lotId: lot.id,
+          drawNumber: lot.draw_number,
+          basePrice: originalBasePrice,
+          playerName,
+        },
+      };
+    }
+
+    if (lot.status !== 'unsold') {
+      return {
+        success: false,
+        error: `Cannot bring down lot. Status is '${lot.status}', expected 'unsold'.`,
+      };
+    }
+
+    const now = new Date().toISOString();
+
+    // Update existing lot to 'pending' with original base price
+    const { error: updateErr } = await adminClient
+      .from('auction_lots')
+      .update({
+        status: 'pending',
+        base_price: originalBasePrice,
+        current_price: originalBasePrice,
+        highest_bidder_franchise_id: null,
+        started_at: null,
+        ended_at: null,
+        updated_at: now,
+      })
+      .eq('id', lot.id);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message || 'Failed to update lot status.' };
+    }
+
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin/queue');
+    revalidatePath('/admin/players');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+
+    return {
+      success: true,
+      data: {
+        lotId: lot.id,
+        drawNumber: lot.draw_number,
+        basePrice: originalBasePrice,
+        playerName,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to bring down unsold lot.' };
   }
 }
 

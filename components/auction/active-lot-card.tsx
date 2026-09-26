@@ -4,15 +4,68 @@
 // ACC Auction Portal — Components: Active Lot Card
 // =============================================================================
 
-import React from 'react';
+import React, { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import type { AuctionLotWithDetails } from '@/lib/auction/types';
+import { bringDownUnsoldLotAction, reAuctionUnsoldLotAction } from '@/lib/auction/actions';
 
 interface ActiveLotCardProps {
   lot: AuctionLotWithDetails | null;
   size?: 'normal' | 'projector';
+  isAdmin?: boolean;
+  onBringDown?: () => void;
+  onReAuction?: () => void;
+  isActionPending?: boolean;
 }
 
-export function ActiveLotCard({ lot, size = 'normal' }: ActiveLotCardProps) {
+export function ActiveLotCard({
+  lot,
+  size = 'normal',
+  isAdmin = false,
+  onBringDown,
+  onReAuction,
+  isActionPending = false,
+}: ActiveLotCardProps) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const handleBringDown = () => {
+    if (!lot || isPending || isActionPending) return;
+    if (onBringDown) {
+      onBringDown();
+      return;
+    }
+    setFeedbackMsg(null);
+    startTransition(async () => {
+      const res = await bringDownUnsoldLotAction(lot.id);
+      if (!res.success) {
+        setFeedbackMsg({ type: 'error', text: res.error || 'Failed to return player to lot queue.' });
+      } else {
+        setFeedbackMsg({ type: 'success', text: 'Player moved back to Lot Queue.' });
+        router.refresh();
+      }
+    });
+  };
+
+  const handleReAuction = () => {
+    if (!lot || isPending || isActionPending) return;
+    if (onReAuction) {
+      onReAuction();
+      return;
+    }
+    setFeedbackMsg(null);
+    startTransition(async () => {
+      const res = await reAuctionUnsoldLotAction(lot.id);
+      if (!res.success) {
+        setFeedbackMsg({ type: 'error', text: res.error || 'Failed to re-auction player.' });
+      } else {
+        setFeedbackMsg({ type: 'success', text: `Player queued for re-auction at base price ₹${res.data?.basePrice}.` });
+        router.refresh();
+      }
+    });
+  };
+
   if (!lot) {
     return (
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-12 text-center text-zinc-400">
@@ -212,8 +265,43 @@ export function ActiveLotCard({ lot, size = 'normal' }: ActiveLotCardProps) {
                 ₹{lot.base_price}
               </div>
               <p className="text-xs text-zinc-400 mt-3">
-                Passed without bids at opening base price. Available for re-auction or Round 2.
+                Passed without bids at opening base price. Available for re-auction or returning to lot queue.
               </p>
+
+              {isAdmin && (
+                <div className="mt-5 pt-4 border-t border-red-500/20 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleBringDown}
+                    disabled={isPending || isActionPending}
+                    className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm shadow-md transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    <span>⬇️</span>
+                    <span>BRING DOWN TO LOT QUEUE</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleReAuction}
+                    disabled={isPending || isActionPending}
+                    className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm shadow-md transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    <span>🔄</span>
+                    <span>RE-AUCTION</span>
+                  </button>
+                </div>
+              )}
+
+              {feedbackMsg && (
+                <div
+                  className={`mt-3 text-xs font-semibold p-2.5 rounded-lg border ${
+                    feedbackMsg.type === 'success'
+                      ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-400'
+                      : 'bg-red-950/60 border-red-500/40 text-red-400'
+                  }`}
+                >
+                  {feedbackMsg.text}
+                </div>
+              )}
             </div>
           ) : (
             <>

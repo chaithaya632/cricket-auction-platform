@@ -13,8 +13,8 @@ export default async function AdminQueuePage() {
   const seasonId = adminContext.activeSeason?.id || "00000000-0000-0000-0000-000000000001"
   const adminClient = createAdminClient()
 
-  // Ensure any newly eligible registered players are automatically placed in the queue
-  await autoQueueEligiblePlayers(adminClient, seasonId, adminContext.user.id)
+  // Ensure any newly eligible registered players are automatically placed in the queue without generating redundant audit events on page read
+  await autoQueueEligiblePlayers(adminClient, seasonId)
 
   const [sessionUser, activeLot, upcomingLots, unsoldLots, completedLots, candidates] = await Promise.all([
     getSessionUser("admin"),
