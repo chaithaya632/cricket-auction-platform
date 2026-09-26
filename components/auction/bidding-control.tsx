@@ -27,6 +27,7 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [optimisticBid, setOptimisticBid] = useState<{ lotId: string; price: number } | null>(null);
 
   if (!lot || lot.status !== 'in_progress') {
     return (
@@ -36,8 +37,16 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
     );
   }
 
-  const nextBid = calculateNextBid(lot.current_price, lot.base_price);
-  const isHighestBidder = lot.highest_bidder_franchise_id === franchise.id;
+  // Active optimistic state applies if for this lot and not yet reflected in current_price
+  const hasOptimisticBid =
+    optimisticBid !== null &&
+    optimisticBid.lotId === lot.id &&
+    (lot.current_price === null || lot.current_price < optimisticBid.price);
+
+  const displayPrice = hasOptimisticBid ? optimisticBid.price : lot.current_price;
+  const isHighestBidder = hasOptimisticBid || lot.highest_bidder_franchise_id === franchise.id;
+
+  const nextBid = calculateNextBid(displayPrice, lot.base_price);
   const isSquadFull = franchise.squadCount >= franchise.maxSquadSize;
   const exceedsMaxBid = nextBid > franchise.maxPermissibleBid;
 
@@ -45,10 +54,16 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
 
   const handlePlaceBid = () => {
     setErrorMsg(null);
+    const bidTarget = nextBid;
+    setOptimisticBid({ lotId: lot.id, price: bidTarget });
+
     startTransition(async () => {
       const res = await placeBidAction(lot.id, lot.current_price);
       if (!res.success) {
+        setOptimisticBid(null);
         setErrorMsg(res.error || 'Failed to place bid.');
+      } else {
+        router.refresh();
       }
     });
   };
@@ -110,7 +125,7 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
       {/* Status Warning Pills */}
       {isHighestBidder && (
         <div className="rounded-lg bg-emerald-950/60 border border-emerald-800/60 p-3 text-xs text-emerald-300 text-center font-medium">
-          ✓ Your franchise currently holds the highest bid at ₹{lot.current_price}
+          ✓ Your franchise currently holds the highest bid at ₹{displayPrice}
         </div>
       )}
 
@@ -144,7 +159,7 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
             <span>Submitting ₹{nextBid}...</span>
           </span>
         ) : isHighestBidder ? (
-          <span>Leading Bidder (₹{lot.current_price})</span>
+          <span>Leading Bidder (₹{displayPrice})</span>
         ) : exceedsMaxBid ? (
           <span>Bid Exceeds Permissible Limit</span>
         ) : (

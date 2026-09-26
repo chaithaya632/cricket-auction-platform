@@ -105,6 +105,8 @@ export interface AuctionSessionState {
   isCompleted: boolean;
   startedAt: string | null;
   activeLotId: string | null;
+  pausedRemainingSeconds?: number | null;
+  pausedAt?: string | null;
 }
 
 export interface FranchiseLiveSummaryItem {

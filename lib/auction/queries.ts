@@ -558,7 +558,13 @@ export const getAuctionSessionState = cache(async (
       .from('season_config')
       .select('key, value')
       .eq('season_id', seasonId)
-      .in('key', ['auction_session_status', 'auction_started_at', 'auction_ended_at']),
+      .in('key', [
+        'auction_session_status',
+        'auction_started_at',
+        'auction_ended_at',
+        'auction_lot_paused_remaining_seconds',
+        'auction_paused_at',
+      ]),
     supabase
       .from('auction_lots')
       .select('id')
@@ -592,6 +598,15 @@ export const getAuctionSessionState = cache(async (
     endedAt,
   });
 
+  const pausedRemainingSecondsRaw = configMap['auction_lot_paused_remaining_seconds'];
+  const pausedRemainingSeconds =
+    pausedRemainingSecondsRaw !== undefined &&
+    pausedRemainingSecondsRaw !== null &&
+    !isNaN(Number(pausedRemainingSecondsRaw))
+      ? Number(pausedRemainingSecondsRaw)
+      : null;
+  const pausedAt = configMap['auction_paused_at'] || null;
+
   return {
     status: computedStatus,
     seasonId,
@@ -602,6 +617,8 @@ export const getAuctionSessionState = cache(async (
     isCompleted: computedStatus === 'completed',
     startedAt,
     activeLotId: activeLot?.id || null,
+    pausedRemainingSeconds,
+    pausedAt,
   };
 });
 

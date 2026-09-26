@@ -3,7 +3,7 @@
 // =============================================================================
 
 import React from 'react';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import {
   getActiveLot,
   getRecentAuctionEvents,
@@ -20,20 +20,20 @@ import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync'
 import { FranchiseStatusBar } from '@/components/auction/franchise-status-bar';
 
 export default async function ProjectorPage() {
-  const supabase = await createClient();
-  const activeSeason = await getActiveSeason(supabase);
+  const adminClient = createAdminClient();
+  const activeSeason = await getActiveSeason(adminClient);
   const seasonId = activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 
   const [activeLot, recentEvents, config, sessionState] = await Promise.all([
-    getActiveLot(supabase, seasonId),
-    getRecentAuctionEvents(supabase, seasonId, 8),
-    getSeasonAuctionConfig(supabase, seasonId),
-    getAuctionSessionState(supabase, seasonId),
+    getActiveLot(adminClient, seasonId),
+    getRecentAuctionEvents(adminClient, seasonId, 8),
+    getSeasonAuctionConfig(adminClient, seasonId),
+    getAuctionSessionState(adminClient, seasonId),
   ]);
 
   const [scarcityReport, franchiseSummaries] = await Promise.all([
-    activeLot?.bucket ? getActiveLotScarcity(supabase, seasonId, activeLot.bucket) : null,
-    getAllFranchisesLiveSummary(supabase, seasonId, activeLot),
+    activeLot?.bucket ? getActiveLotScarcity(adminClient, seasonId, activeLot.bucket) : null,
+    getAllFranchisesLiveSummary(adminClient, seasonId, activeLot),
   ]);
 
   const timerDuration = activeLot?.highest_bidder_franchise_id
@@ -126,6 +126,8 @@ export default async function ProjectorPage() {
                     startedAt={activeLot.started_at}
                     durationSeconds={timerDuration}
                     isActive={activeLot.status === 'in_progress' && sessionState.isLive}
+                    isPaused={sessionState.isPaused}
+                    pausedRemainingSeconds={sessionState.pausedRemainingSeconds}
                     size="lg"
                   />
                 </div>

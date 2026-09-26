@@ -5,8 +5,9 @@
 import React from 'react';
 import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth/session';
-import { getUserPermissionContext } from '@/lib/permissions/context';
+import { getUserPermissionContext, getActiveSeason } from '@/lib/permissions/context';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import {
   getActiveLot,
   getRecentAuctionEvents,
@@ -28,25 +29,28 @@ import { AuctionSessionIndicator } from '@/components/acc/status-badges';
 export default async function LiveAuctionPage() {
   const { appUser } = await getCurrentUser();
   const supabase = await createClient();
+  const adminClient = createAdminClient();
 
   const userContext = appUser
     ? await getUserPermissionContext(supabase, appUser)
     : null;
 
+  const activeSeason = userContext?.activeSeason || (await getActiveSeason(adminClient));
   const seasonId =
-    userContext?.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
+    activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 
-  // 1. Fetch auction room data & session state
+  // 1. Fetch auction room data & session state using adminClient to ensure public unauthenticated
+  // visitors can read live projection data without being blocked by authenticated-only RLS
   const [activeLot, recentEvents, config, sessionState] = await Promise.all([
-    getActiveLot(supabase, seasonId),
-    getRecentAuctionEvents(supabase, seasonId, 20),
-    getSeasonAuctionConfig(supabase, seasonId),
-    getAuctionSessionState(supabase, seasonId),
+    getActiveLot(adminClient, seasonId),
+    getRecentAuctionEvents(adminClient, seasonId, 20),
+    getSeasonAuctionConfig(adminClient, seasonId),
+    getAuctionSessionState(adminClient, seasonId),
   ]);
 
   const [scarcityReport, franchiseSummaries] = await Promise.all([
-    activeLot?.bucket ? getActiveLotScarcity(supabase, seasonId, activeLot.bucket) : null,
-    getAllFranchisesLiveSummary(supabase, seasonId, activeLot),
+    activeLot?.bucket ? getActiveLotScarcity(adminClient, seasonId, activeLot.bucket) : null,
+    getAllFranchisesLiveSummary(adminClient, seasonId, activeLot),
   ]);
 
   // 2. If user is an authorized franchise rep, load squad and max-bid state
@@ -116,7 +120,7 @@ export default async function LiveAuctionPage() {
             <h1 className="text-2xl font-black text-zinc-100 tracking-tight flex items-center gap-2">
               <span>ACC Live Auction</span>
               <span className="text-xs px-2.5 py-0.5 rounded-md bg-zinc-800 text-zinc-300 font-mono font-medium">
-                {userContext?.activeSeason?.name || 'ACC 2026'}
+                {userContext?.activeSeason?.name || activeSeason?.name || 'ACC 2026'}
               </span>
             </h1>
             <p className="text-xs text-zinc-400">
@@ -167,7 +171,9 @@ export default async function LiveAuctionPage() {
               <AuctionTimer
                 startedAt={activeLot.started_at}
                 durationSeconds={timerDuration}
-                isActive={activeLot.status === 'in_progress'}
+                isActive={activeLot.status === 'in_progress' && sessionState.isLive}
+                isPaused={sessionState.isPaused}
+                pausedRemainingSeconds={sessionState.pausedRemainingSeconds}
                 size="md"
               />
             </div>

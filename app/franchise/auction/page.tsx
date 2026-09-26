@@ -88,7 +88,9 @@ export default async function FranchiseAuctionPage() {
                 <AuctionTimer
                   startedAt={activeLot.started_at}
                   durationSeconds={timerDuration}
-                  isActive={activeLot.status === 'in_progress'}
+                  isActive={activeLot.status === 'in_progress' && sessionState.isLive}
+                  isPaused={sessionState.isPaused}
+                  pausedRemainingSeconds={sessionState.pausedRemainingSeconds}
                   size="md"
                 />
               </div>

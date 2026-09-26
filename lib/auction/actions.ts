@@ -128,10 +128,18 @@ export async function selectLotAction(
       return { success: false, error: mutation.error };
     }
 
+    await adminClient
+      .from('season_config')
+      .delete()
+      .eq('season_id', lot.season_id)
+      .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
+
     revalidatePath('/admin/auction');
     revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
 
     return { success: true, data: { lotId: lot.id } };
   } catch (err: any) {
@@ -263,6 +271,12 @@ export async function placeBidAction(
       return { success: false, error: mutation.error };
     }
 
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+    revalidatePath('/admin/auction');
+
     return { success: true, data: { newPrice: nextBid } };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to place bid.' };
@@ -348,9 +362,17 @@ export async function confirmSaleAction(
       return { success: false, error: mutation.error };
     }
 
+    await adminClient
+      .from('season_config')
+      .delete()
+      .eq('season_id', lot.season_id)
+      .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
+
     revalidatePath('/admin/auction');
     revalidatePath('/live');
     revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
     revalidatePath('/franchise');
     revalidatePath('/franchise/squad');
 
@@ -423,10 +445,18 @@ export async function markUnsoldAction(
       return { success: false, error: mutation.error };
     }
 
+    await adminClient
+      .from('season_config')
+      .delete()
+      .eq('season_id', lot.season_id)
+      .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
+
     revalidatePath('/admin/auction');
     revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
 
     return { success: true };
   } catch (err: any) {
@@ -787,7 +817,7 @@ export async function startAuctionAgainAction(): Promise<
  * Guarded by requireAdmin().
  */
 export async function pauseAuctionAction(): Promise<
-  AuctionActionResult<{ status: 'paused' }>
+  AuctionActionResult<{ status: 'paused'; remainingSeconds?: number }>
 > {
   try {
     const adminContext = await requireAdmin();
@@ -812,28 +842,75 @@ export async function pauseAuctionAction(): Promise<
       return { success: true, data: { status: 'paused' } };
     }
 
-    // 1. Set auction_session_status to 'paused'
-    await adminClient
-      .from('season_config')
-      .upsert(
-        {
-          season_id: activeSeason.id,
-          key: 'auction_session_status',
-          value: 'paused',
-          value_type: 'text',
-          updated_at: now,
-        },
-        { onConflict: 'season_id,key' }
-      );
+    // 1. Fetch active lot and timer configs to calculate remaining seconds
+    const [activeLotRes, timerConfigsRes] = await Promise.all([
+      adminClient
+        .from('auction_lots')
+        .select('id, started_at, highest_bidder_franchise_id')
+        .eq('season_id', activeSeason.id)
+        .eq('status', 'in_progress')
+        .maybeSingle(),
+      adminClient
+        .from('season_config')
+        .select('key, value')
+        .eq('season_id', activeSeason.id)
+        .in('key', ['first_bid_timer_seconds', 'subsequent_bid_timer_seconds']),
+    ]);
 
-    // 2. If a lot is currently in progress, record PAUSE event in auction_events
-    const { data: activeLot } = await adminClient
-      .from('auction_lots')
-      .select('id')
-      .eq('season_id', activeSeason.id)
-      .eq('status', 'in_progress')
-      .maybeSingle();
+    const activeLot = activeLotRes.data;
+    const timerConfigs = timerConfigsRes.data;
 
+    let firstBidSeconds = 30;
+    let subsequentBidSeconds = 15;
+    if (timerConfigs) {
+      for (const tc of timerConfigs) {
+        if (tc.key === 'first_bid_timer_seconds') firstBidSeconds = parseInt(tc.value, 10) || 30;
+        if (tc.key === 'subsequent_bid_timer_seconds') subsequentBidSeconds = parseInt(tc.value, 10) || 15;
+      }
+    }
+
+    const timerDuration = activeLot?.highest_bidder_franchise_id
+      ? subsequentBidSeconds
+      : firstBidSeconds;
+
+    let remainingSeconds: number = timerDuration;
+    if (activeLot?.started_at) {
+      const elapsedMs = Date.now() - new Date(activeLot.started_at).getTime();
+      const elapsedSec = Math.max(0, Math.floor(elapsedMs / 1000));
+      remainingSeconds = Math.max(0, timerDuration - elapsedSec);
+    }
+
+    // 2. Set auction_session_status, auction_paused_at, and auction_lot_paused_remaining_seconds
+    const configUpserts = [
+      {
+        season_id: activeSeason.id,
+        key: 'auction_session_status',
+        value: 'paused',
+        value_type: 'text',
+        updated_at: now,
+      },
+      {
+        season_id: activeSeason.id,
+        key: 'auction_paused_at',
+        value: now,
+        value_type: 'text',
+        updated_at: now,
+      },
+    ];
+
+    if (activeLot) {
+      configUpserts.push({
+        season_id: activeSeason.id,
+        key: 'auction_lot_paused_remaining_seconds',
+        value: String(remainingSeconds),
+        value_type: 'number',
+        updated_at: now,
+      });
+    }
+
+    await adminClient.from('season_config').upsert(configUpserts, { onConflict: 'season_id,key' });
+
+    // 3. If a lot is currently in progress, record PAUSE event in auction_events
     if (activeLot) {
       await adminClient.from('auction_events').insert({
         season_id: activeSeason.id,
@@ -841,7 +918,10 @@ export async function pauseAuctionAction(): Promise<
         event_type: 'PAUSE',
         actor_user_id: adminContext.user.id,
         reason: 'Auction paused by operator',
-        payload: { paused_at: now },
+        payload: {
+          paused_at: now,
+          remaining_seconds: remainingSeconds,
+        },
         created_at: now,
       });
     }
@@ -849,8 +929,10 @@ export async function pauseAuctionAction(): Promise<
     revalidatePath('/admin/auction');
     revalidatePath('/live');
     revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
 
-    return { success: true, data: { status: 'paused' } };
+    return { success: true, data: { status: 'paused', remainingSeconds } };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to pause auction session.' };
   }
@@ -887,7 +969,57 @@ export async function resumeAuctionAction(): Promise<
       return { success: true, data: { status: 'live' } };
     }
 
-    // 1. Set auction_session_status to 'live'
+    // 1. Fetch active lot and paused config to restore timer
+    const [activeLotRes, configRowsRes] = await Promise.all([
+      adminClient
+        .from('auction_lots')
+        .select('id, highest_bidder_franchise_id')
+        .eq('season_id', activeSeason.id)
+        .eq('status', 'in_progress')
+        .maybeSingle(),
+      adminClient
+        .from('season_config')
+        .select('key, value')
+        .eq('season_id', activeSeason.id)
+        .in('key', [
+          'auction_lot_paused_remaining_seconds',
+          'first_bid_timer_seconds',
+          'subsequent_bid_timer_seconds',
+        ]),
+    ]);
+
+    const activeLot = activeLotRes.data;
+    const configRows = configRowsRes.data;
+
+    let firstBidSeconds = 30;
+    let subsequentBidSeconds = 15;
+    let pausedRemainingSec: number | null = null;
+
+    if (configRows) {
+      for (const cr of configRows) {
+        if (cr.key === 'first_bid_timer_seconds') firstBidSeconds = parseInt(cr.value, 10) || 30;
+        if (cr.key === 'subsequent_bid_timer_seconds') subsequentBidSeconds = parseInt(cr.value, 10) || 15;
+        if (cr.key === 'auction_lot_paused_remaining_seconds' && cr.value) {
+          const parsed = parseInt(cr.value, 10);
+          if (!isNaN(parsed)) pausedRemainingSec = parsed;
+        }
+      }
+    }
+
+    const timerDuration = activeLot?.highest_bidder_franchise_id
+      ? subsequentBidSeconds
+      : firstBidSeconds;
+
+    const remainingToRestore = pausedRemainingSec !== null
+      ? Math.min(timerDuration, Math.max(1, pausedRemainingSec))
+      : timerDuration;
+
+    // Synthetic started_at so that: Date.now() + remainingToRestore === newStartedAt + timerDuration
+    // => newStartedAt = Date.now() - (timerDuration - remainingToRestore) * 1000
+    const elapsedSeconds = timerDuration - remainingToRestore;
+    const restoredStartedAt = new Date(Date.now() - elapsedSeconds * 1000).toISOString();
+
+    // 2. Set auction_session_status to 'live' and delete pause keys
     await adminClient
       .from('season_config')
       .upsert(
@@ -901,14 +1033,13 @@ export async function resumeAuctionAction(): Promise<
         { onConflict: 'season_id,key' }
       );
 
-    // 2. If a lot is currently in progress, record RESUME event and refresh clock
-    const { data: activeLot } = await adminClient
-      .from('auction_lots')
-      .select('id')
+    await adminClient
+      .from('season_config')
+      .delete()
       .eq('season_id', activeSeason.id)
-      .eq('status', 'in_progress')
-      .maybeSingle();
+      .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
 
+    // 3. If a lot is currently in progress, record RESUME event and update lot started_at
     if (activeLot) {
       await adminClient.from('auction_events').insert({
         season_id: activeSeason.id,
@@ -916,19 +1047,24 @@ export async function resumeAuctionAction(): Promise<
         event_type: 'RESUME',
         actor_user_id: adminContext.user.id,
         reason: 'Auction resumed by operator',
-        payload: { resumed_at: now },
+        payload: {
+          resumed_at: now,
+          remaining_seconds: remainingToRestore,
+        },
         created_at: now,
       });
 
       await adminClient
         .from('auction_lots')
-        .update({ started_at: now, updated_at: now })
+        .update({ started_at: restoredStartedAt, updated_at: now })
         .eq('id', activeLot.id);
     }
 
     revalidatePath('/admin/auction');
     revalidatePath('/live');
     revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
 
     return { success: true, data: { status: 'live' } };
   } catch (err: any) {

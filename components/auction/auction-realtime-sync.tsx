@@ -15,7 +15,7 @@ interface AuctionRealtimeSyncProps {
 
 export function AuctionRealtimeSync({
   seasonId,
-  fallbackIntervalMs = 4000,
+  fallbackIntervalMs = 1500,
 }: AuctionRealtimeSyncProps) {
   const router = useRouter();
   const lastRefreshTime = useRef<number>(Date.now());
@@ -24,20 +24,43 @@ export function AuctionRealtimeSync({
     if (!seasonId) return;
 
     const supabase = createClient();
+    let debounceTimer: NodeJS.Timeout | null = null;
+    const DEBOUNCE_MS = 250;
 
     const triggerRefresh = () => {
       const now = Date.now();
-      // Debounce refreshes within 500ms to avoid churn
-      if (now - lastRefreshTime.current > 500) {
+      const elapsed = now - lastRefreshTime.current;
+
+      if (elapsed > DEBOUNCE_MS) {
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = null;
+        }
         lastRefreshTime.current = now;
         router.refresh();
+      } else {
+        // Trailing debounce: ensures rapid events arriving within debounce window are never lost
+        if (!debounceTimer) {
+          debounceTimer = setTimeout(() => {
+            debounceTimer = null;
+            lastRefreshTime.current = Date.now();
+            router.refresh();
+          }, DEBOUNCE_MS - elapsed);
+        }
       }
     };
 
-    // 1. Setup Supabase Realtime Channels
-    const channelName = `acc-auction-${seasonId}-${Math.random().toString(36).substring(2, 7)}`;
+    // 1. Setup Supabase Realtime Channel (shared deterministic channel across all clients for this season)
+    const channelName = `acc-auction-${seasonId}`;
     const channel = supabase
       .channel(channelName)
+      .on(
+        'broadcast',
+        { event: 'auction_update' },
+        () => {
+          triggerRefresh();
+        }
+      )
       .on(
         'postgres_changes',
         {
@@ -82,6 +105,9 @@ export function AuctionRealtimeSync({
     }, fallbackIntervalMs);
 
     return () => {
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
       clearInterval(interval);
       supabase.removeChannel(channel);
     };
