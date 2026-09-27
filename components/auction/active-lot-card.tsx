@@ -4,10 +4,10 @@
 // ACC Auction Portal — Components: Active Lot Card
 // =============================================================================
 
-import React, { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState } from 'react';
 import type { AuctionLotWithDetails } from '@/lib/auction/types';
 import { bringDownUnsoldLotAction, reAuctionUnsoldLotAction } from '@/lib/auction/actions';
+import { runWithLocalActionTracking } from '@/components/auction/auction-realtime-sync';
 
 interface ActiveLotCardProps {
   lot: AuctionLotWithDetails | null;
@@ -26,44 +26,51 @@ export function ActiveLotCard({
   onReAuction,
   isActionPending = false,
 }: ActiveLotCardProps) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const handleBringDown = () => {
+  const handleBringDown = async () => {
     if (!lot || isPending || isActionPending) return;
     if (onBringDown) {
       onBringDown();
       return;
     }
     setFeedbackMsg(null);
-    startTransition(async () => {
-      const res = await bringDownUnsoldLotAction(lot.id);
+    setIsPending(true);
+    try {
+      const res = await runWithLocalActionTracking(() => bringDownUnsoldLotAction(lot.id));
       if (!res.success) {
         setFeedbackMsg({ type: 'error', text: res.error || 'Failed to return player to lot queue.' });
       } else {
         setFeedbackMsg({ type: 'success', text: 'Player moved back to Lot Queue.' });
-        router.refresh();
       }
-    });
+    } catch (err: any) {
+      setFeedbackMsg({ type: 'error', text: err?.message || 'Failed to return player to lot queue.' });
+    } finally {
+      setIsPending(false);
+    }
   };
 
-  const handleReAuction = () => {
+  const handleReAuction = async () => {
     if (!lot || isPending || isActionPending) return;
     if (onReAuction) {
       onReAuction();
       return;
     }
     setFeedbackMsg(null);
-    startTransition(async () => {
-      const res = await reAuctionUnsoldLotAction(lot.id);
+    setIsPending(true);
+    try {
+      const res = await runWithLocalActionTracking(() => reAuctionUnsoldLotAction(lot.id));
       if (!res.success) {
         setFeedbackMsg({ type: 'error', text: res.error || 'Failed to re-auction player.' });
       } else {
         setFeedbackMsg({ type: 'success', text: `Player queued for re-auction at base price ₹${res.data?.basePrice}.` });
-        router.refresh();
       }
-    });
+    } catch (err: any) {
+      setFeedbackMsg({ type: 'error', text: err?.message || 'Failed to re-auction player.' });
+    } finally {
+      setIsPending(false);
+    }
   };
 
   if (!lot) {

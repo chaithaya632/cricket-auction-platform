@@ -5,7 +5,6 @@
 // =============================================================================
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
 import { DashboardShell } from "@/components/acc/dashboard-shell"
 import { PageHeader } from "@/components/acc/page-header"
 import { Card, CardContent } from "@/components/ui/card"
@@ -16,6 +15,7 @@ import { CategoryBadge } from "@/components/acc/category-badge"
 import { formatCredits } from "@/lib/acc/config"
 import { GripVertical, Play, UserPlus, Layers, Loader2, Shuffle, Mic, RotateCcw } from "lucide-react"
 import { selectLotAction, drawNextAutoLotAction, callGuestDrawNumberAction, recallSkippedLotAction, reAuctionUnsoldLotAction } from "@/lib/auction/actions"
+import { runWithLocalActionTracking } from "@/components/auction/auction-realtime-sync"
 import { toast } from "sonner"
 import type { SessionUser } from "@/lib/acc/session"
 import type { AuctionLotWithDetails } from "@/lib/auction/types"
@@ -50,7 +50,6 @@ export function LotQueueManager({
   completedLots = [],
   candidates = [],
 }: LotQueueManagerProps) {
-  const router = useRouter()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'upcoming' | 'unsold' | 'completed' | 'all'>('upcoming')
   const [recallingId, setRecallingId] = useState<string | null>(null)
@@ -69,14 +68,13 @@ export function LotQueueManager({
 
     setReAuctioningId(lot.id)
     try {
-      const res = await reAuctionUnsoldLotAction(lot.id)
+      const res = await runWithLocalActionTracking(() => reAuctionUnsoldLotAction(lot.id))
       if (!res.success) {
         toast.error(res.error || "Failed to re-auction player.")
       } else {
         toast.success(
           `${lot.player.full_name} re-entered the lot queue at base price ${formatCredits(res.data?.basePrice || lot.base_price)}!`
         )
-        router.refresh()
       }
     } catch (err: any) {
       toast.error(err?.message || "Failed to re-auction player.")
@@ -88,12 +86,11 @@ export function LotQueueManager({
   async function handleAutoDraw() {
     setIsAutoDrawing(true)
     try {
-      const res = await drawNextAutoLotAction()
+      const res = await runWithLocalActionTracking(() => drawNextAutoLotAction())
       if (!res.success) {
         toast.error(res.error || "Auto draw failed.")
       } else {
         toast.success(`Lot #${res.data?.drawNumber} (${res.data?.playerName}) drawn from Bucket ${res.data?.bucket}!`)
-        router.refresh()
       }
     } catch (err: any) {
       toast.error(err?.message || "Auto draw failed.")
@@ -112,13 +109,12 @@ export function LotQueueManager({
 
     setIsGuestDrawing(true)
     try {
-      const res = await callGuestDrawNumberAction(num, guestBucket)
+      const res = await runWithLocalActionTracking(() => callGuestDrawNumberAction(num, guestBucket))
       if (!res.success) {
         toast.error(res.error || "Guest draw failed.")
       } else {
         toast.success(`Guest called #${num} (${res.data?.playerName})! Brought to floor.`)
         setGuestDrawNumber("")
-        router.refresh()
       }
     } catch (err: any) {
       toast.error(err?.message || "Guest draw failed.")
@@ -130,12 +126,11 @@ export function LotQueueManager({
   async function sendToBlock(lotId: string) {
     setSelectingId(lotId)
     try {
-      const res = await selectLotAction(lotId)
+      const res = await runWithLocalActionTracking(() => selectLotAction(lotId))
       if (!res.success) {
         toast.error(res.error || "Failed to bring lot to block.")
       } else {
         toast.success("Player moved to auction block")
-        router.refresh()
       }
     } catch (err: any) {
       toast.error(err?.message || "Failed to bring lot to block.")
@@ -147,12 +142,11 @@ export function LotQueueManager({
   async function handleRecall(lotId: string) {
     setRecallingId(lotId)
     try {
-      const res = await recallSkippedLotAction(lotId)
+      const res = await runWithLocalActionTracking(() => recallSkippedLotAction(lotId))
       if (!res.success) {
         toast.error(res.error || "Failed to recall lot.")
       } else {
         toast.success("Skipped player recalled back to auction queue.")
-        router.refresh()
       }
     } catch (err: any) {
       toast.error(err?.message || "Failed to recall lot.")

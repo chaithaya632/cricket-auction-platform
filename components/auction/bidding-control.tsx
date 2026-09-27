@@ -4,9 +4,10 @@
 // ACC Auction Portal — Components: Franchise Bidding Control Panel
 // =============================================================================
 
-import React, { useState, useTransition } from 'react';
+import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { placeBidAction } from '@/lib/auction/actions';
+import { runWithLocalActionTracking } from '@/components/auction/auction-realtime-sync';
 import { calculateNextBid } from '@/domain/auction/bid-increment';
 import type { AuctionLotWithDetails } from '@/lib/auction/types';
 
@@ -25,7 +26,7 @@ interface BiddingControlProps {
 
 export function BiddingControl({ lot, franchise }: BiddingControlProps) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [optimisticBid, setOptimisticBid] = useState<{ lotId: string; price: number } | null>(null);
 
@@ -52,20 +53,29 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
 
   const canBid = !isHighestBidder && !isSquadFull && !exceedsMaxBid && !isPending;
 
-  const handlePlaceBid = () => {
+  const handlePlaceBid = async () => {
+    if (isPending) return;
     setErrorMsg(null);
     const bidTarget = nextBid;
     setOptimisticBid({ lotId: lot.id, price: bidTarget });
+    setIsPending(true);
 
-    startTransition(async () => {
-      const res = await placeBidAction(lot.id, lot.current_price);
+    try {
+      const res = await runWithLocalActionTracking(() =>
+        placeBidAction(lot.id, lot.current_price)
+      );
       if (!res.success) {
         setOptimisticBid(null);
         setErrorMsg(res.error || 'Failed to place bid.');
-      } else {
-        router.refresh();
       }
-    });
+      // On success, placeBidAction already called revalidatePath() on the server
+      // and returned the authoritative RSC payload; no redundant router.refresh() needed.
+    } catch (err: any) {
+      setOptimisticBid(null);
+      setErrorMsg(err?.message || 'Failed to place bid.');
+    } finally {
+      setIsPending(false);
+    }
   };
 
   return (

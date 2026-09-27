@@ -5,7 +5,6 @@
 // =============================================================================
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
 import {
   Dialog,
   DialogContent,
@@ -18,8 +17,9 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { CategoryBadge } from "@/components/acc/category-badge"
 import { adminAddPlayerToQueueAction } from "@/lib/auction/actions"
+import { runWithLocalActionTracking } from "@/components/auction/auction-realtime-sync"
 import { toast } from "sonner"
-import { Search, UserPlus, Loader2, CheckCircle2, AlertCircle } from "lucide-react"
+import { Search, UserPlus, Loader2, AlertCircle } from "lucide-react"
 import type { EligiblePlayerQueueCandidate } from "@/lib/auction/queries"
 import type { Bucket } from "@/lib/constants"
 
@@ -34,7 +34,6 @@ export function AddToQueueDialog({
   onOpenChange,
   candidates,
 }: AddToQueueDialogProps) {
-  const router = useRouter()
   const [search, setSearch] = useState("")
   const [bucketFilter, setBucketFilter] = useState<string>("all")
   const [addingId, setAddingId] = useState<string | null>(null)
@@ -53,7 +52,9 @@ export function AddToQueueDialog({
     setAddingId(candidate.registrationId)
 
     try {
-      const res = await adminAddPlayerToQueueAction(candidate.registrationId)
+      const res = await runWithLocalActionTracking(() =>
+        adminAddPlayerToQueueAction(candidate.registrationId)
+      )
       if (!res.success) {
         setError(res.error || "Failed to add player to lot queue.")
         setAddingId(null)
@@ -63,7 +64,6 @@ export function AddToQueueDialog({
       toast.success(`${candidate.fullName} added to auction queue (Lot #${res.data?.drawNumber})`)
       setAddingId(null)
       onOpenChange(false)
-      router.refresh()
     } catch (err: any) {
       setError(err?.message || "An unexpected error occurred.")
       setAddingId(null)

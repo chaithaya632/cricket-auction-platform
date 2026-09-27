@@ -20,6 +20,21 @@ interface AuctionTimerProps {
   size?: 'sm' | 'md' | 'lg';
 }
 
+export function getDeterministicInitialRemaining({
+  durationSeconds,
+  isPaused = false,
+  pausedRemainingSeconds,
+}: {
+  durationSeconds: number;
+  isPaused?: boolean;
+  pausedRemainingSeconds?: number | null;
+}): number {
+  if (isPaused && pausedRemainingSeconds !== null && pausedRemainingSeconds !== undefined) {
+    return Math.max(0, pausedRemainingSeconds);
+  }
+  return Math.max(0, durationSeconds);
+}
+
 export function AuctionTimer({
   startedAt,
   durationSeconds,
@@ -29,21 +44,13 @@ export function AuctionTimer({
   onExpire,
   size = 'md',
 }: AuctionTimerProps) {
-  const [remaining, setRemaining] = useState<number>(() => {
-    if (isPaused) {
-      if (pausedRemainingSeconds !== null && pausedRemainingSeconds !== undefined) {
-        return Math.max(0, pausedRemainingSeconds);
-      }
-      if (startedAt) {
-        const deadline = new Date(startedAt).getTime() + durationSeconds * 1000;
-        return Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-      }
-      return durationSeconds;
-    }
-    if (!startedAt || !isActive) return durationSeconds;
-    const deadline = new Date(startedAt).getTime() + durationSeconds * 1000;
-    return Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-  });
+  const [remaining, setRemaining] = useState<number>(() =>
+    getDeterministicInitialRemaining({
+      durationSeconds,
+      isPaused,
+      pausedRemainingSeconds,
+    })
+  );
 
   useEffect(() => {
     if (isPaused) {
@@ -62,9 +69,22 @@ export function AuctionTimer({
       return;
     }
 
-    const interval = setInterval(() => {
+    const computeLiveRemaining = () => {
       const deadline = new Date(startedAt).getTime() + durationSeconds * 1000;
-      const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      return Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    };
+
+    const initialLeft = computeLiveRemaining();
+    setRemaining(initialLeft);
+    if (initialLeft <= 0) {
+      if (onExpire) {
+        onExpire();
+      }
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const left = computeLiveRemaining();
       setRemaining(left);
 
       if (left <= 0) {

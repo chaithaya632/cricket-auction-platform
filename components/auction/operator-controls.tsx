@@ -4,8 +4,7 @@
 // ACC Auction Portal — Components: Operator Control Console
 // =============================================================================
 
-import React, { useState, useTransition, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, useEffect } from 'react';
 import {
   startAuctionAction,
   startAuctionAgainAction,
@@ -26,6 +25,7 @@ import {
   reAuctionUnsoldLotAction,
   adminAuctionRestartRecoveryAction,
 } from '@/lib/auction/actions';
+import { runWithLocalActionTracking } from '@/components/auction/auction-realtime-sync';
 import type {
   AuctionLotWithDetails,
   AuctionSessionState,
@@ -82,8 +82,7 @@ export function OperatorControls({
   scarcityReport = null,
   recoveryLots = [],
 }: OperatorControlsProps) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
   const [activeQueueTab, setActiveQueueTab] = useState<'upcoming' | 'unsold' | 'sold'>('upcoming');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -114,6 +113,24 @@ export function OperatorControls({
   const [recoveryTargetLotId, setRecoveryTargetLotId] = useState<string>('');
   const [recoveryReason, setRecoveryReason] = useState<string>('');
 
+  const runOperatorAction = async <T extends { success: boolean }>(
+    actionFn: () => Promise<T>,
+    onComplete: (res: T) => void
+  ) => {
+    if (isPending) return;
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    setIsPending(true);
+    try {
+      const res = await runWithLocalActionTracking(actionFn);
+      onComplete(res);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Unexpected error executing operator action.');
+    } finally {
+      setIsPending(false);
+    }
+  };
+
   const handleOpenRecoveryModal = () => {
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -135,28 +152,26 @@ export function OperatorControls({
       return;
     }
 
-    setErrorMsg(null);
-    setSuccessMsg(null);
-
-    startTransition(async () => {
-      const res = await adminAuctionRestartRecoveryAction({
-        mode: recoveryMode,
-        targetLotId: recoveryMode === 'selective' ? recoveryTargetLotId : undefined,
-        reason: recoveryReason.trim(),
-      });
-
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to execute auction recovery.');
-      } else {
-        const modeLabel = recoveryMode === 'full' ? 'Full Restart' : 'Selective Restart';
-        setSuccessMsg(
-          `Auction recovery successful (${modeLabel}). ${res.data?.affectedLotsCount} lot(s) affected, ${res.data?.reversedSoldLotsCount} sale(s) reversed. Auction is paused; explicitly resume and CALL PLAYER when ready.`
-        );
-        setShowRecoveryModal(false);
-        setRecoveryReason('');
-        router.refresh();
+    void runOperatorAction(
+      () =>
+        adminAuctionRestartRecoveryAction({
+          mode: recoveryMode,
+          targetLotId: recoveryMode === 'selective' ? recoveryTargetLotId : undefined,
+          reason: recoveryReason.trim(),
+        }),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to execute auction recovery.');
+        } else {
+          const modeLabel = recoveryMode === 'full' ? 'Full Restart' : 'Selective Restart';
+          setSuccessMsg(
+            `Auction recovery successful (${modeLabel}). ${res.data?.affectedLotsCount} lot(s) affected, ${res.data?.reversedSoldLotsCount} sale(s) reversed. Auction is paused; explicitly resume and CALL PLAYER when ready.`
+          );
+          setShowRecoveryModal(false);
+          setRecoveryReason('');
+        }
       }
-    });
+    );
   };
 
   const [localSessionState, setLocalSessionState] = useState<AuctionSessionState>(sessionState);
@@ -174,194 +189,204 @@ export function OperatorControls({
   }, [lastSoldLotId, soldLots]);
 
   const handleStartAuction = () => {
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await startAuctionAction();
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to start auction.');
-      } else {
-        setSuccessMsg('Auction is now LIVE! Bidding floor is open.');
-        router.refresh();
+    void runOperatorAction(
+      () => startAuctionAction(),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to start auction.');
+        } else {
+          setLocalSessionState((prev) => ({
+            ...prev,
+            status: 'live',
+            isLive: true,
+            isPaused: false,
+            isNotStarted: false,
+            isCompleted: false,
+          }));
+          setSuccessMsg('Auction is now LIVE! Bidding floor is open.');
+        }
       }
-    });
+    );
   };
 
   const handleStartAuctionAgain = () => {
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await startAuctionAgainAction();
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to restart auction session.');
-      } else {
-        setSuccessMsg('Auction session RESTARTED and LIVE! Bidding floor is reopened.');
-        router.refresh();
+    void runOperatorAction(
+      () => startAuctionAgainAction(),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to restart auction session.');
+        } else {
+          setLocalSessionState((prev) => ({
+            ...prev,
+            status: 'live',
+            isLive: true,
+            isPaused: false,
+            isNotStarted: false,
+            isCompleted: false,
+          }));
+          setSuccessMsg('Auction session RESTARTED and LIVE! Bidding floor is reopened.');
+        }
       }
-    });
+    );
   };
 
   const handlePauseAuction = () => {
-    if (isPending) return;
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await pauseAuctionAction();
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to pause auction.');
-      } else {
-        setLocalSessionState((prev) => ({
-          ...prev,
-          status: 'paused',
-          isLive: false,
-          isPaused: true,
-        }));
-        setSuccessMsg('Auction session PAUSED.');
-        router.refresh();
+    void runOperatorAction(
+      () => pauseAuctionAction(),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to pause auction.');
+        } else {
+          setLocalSessionState((prev) => ({
+            ...prev,
+            status: 'paused',
+            isLive: false,
+            isPaused: true,
+          }));
+          setSuccessMsg('Auction session PAUSED.');
+        }
       }
-    });
+    );
   };
 
   const handleResumeAuction = () => {
-    if (isPending) return;
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await resumeAuctionAction();
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to resume auction.');
-      } else {
-        setLocalSessionState((prev) => ({
-          ...prev,
-          status: 'live',
-          isLive: true,
-          isPaused: false,
-        }));
-        setSuccessMsg('Auction session RESUMED and LIVE.');
-        router.refresh();
+    void runOperatorAction(
+      () => resumeAuctionAction(),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to resume auction.');
+        } else {
+          setLocalSessionState((prev) => ({
+            ...prev,
+            status: 'live',
+            isLive: true,
+            isPaused: false,
+          }));
+          setSuccessMsg('Auction session RESUMED and LIVE.');
+        }
       }
-    });
+    );
   };
 
   const handleBringDownUnsoldLot = (lotId: string) => {
-    if (isPending) return;
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await bringDownUnsoldLotAction(lotId);
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to return player to lot queue.');
-      } else {
-        setSuccessMsg('Player moved back to Lot Queue.');
-        router.refresh();
+    void runOperatorAction(
+      () => bringDownUnsoldLotAction(lotId),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to return player to lot queue.');
+        } else {
+          setSuccessMsg('Player moved back to Lot Queue.');
+        }
       }
-    });
+    );
   };
 
   const handleReAuctionUnsoldLot = (lotId: string) => {
-    if (isPending) return;
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await reAuctionUnsoldLotAction(lotId);
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to re-auction player.');
-      } else {
-        setSuccessMsg(`Player queued for re-auction at base price ₹${res.data?.basePrice}.`);
-        router.refresh();
+    void runOperatorAction(
+      () => reAuctionUnsoldLotAction(lotId),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to re-auction player.');
+        } else {
+          setSuccessMsg(`Player queued for re-auction at base price ₹${res.data?.basePrice}.`);
+        }
       }
-    });
+    );
   };
 
   const handleEndAuction = () => {
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await endAuctionAction({ resolveActiveLotMode: endLotMode });
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to end auction.');
-      } else {
-        setSuccessMsg('Auction session has officially ENDED and status is COMPLETED.');
-        setShowEndModal(false);
-        router.refresh();
+    void runOperatorAction(
+      () => endAuctionAction({ resolveActiveLotMode: endLotMode }),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to end auction.');
+        } else {
+          setLocalSessionState((prev) => ({
+            ...prev,
+            status: 'completed',
+            isLive: false,
+            isPaused: false,
+            isNotStarted: false,
+            isCompleted: true,
+          }));
+          setSuccessMsg('Auction session has officially ENDED and status is COMPLETED.');
+          setShowEndModal(false);
+        }
       }
-    });
+    );
   };
 
   const handleSelectLot = (lotId: string) => {
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await selectLotAction(lotId);
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to select lot.');
-      } else {
-        setSuccessMsg('Player brought to floor successfully.');
-        router.refresh();
+    void runOperatorAction(
+      () => selectLotAction(lotId),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to select lot.');
+        } else {
+          setSuccessMsg('Player brought to floor successfully.');
+        }
       }
-    });
+    );
   };
 
   const handleConfirmSale = () => {
     if (!activeLot) return;
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await confirmSaleAction(activeLot.id);
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to confirm sale.');
-      } else {
-        setSuccessMsg(`Player SOLD for ₹${res.data?.price}!`);
-        router.refresh();
+    void runOperatorAction(
+      () => confirmSaleAction(activeLot.id),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to confirm sale.');
+        } else {
+          setSuccessMsg(`Player SOLD for ₹${res.data?.price}!`);
+        }
       }
-    });
+    );
   };
 
   const handleMarkUnsold = () => {
     if (!activeLot) return;
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await markUnsoldAction(activeLot.id);
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to mark unsold.');
-      } else {
-        setSuccessMsg('Player passed and marked UNSOLD.');
-        router.refresh();
+    void runOperatorAction(
+      () => markUnsoldAction(activeLot.id),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to mark unsold.');
+        } else {
+          setSuccessMsg('Player passed and marked UNSOLD.');
+        }
       }
-    });
+    );
   };
 
   const handleSkipLot = () => {
     if (!activeLot) return;
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await skipLotAction(activeLot.id, 'Skipped by operator');
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to skip lot.');
-      } else {
-        setSuccessMsg(`Player #${activeLot.draw_number} (${activeLot.player.full_name}) skipped. Can be recalled at the end of Bucket ${activeLot.bucket}.`);
-        router.refresh();
+    void runOperatorAction(
+      () => skipLotAction(activeLot.id, 'Skipped by operator'),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to skip lot.');
+        } else {
+          setSuccessMsg(
+            `Player #${activeLot.draw_number} (${activeLot.player.full_name}) skipped. Can be recalled at the end of Bucket ${activeLot.bucket}.`
+          );
+        }
       }
-    });
+    );
   };
 
   const handleUndoSale = () => {
     const targetLotId = selectedUndoLotId || lastSoldLotId;
     if (!targetLotId) return;
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await undoSaleAction(targetLotId, undoMode);
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to undo sale.');
-      } else {
-        setSuccessMsg(`Sale successfully undone (Mode: ${undoMode}).`);
-        setShowUndoModal(false);
-        router.refresh();
+    void runOperatorAction(
+      () => undoSaleAction(targetLotId, undoMode),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to undo sale.');
+        } else {
+          setSuccessMsg(`Sale successfully undone (Mode: ${undoMode}).`);
+          setShowUndoModal(false);
+        }
       }
-    });
+    );
   };
 
   const handleOpenProxyModal = () => {
@@ -379,70 +404,68 @@ export function OperatorControls({
 
   const handleProxyBid = () => {
     if (!activeLot || !proxyFranchiseId || !proxyBidAmount) return;
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await adminProxyBidAction(
-        activeLot.id,
-        proxyFranchiseId,
-        proxyBidAmount
-      );
-      if (!res.success) {
-        setErrorMsg(res.error || 'Proxy bid failed.');
-      } else {
-        setSuccessMsg(`Proxy bid of ₹${proxyBidAmount} placed successfully.`);
-        setShowProxyModal(false);
-        router.refresh();
+    void runOperatorAction(
+      () => adminProxyBidAction(activeLot.id, proxyFranchiseId, proxyBidAmount),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Proxy bid failed.');
+        } else {
+          setSuccessMsg(`Proxy bid of ₹${proxyBidAmount} placed successfully.`);
+          setShowProxyModal(false);
+        }
       }
-    });
+    );
   };
 
   const handleStartRoundTwo = () => {
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await adminStartRoundTwoAction();
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to start Round 2.');
-      } else {
-        setSuccessMsg(`Round 2 activated! Reopened ${res.data?.reopenedCount} unsold player(s) at base price 20 credits.`);
-        setShowRoundTwoModal(false);
-        router.refresh();
+    void runOperatorAction(
+      () => adminStartRoundTwoAction(),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to start Round 2.');
+        } else {
+          setSuccessMsg(
+            `Round 2 activated! Reopened ${res.data?.reopenedCount} unsold player(s) at base price 20 credits.`
+          );
+          setShowRoundTwoModal(false);
+        }
       }
-    });
+    );
   };
 
   const handleAutoAllot = () => {
     if (!activeLot) return;
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await adminAutoAllotLotAction(activeLot.id);
-      if (!res.success) {
-        setErrorMsg(res.error || 'Auto-allotment failed.');
-      } else {
-        setSuccessMsg(`Player ALLOTTED to ${res.data?.franchiseName} at 20 credits under endgame rules.`);
-        router.refresh();
+    void runOperatorAction(
+      () => adminAutoAllotLotAction(activeLot.id),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Auto-allotment failed.');
+        } else {
+          setSuccessMsg(
+            `Player ALLOTTED to ${res.data?.franchiseName} at 20 credits under endgame rules.`
+          );
+        }
       }
-    });
+    );
   };
 
   const handleRelaxBucket = () => {
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    startTransition(async () => {
-      const res = await adminRelaxBucketMinimumAction(relaxBucket, relaxMinimum, relaxReason);
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to relax bucket quota.');
-      } else {
-        setSuccessMsg(`Bucket ${res.data?.bucket} quota relaxed to ${res.data?.newMinimum} uniformly across all franchises.`);
-        setShowRelaxBucketModal(false);
-        router.refresh();
+    void runOperatorAction(
+      () => adminRelaxBucketMinimumAction(relaxBucket, relaxMinimum, relaxReason),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to relax bucket quota.');
+        } else {
+          setSuccessMsg(
+            `Bucket ${res.data?.bucket} quota relaxed to ${res.data?.newMinimum} uniformly across all franchises.`
+          );
+          setShowRelaxBucketModal(false);
+        }
       }
-    });
+    );
   };
 
-  const isFloorActive = sessionState.isLive;
+  const isFloorActive = localSessionState.isLive;
   const canHammer =
     isFloorActive &&
     activeLot &&
@@ -492,7 +515,7 @@ export function OperatorControls({
       )}
 
       {/* 1. SESSION LIFECYCLE CONTROLS */}
-      {sessionState.isCompleted ? (
+      {localSessionState.isCompleted ? (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-5 shadow-xl flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <span className="size-3 rounded-full bg-blue-500" />
@@ -529,7 +552,7 @@ export function OperatorControls({
             )}
           </button>
         </div>
-      ) : sessionState.isNotStarted ? (
+      ) : localSessionState.isNotStarted ? (
         <div className="rounded-2xl border-2 border-dashed border-amber-500/40 bg-zinc-900/90 p-8 text-center space-y-5 shadow-2xl">
           <div className="inline-flex items-center gap-2 rounded-full bg-amber-500/15 px-3.5 py-1 text-xs font-bold text-amber-400 border border-amber-500/30 uppercase tracking-widest">
             <span className="inline-block size-2 rounded-full bg-amber-400" />
@@ -1339,7 +1362,7 @@ export function OperatorControls({
       )}
 
       {/* 3. PLAYER QUEUE & LOT STATUS SELECTOR */}
-      <div className={`rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl space-y-4 ${sessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
+      <div className={`rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl space-y-4 ${localSessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
           <div className="flex items-center gap-2">
             <button

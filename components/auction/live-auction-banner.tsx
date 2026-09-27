@@ -24,6 +24,8 @@ export function LiveAuctionBanner({
 }: LiveAuctionBannerProps) {
   const [isLive, setIsLive] = useState(initialIsLive);
 
+  const instanceId = React.useId().replace(/[^a-zA-Z0-9_-]/g, '');
+
   useEffect(() => {
     setIsLive(initialIsLive);
   }, [initialIsLive]);
@@ -32,7 +34,7 @@ export function LiveAuctionBanner({
     if (!seasonId) return;
 
     const supabase = createClient();
-    const channelName = `live-banner-${seasonId}-${Math.random().toString(36).substring(2, 7)}`;
+    const channelName = `live-banner-${seasonId}-${instanceId}`;
 
     const channel = supabase
       .channel(channelName)

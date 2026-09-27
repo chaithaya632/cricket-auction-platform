@@ -11,6 +11,27 @@ interface RecentActivityStreamProps {
   events: AuctionEventDTO[];
 }
 
+const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
+
+/**
+ * Formats an ISO timestamp deterministically in India Standard Time (UTC+05:30)
+ * using pure UTC arithmetic so SSR (Node/UTC) and browser hydration (any locale/timezone)
+ * always produce identical markup without React hydration error #418.
+ */
+export function formatActivityTimestampIST(isoString: string): string {
+  const epochMs = Date.parse(isoString);
+  if (Number.isNaN(epochMs)) {
+    return '--:--:--';
+  }
+  const istDate = new Date(epochMs + IST_OFFSET_MS);
+  const hours24 = istDate.getUTCHours();
+  const minutes = String(istDate.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(istDate.getUTCSeconds()).padStart(2, '0');
+  const period = hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = String(hours24 % 12 || 12).padStart(2, '0');
+  return `${hours12}:${minutes}:${seconds} ${period}`;
+}
+
 export function RecentActivityStream({ events }: RecentActivityStreamProps) {
   if (!events || events.length === 0) {
     return (
@@ -33,11 +54,7 @@ export function RecentActivityStream({ events }: RecentActivityStreamProps) {
 
       <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
         {events.map((e) => {
-          const time = new Date(e.created_at).toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-          });
+          const time = formatActivityTimestampIST(e.created_at);
 
           return (
             <div
