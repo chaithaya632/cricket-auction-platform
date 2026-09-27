@@ -174,12 +174,6 @@ export function OperatorControls({
     );
   };
 
-  const [localSessionState, setLocalSessionState] = useState<AuctionSessionState>(sessionState);
-
-  useEffect(() => {
-    setLocalSessionState(sessionState);
-  }, [sessionState]);
-
   useEffect(() => {
     if (lastSoldLotId) {
       setSelectedUndoLotId(lastSoldLotId);
@@ -195,14 +189,6 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(res.error || 'Failed to start auction.');
         } else {
-          setLocalSessionState((prev) => ({
-            ...prev,
-            status: 'live',
-            isLive: true,
-            isPaused: false,
-            isNotStarted: false,
-            isCompleted: false,
-          }));
           setSuccessMsg('Auction is now LIVE! Bidding floor is open.');
         }
       }
@@ -216,14 +202,6 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(res.error || 'Failed to restart auction session.');
         } else {
-          setLocalSessionState((prev) => ({
-            ...prev,
-            status: 'live',
-            isLive: true,
-            isPaused: false,
-            isNotStarted: false,
-            isCompleted: false,
-          }));
           setSuccessMsg('Auction session RESTARTED and LIVE! Bidding floor is reopened.');
         }
       }
@@ -237,12 +215,6 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(res.error || 'Failed to pause auction.');
         } else {
-          setLocalSessionState((prev) => ({
-            ...prev,
-            status: 'paused',
-            isLive: false,
-            isPaused: true,
-          }));
           setSuccessMsg('Auction session PAUSED.');
         }
       }
@@ -256,12 +228,6 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(res.error || 'Failed to resume auction.');
         } else {
-          setLocalSessionState((prev) => ({
-            ...prev,
-            status: 'live',
-            isLive: true,
-            isPaused: false,
-          }));
           setSuccessMsg('Auction session RESUMED and LIVE.');
         }
       }
@@ -301,14 +267,6 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(res.error || 'Failed to end auction.');
         } else {
-          setLocalSessionState((prev) => ({
-            ...prev,
-            status: 'completed',
-            isLive: false,
-            isPaused: false,
-            isNotStarted: false,
-            isCompleted: true,
-          }));
           setSuccessMsg('Auction session has officially ENDED and status is COMPLETED.');
           setShowEndModal(false);
         }
@@ -465,7 +423,7 @@ export function OperatorControls({
     );
   };
 
-  const isFloorActive = localSessionState.isLive;
+  const isFloorActive = sessionState.isLive;
   const canHammer =
     isFloorActive &&
     activeLot &&
@@ -515,7 +473,7 @@ export function OperatorControls({
       )}
 
       {/* 1. SESSION LIFECYCLE CONTROLS */}
-      {localSessionState.isCompleted ? (
+      {sessionState.isCompleted ? (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-5 shadow-xl flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <span className="size-3 rounded-full bg-blue-500" />
@@ -552,7 +510,7 @@ export function OperatorControls({
             )}
           </button>
         </div>
-      ) : localSessionState.isNotStarted ? (
+      ) : sessionState.isNotStarted ? (
         <div className="rounded-2xl border-2 border-dashed border-amber-500/40 bg-zinc-900/90 p-8 text-center space-y-5 shadow-2xl">
           <div className="inline-flex items-center gap-2 rounded-full bg-amber-500/15 px-3.5 py-1 text-xs font-bold text-amber-400 border border-amber-500/30 uppercase tracking-widest">
             <span className="inline-block size-2 rounded-full bg-amber-400" />
@@ -589,7 +547,7 @@ export function OperatorControls({
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-5 shadow-xl flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-              {localSessionState.isLive ? (
+              {sessionState.isLive && !sessionState.isPaused ? (
                 <span className="flex size-3 relative">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex rounded-full size-3 bg-emerald-500" />
@@ -603,12 +561,12 @@ export function OperatorControls({
             </div>
             <span
               className={`px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider ${
-                localSessionState.isLive
-                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                  : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                sessionState.isPaused
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                  : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
               }`}
             >
-              {localSessionState.isLive ? 'AUCTION SESSION ACTIVE' : 'AUCTION SESSION PAUSED'}
+              {sessionState.isPaused ? 'AUCTION SESSION PAUSED' : 'AUCTION SESSION ACTIVE'}
             </span>
             {activeLot && (
               <span className="hidden sm:inline text-xs text-zinc-400 font-mono">
@@ -618,17 +576,7 @@ export function OperatorControls({
           </div>
 
           <div className="flex items-center gap-2">
-            {localSessionState.isLive ? (
-              <button
-                type="button"
-                onClick={handlePauseAuction}
-                disabled={isPending}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-400 font-bold text-xs border border-zinc-700 shadow transition-colors cursor-pointer"
-              >
-                <Pause className="size-3.5" />
-                <span>PAUSE AUCTION</span>
-              </button>
-            ) : (
+            {sessionState.isPaused ? (
               <button
                 type="button"
                 onClick={handleResumeAuction}
@@ -637,6 +585,16 @@ export function OperatorControls({
               >
                 <Play className="size-3.5" />
                 <span>RESUME AUCTION</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handlePauseAuction}
+                disabled={isPending}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-400 font-bold text-xs border border-zinc-700 shadow transition-colors cursor-pointer"
+              >
+                <Pause className="size-3.5" />
+                <span>PAUSE AUCTION</span>
               </button>
             )}
 
@@ -735,12 +693,12 @@ export function OperatorControls({
       )}
 
       {/* 2. ACTIVE LOT EXECUTION PANEL */}
-      <div className={`rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl space-y-4 ${localSessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
+      <div className={`rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl space-y-4 ${sessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-400">
             Auctioneer Floor Controls
           </h3>
-          {localSessionState.isPaused && (
+          {sessionState.isPaused && (
             <span className="text-xs text-amber-400 font-semibold">
               ⏸ Controls paused — click Resume above to proceed
             </span>
@@ -1362,7 +1320,7 @@ export function OperatorControls({
       )}
 
       {/* 3. PLAYER QUEUE & LOT STATUS SELECTOR */}
-      <div className={`rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl space-y-4 ${localSessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
+      <div className={`rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl space-y-4 ${sessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
           <div className="flex items-center gap-2">
             <button

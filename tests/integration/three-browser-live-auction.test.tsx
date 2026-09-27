@@ -19,6 +19,8 @@ import { describe, it, expect } from 'vitest';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { AuctionTimer } from '@/components/auction/auction-timer';
+import { OperatorControls } from '@/components/auction/operator-controls';
+import { AuctionSessionIndicator } from '@/components/acc/status-badges';
 import { resolveAuctionSessionStatus } from '@/lib/auction/queries';
 import type { AuctionSessionState } from '@/lib/auction/types';
 import { calculateNextBid } from '@/domain/auction/bid-increment';
@@ -318,5 +320,231 @@ describe('Three-Browser Live Auction Verification Simulation', () => {
     expect(adminView6.lot?.highest_bidder_franchise_id).toBe(franchiseCId);
     expect(franchiseView6.lot?.highest_bidder_franchise_id).toBe(franchiseCId);
     expect(publicView6.lot?.highest_bidder_franchise_id).toBe(franchiseCId);
+  });
+
+  it('Test E: executes 3 consecutive PAUSE -> wait -> RESUME cycles across Admin, Franchise, Public /live, and Public /live/projector with exact frozen timer and zero state desynchronization', () => {
+    const seasonId = 'season-3-cycle-pause-001';
+    const timerDuration = 30;
+    const ALLOWED_VALUE_TYPES = new Set(['integer', 'text', 'boolean', 'json']);
+
+    interface ConfigEntry {
+      key: string;
+      value: string;
+      value_type: string;
+    }
+
+    const configTable = new Map<string, ConfigEntry>([
+      ['auction_session_status', { key: 'auction_session_status', value: 'live', value_type: 'text' }],
+      ['auction_timer_seconds', { key: 'auction_timer_seconds', value: '30', value_type: 'integer' }],
+      ['auction_subsequent_bid_seconds', { key: 'auction_subsequent_bid_seconds', value: '20', value_type: 'integer' }],
+    ]);
+
+    let activeLotStartedAt = '2026-09-27T16:00:00.000Z';
+    const startEpoch = new Date(activeLotStartedAt).getTime();
+
+    const upsertConfig = (rows: ConfigEntry[]) => {
+      for (const row of rows) {
+        if (!ALLOWED_VALUE_TYPES.has(row.value_type)) {
+          throw new Error(`23514: violates check constraint "season_config_value_type_check" (${row.value_type})`);
+        }
+      }
+      for (const row of rows) {
+        configTable.set(row.key, row);
+      }
+    };
+
+    const getSession = (): AuctionSessionState => {
+      const rawStatus = configTable.get('auction_session_status')?.value;
+      const status = resolveAuctionSessionStatus({
+        seasonStatus: 'auction',
+        sessionConfigStatus: rawStatus,
+        startedAt: '2026-09-27T15:50:00.000Z',
+        endedAt: undefined,
+      });
+      const pausedVal = configTable.get('auction_lot_paused_remaining_seconds')?.value;
+      const pausedRemainingSeconds =
+        status === 'paused' && pausedVal !== undefined ? parseInt(pausedVal, 10) : null;
+      return {
+        seasonId,
+        seasonName: 'ACC 2026',
+        status,
+        isLive: status === 'live',
+        isPaused: status === 'paused',
+        isNotStarted: status === 'not_started',
+        isCompleted: status === 'completed',
+        startedAt: '2026-09-27T15:50:00.000Z',
+        activeLotId: 'lot-3cycle',
+        pausedRemainingSeconds,
+        pausedAt: configTable.get('auction_paused_at')?.value ?? null,
+      };
+    };
+
+    const assertAllFourViewsSynchronized = (
+      expectedMode: 'live' | 'paused',
+      expectedRemaining: number,
+      currentNowMs: number
+    ) => {
+      const session = getSession();
+      expect(session.status).toBe(expectedMode);
+      expect(session.isPaused).toBe(expectedMode === 'paused');
+      expect(session.isLive).toBe(expectedMode === 'live');
+
+      // 1. Admin OperatorControls + AuctionSessionIndicator + AuctionTimer
+      const operatorHtml = renderToString(
+        <OperatorControls
+          activeLot={{
+            id: 'lot-3cycle',
+            draw_number: 12,
+            status: 'in_progress',
+            base_price: 20,
+            current_price: 20,
+            highest_bidder_franchise_id: 'franchise-1',
+            player: { full_name: 'R. Jadeja' },
+          } as any}
+          upcomingLots={[]}
+          isSuperAdmin={true}
+          sessionState={session}
+        />
+      );
+      const indicatorHtml = renderToString(
+        <AuctionSessionIndicator status={session.status} />
+      );
+      const adminTimerHtml = renderToString(
+        <AuctionTimer
+          startedAt={activeLotStartedAt}
+          durationSeconds={timerDuration}
+          isActive={session.isLive}
+          isPaused={session.isPaused}
+          pausedRemainingSeconds={session.pausedRemainingSeconds}
+        />
+      );
+
+      // 2. Franchise AuctionTimer
+      const franchiseTimerHtml = renderToString(
+        <AuctionTimer
+          startedAt={activeLotStartedAt}
+          durationSeconds={timerDuration}
+          isActive={session.isLive}
+          isPaused={session.isPaused}
+          pausedRemainingSeconds={session.pausedRemainingSeconds}
+        />
+      );
+
+      // 3. Public /live AuctionTimer
+      const publicLiveTimerHtml = renderToString(
+        <AuctionTimer
+          startedAt={activeLotStartedAt}
+          durationSeconds={timerDuration}
+          isActive={session.isLive}
+          isPaused={session.isPaused}
+          pausedRemainingSeconds={session.pausedRemainingSeconds}
+        />
+      );
+
+      // 4. Public /live/projector AuctionTimer (lg size)
+      const projectorTimerHtml = renderToString(
+        <AuctionTimer
+          startedAt={activeLotStartedAt}
+          durationSeconds={timerDuration}
+          isActive={session.isLive}
+          isPaused={session.isPaused}
+          pausedRemainingSeconds={session.pausedRemainingSeconds}
+          size="lg"
+        />
+      );
+
+      if (expectedMode === 'paused') {
+        expect(session.pausedRemainingSeconds).toBe(expectedRemaining);
+        expect(operatorHtml).toContain('RESUME AUCTION');
+        expect(operatorHtml).not.toContain('PAUSE AUCTION');
+        expect(operatorHtml).toContain('AUCTION SESSION PAUSED');
+        expect(indicatorHtml).toContain('Paused');
+        expect(adminTimerHtml).toContain(`PAUSED (${expectedRemaining}s)`);
+        expect(franchiseTimerHtml).toContain(`PAUSED (${expectedRemaining}s)`);
+        expect(publicLiveTimerHtml).toContain(`PAUSED (${expectedRemaining}s)`);
+        expect(projectorTimerHtml).toContain(`PAUSED (${expectedRemaining}s)`);
+      } else {
+        expect(session.pausedRemainingSeconds).toBeNull();
+        expect(operatorHtml).toContain('PAUSE AUCTION');
+        expect(operatorHtml).not.toContain('RESUME AUCTION');
+        expect(operatorHtml).toContain('AUCTION SESSION ACTIVE');
+        expect(indicatorHtml).toContain('Live');
+        const deadline = new Date(activeLotStartedAt).getTime() + timerDuration * 1000;
+        const computedRemaining = Math.ceil((deadline - currentNowMs) / 1000);
+        expect(computedRemaining).toBe(expectedRemaining);
+      }
+    };
+
+    const performPause = (nowMs: number) => {
+      const elapsedSeconds = (nowMs - new Date(activeLotStartedAt).getTime()) / 1000;
+      const remainingSeconds = Math.max(1, Math.ceil(timerDuration - elapsedSeconds));
+      upsertConfig([
+        { key: 'auction_session_status', value: 'paused', value_type: 'text' },
+        { key: 'auction_paused_at', value: new Date(nowMs).toISOString(), value_type: 'text' },
+        {
+          key: 'auction_lot_paused_remaining_seconds',
+          value: String(remainingSeconds),
+          value_type: 'integer',
+        },
+      ]);
+      return remainingSeconds;
+    };
+
+    const performResume = (nowMs: number) => {
+      const pausedRemaining = parseInt(
+        configTable.get('auction_lot_paused_remaining_seconds')!.value,
+        10
+      );
+      const elapsedToRestore = Math.max(0, timerDuration - pausedRemaining);
+      // Update lot started_at FIRST before flipping season_config to live
+      activeLotStartedAt = new Date(nowMs - elapsedToRestore * 1000).toISOString();
+      upsertConfig([{ key: 'auction_session_status', value: 'live', value_type: 'text' }]);
+      configTable.delete('auction_lot_paused_remaining_seconds');
+      configTable.delete('auction_paused_at');
+      return pausedRemaining;
+    };
+
+    // Initial live at T+0s (30s remaining)
+    assertAllFourViewsSynchronized('live', 30, startEpoch);
+
+    // =========================================================================
+    // CYCLE 1: Run 3s (to 27s) -> PAUSE -> Wait 10s -> Still 27s -> RESUME at 27s
+    // =========================================================================
+    const c1PauseAt = startEpoch + 3000; // 27s left
+    expect(performPause(c1PauseAt)).toBe(27);
+    assertAllFourViewsSynchronized('paused', 27, c1PauseAt);
+
+    // Wait 10 seconds while paused -> still frozen at 27s
+    const c1AfterWait = c1PauseAt + 10000;
+    assertAllFourViewsSynchronized('paused', 27, c1AfterWait);
+
+    // Resume at c1AfterWait -> continues from 27s
+    expect(performResume(c1AfterWait)).toBe(27);
+    assertAllFourViewsSynchronized('live', 27, c1AfterWait);
+
+    // =========================================================================
+    // CYCLE 2: Run 5s (to 22s) -> PAUSE -> Wait 15s -> Still 22s -> RESUME at 22s
+    // =========================================================================
+    const c2PauseAt = c1AfterWait + 5000; // 27 - 5 = 22s left
+    expect(performPause(c2PauseAt)).toBe(22);
+    assertAllFourViewsSynchronized('paused', 22, c2PauseAt);
+
+    // Wait 15 seconds while paused -> still frozen at 22s
+    const c2AfterWait = c2PauseAt + 15000;
+    assertAllFourViewsSynchronized('paused', 22, c2AfterWait);
+
+    // Resume at c2AfterWait -> continues from 22s
+    expect(performResume(c2AfterWait)).toBe(22);
+    assertAllFourViewsSynchronized('live', 22, c2AfterWait);
+
+    // =========================================================================
+    // CYCLE 3: Run 4s (to 18s) -> PAUSE -> Wait 12s -> Still 18s
+    // =========================================================================
+    const c3PauseAt = c2AfterWait + 4000; // 22 - 4 = 18s left
+    expect(performPause(c3PauseAt)).toBe(18);
+    assertAllFourViewsSynchronized('paused', 18, c3PauseAt);
+
+    const c3AfterWait = c3PauseAt + 12000;
+    assertAllFourViewsSynchronized('paused', 18, c3AfterWait);
   });
 });

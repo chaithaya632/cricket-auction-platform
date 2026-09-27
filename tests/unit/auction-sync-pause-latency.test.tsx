@@ -2,12 +2,30 @@
 // ACC Auction Portal — Unit Tests: Auction Sync, Pause/Timer, & Latency Optimizations
 // =============================================================================
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { AuctionTimer } from '@/components/auction/auction-timer';
 import type { AuctionSessionState } from '@/lib/auction/types';
 import { calculateNextBid } from '@/domain/auction/bid-increment';
+
+const mockRevalidatePath = vi.fn();
+vi.mock('next/cache', () => ({
+  revalidatePath: (...args: any[]) => mockRevalidatePath(...args),
+}));
+
+const mockRequireAdmin = vi.fn();
+vi.mock('@/lib/permissions', () => ({
+  requireAdmin: () => mockRequireAdmin(),
+  requireFranchise: vi.fn(),
+}));
+
+let mockAdminClientInstance: any = null;
+vi.mock('@/lib/supabase/admin', () => ({
+  createAdminClient: () => mockAdminClientInstance,
+}));
+
+import { pauseAuctionAction, resumeAuctionAction } from '@/lib/auction/actions';
 
 describe('AuctionTimer Component — Pause Freeze & State Handling', () => {
   it('renders WAITING when auction lot is not active and not paused', () => {
@@ -250,5 +268,313 @@ describe('Realtime Sync Architecture Invariants', () => {
     // Wait for trailing debounce to fire
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(callCount).toBe(2); // Trailing event fired, NOT dropped!
+  });
+});
+
+describe('Pause & Resume Server Actions — Schema Constraint Compliance, Atomic Fail-Closed & Write Ordering', () => {
+  beforeEach(() => {
+    mockRevalidatePath.mockReset();
+    mockRequireAdmin.mockReset();
+    mockRequireAdmin.mockResolvedValue({
+      user: { id: 'admin-user-001' },
+      activeSeason: { id: 'season-001', name: 'ACC 2026', status: 'auction' },
+      isSuperAdmin: true,
+    });
+  });
+
+  it('A. pauseAuctionAction writes value_type="integer" (strictly within season_config CHECK constraint) and defaults subsequent timer to 20s', async () => {
+    const capturedConfigUpserts: any[] = [];
+    const capturedEvents: any[] = [];
+    const started5SecAgo = new Date(Date.now() - 5000).toISOString();
+
+    mockAdminClientInstance = {
+      from: (table: string) => {
+        if (table === 'season_config') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({ data: { value: 'live' }, error: null }),
+                }),
+                in: async () => ({
+                  // Omit subsequent_bid_timer_seconds to verify 20s default fallback
+                  data: [{ key: 'first_bid_timer_seconds', value: '30' }],
+                  error: null,
+                }),
+              }),
+            }),
+            upsert: async (payload: any) => {
+              capturedConfigUpserts.push(...(Array.isArray(payload) ? payload : [payload]));
+              return { data: null, error: null };
+            },
+          };
+        }
+        if (table === 'auction_lots') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: {
+                      id: 'lot-active-001',
+                      started_at: started5SecAgo,
+                      highest_bidder_franchise_id: 'franchise-001', // Uses subsequentBidSeconds (20s)
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'auction_events') {
+          return {
+            insert: async (payload: any) => {
+              capturedEvents.push(payload);
+              return { data: null, error: null };
+            },
+          };
+        }
+        throw new Error(`Unexpected table: ${table}`);
+      },
+    };
+
+    const result = await pauseAuctionAction();
+
+    expect(result.success).toBe(true);
+    // 20s subsequent timer - 5s elapsed = 15s remaining
+    expect(result.data?.remainingSeconds).toBe(15);
+
+    // Every upserted row in season_config must strictly satisfy CHECK (value_type IN ('integer', 'text', 'boolean', 'json'))
+    const allowedValueTypes = new Set(['integer', 'text', 'boolean', 'json']);
+    expect(capturedConfigUpserts.length).toBe(3);
+    for (const row of capturedConfigUpserts) {
+      expect(allowedValueTypes.has(row.value_type)).toBe(true);
+      expect(row.value_type).not.toBe('number');
+    }
+
+    const pausedRemainingRow = capturedConfigUpserts.find(
+      (r) => r.key === 'auction_lot_paused_remaining_seconds'
+    );
+    expect(pausedRemainingRow).toBeDefined();
+    expect(pausedRemainingRow.value_type).toBe('integer');
+    expect(pausedRemainingRow.value).toBe('15');
+
+    expect(capturedEvents.length).toBe(1);
+    expect(capturedEvents[0].event_type).toBe('PAUSE');
+    expect(capturedEvents[0].payload.remaining_seconds).toBe(15);
+    expect(mockRevalidatePath).toHaveBeenCalledWith('/admin/auction');
+  });
+
+  it('B. pauseAuctionAction fails closed when season_config upsert fails (no PAUSE event inserted, no success returned)', async () => {
+    const capturedEvents: any[] = [];
+
+    mockAdminClientInstance = {
+      from: (table: string) => {
+        if (table === 'season_config') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({ data: { value: 'live' }, error: null }),
+                }),
+                in: async () => ({
+                  data: [
+                    { key: 'first_bid_timer_seconds', value: '30' },
+                    { key: 'subsequent_bid_timer_seconds', value: '20' },
+                  ],
+                  error: null,
+                }),
+              }),
+            }),
+            upsert: async () => ({
+              data: null,
+              error: {
+                code: '23514',
+                message: 'new row for relation "season_config" violates check constraint "season_config_value_type_check"',
+              },
+            }),
+          };
+        }
+        if (table === 'auction_lots') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: {
+                      id: 'lot-active-001',
+                      started_at: new Date(Date.now() - 3000).toISOString(),
+                      highest_bidder_franchise_id: null,
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'auction_events') {
+          return {
+            insert: async (payload: any) => {
+              capturedEvents.push(payload);
+              return { data: null, error: null };
+            },
+          };
+        }
+        throw new Error(`Unexpected table: ${table}`);
+      },
+    };
+
+    const result = await pauseAuctionAction();
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('season_config_value_type_check');
+    // Must NOT insert PAUSE event or revalidate paths when season_config fails
+    expect(capturedEvents.length).toBe(0);
+    expect(mockRevalidatePath).not.toHaveBeenCalled();
+  });
+
+  it('C. resumeAuctionAction updates auction_lots.started_at FIRST before flipping season_config to live and deleting pause config', async () => {
+    const operationOrder: string[] = [];
+
+    mockAdminClientInstance = {
+      from: (table: string) => {
+        if (table === 'season_config') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({ data: { value: 'paused' }, error: null }),
+                }),
+                in: async () => ({
+                  data: [
+                    { key: 'auction_lot_paused_remaining_seconds', value: '25' },
+                    { key: 'first_bid_timer_seconds', value: '30' },
+                  ],
+                  error: null,
+                }),
+              }),
+            }),
+            upsert: async (payload: any) => {
+              operationOrder.push(`season_config.upsert(${payload.value})`);
+              return { data: null, error: null };
+            },
+            delete: () => ({
+              eq: () => ({
+                in: async ( col: string, keys: string[]) => {
+                  operationOrder.push(`season_config.delete(${keys.join(',')})`);
+                  return { data: null, error: null };
+                },
+              }),
+            }),
+          };
+        }
+        if (table === 'auction_lots') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: {
+                      id: 'lot-active-001',
+                      highest_bidder_franchise_id: null,
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+            update: (payload: any) => ({
+              eq: async () => {
+                operationOrder.push(`auction_lots.update(started_at=${Boolean(payload.started_at)})`);
+                return { data: null, error: null };
+              },
+            }),
+          };
+        }
+        if (table === 'auction_events') {
+          return {
+            insert: async (payload: any) => {
+              operationOrder.push(`auction_events.insert(${payload.event_type})`);
+              return { data: null, error: null };
+            },
+          };
+        }
+        throw new Error(`Unexpected table: ${table}`);
+      },
+    };
+
+    const result = await resumeAuctionAction();
+
+    expect(result.success).toBe(true);
+    expect(operationOrder).toEqual([
+      'auction_lots.update(started_at=true)',
+      'season_config.upsert(live)',
+      'season_config.delete(auction_lot_paused_remaining_seconds,auction_paused_at)',
+      'auction_events.insert(RESUME)',
+    ]);
+  });
+
+  it('C2. resumeAuctionAction fails closed without flipping season_config to live if auction_lots.started_at update fails', async () => {
+    const operationOrder: string[] = [];
+
+    mockAdminClientInstance = {
+      from: (table: string) => {
+        if (table === 'season_config') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({ data: { value: 'paused' }, error: null }),
+                }),
+                in: async () => ({
+                  data: [{ key: 'auction_lot_paused_remaining_seconds', value: '25' }],
+                  error: null,
+                }),
+              }),
+            }),
+            upsert: async () => {
+              operationOrder.push('season_config.upsert');
+              return { data: null, error: null };
+            },
+            delete: () => ({
+              eq: () => ({
+                in: async () => {
+                  operationOrder.push('season_config.delete');
+                  return { data: null, error: null };
+                },
+              }),
+            }),
+          };
+        }
+        if (table === 'auction_lots') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: { id: 'lot-active-001', highest_bidder_franchise_id: null },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+            update: () => ({
+              eq: async () => {
+                operationOrder.push('auction_lots.update');
+                return { data: null, error: { message: 'Database connection timeout' } };
+              },
+            }),
+          };
+        }
+        throw new Error(`Unexpected table: ${table}`);
+      },
+    };
+
+    const result = await resumeAuctionAction();
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Database connection timeout');
+    expect(operationOrder).toEqual(['auction_lots.update']);
   });
 });

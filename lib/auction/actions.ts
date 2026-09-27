@@ -861,11 +861,11 @@ export async function pauseAuctionAction(): Promise<
     const timerConfigs = timerConfigsRes.data;
 
     let firstBidSeconds = 30;
-    let subsequentBidSeconds = 15;
+    let subsequentBidSeconds = 20;
     if (timerConfigs) {
       for (const tc of timerConfigs) {
         if (tc.key === 'first_bid_timer_seconds') firstBidSeconds = parseInt(tc.value, 10) || 30;
-        if (tc.key === 'subsequent_bid_timer_seconds') subsequentBidSeconds = parseInt(tc.value, 10) || 15;
+        if (tc.key === 'subsequent_bid_timer_seconds') subsequentBidSeconds = parseInt(tc.value, 10) || 20;
       }
     }
 
@@ -903,16 +903,25 @@ export async function pauseAuctionAction(): Promise<
         season_id: activeSeason.id,
         key: 'auction_lot_paused_remaining_seconds',
         value: String(remainingSeconds),
-        value_type: 'number',
+        value_type: 'integer',
         updated_at: now,
       });
     }
 
-    await adminClient.from('season_config').upsert(configUpserts, { onConflict: 'season_id,key' });
+    const { error: configErr } = await adminClient
+      .from('season_config')
+      .upsert(configUpserts, { onConflict: 'season_id,key' });
+
+    if (configErr) {
+      return {
+        success: false,
+        error: configErr.message || 'Failed to persist auction pause state.',
+      };
+    }
 
     // 3. If a lot is currently in progress, record PAUSE event in auction_events
     if (activeLot) {
-      await adminClient.from('auction_events').insert({
+      const { error: eventErr } = await adminClient.from('auction_events').insert({
         season_id: activeSeason.id,
         auction_lot_id: activeLot.id,
         event_type: 'PAUSE',
@@ -924,6 +933,13 @@ export async function pauseAuctionAction(): Promise<
         },
         created_at: now,
       });
+
+      if (eventErr) {
+        return {
+          success: false,
+          error: eventErr.message || 'Failed to record auction pause event.',
+        };
+      }
     }
 
     revalidatePath('/admin/auction');
@@ -992,13 +1008,13 @@ export async function resumeAuctionAction(): Promise<
     const configRows = configRowsRes.data;
 
     let firstBidSeconds = 30;
-    let subsequentBidSeconds = 15;
+    let subsequentBidSeconds = 20;
     let pausedRemainingSec: number | null = null;
 
     if (configRows) {
       for (const cr of configRows) {
         if (cr.key === 'first_bid_timer_seconds') firstBidSeconds = parseInt(cr.value, 10) || 30;
-        if (cr.key === 'subsequent_bid_timer_seconds') subsequentBidSeconds = parseInt(cr.value, 10) || 15;
+        if (cr.key === 'subsequent_bid_timer_seconds') subsequentBidSeconds = parseInt(cr.value, 10) || 20;
         if (cr.key === 'auction_lot_paused_remaining_seconds' && cr.value) {
           const parsed = parseInt(cr.value, 10);
           if (!isNaN(parsed)) pausedRemainingSec = parsed;
@@ -1019,8 +1035,25 @@ export async function resumeAuctionAction(): Promise<
     const elapsedSeconds = timerDuration - remainingToRestore;
     const restoredStartedAt = new Date(Date.now() - elapsedSeconds * 1000).toISOString();
 
-    // 2. Set auction_session_status to 'live' and delete pause keys
-    await adminClient
+    // 2. FIRST update auction_lots.started_at = restoredStartedAt if a lot is in progress
+    // so no reader ever observes isPaused=false while started_at is still the old pre-pause timestamp.
+    if (activeLot) {
+      const { error: lotUpdateErr } = await adminClient
+        .from('auction_lots')
+        .update({ started_at: restoredStartedAt, updated_at: now })
+        .eq('id', activeLot.id);
+
+      if (lotUpdateErr) {
+        return {
+          success: false,
+          error: lotUpdateErr.message || 'Failed to restore active lot timer on resume.',
+        };
+      }
+    }
+
+    // 3. Only after auction_lots.started_at is updated, set auction_session_status to 'live'
+    // and delete pause keys.
+    const { error: statusUpsertErr } = await adminClient
       .from('season_config')
       .upsert(
         {
@@ -1033,15 +1066,29 @@ export async function resumeAuctionAction(): Promise<
         { onConflict: 'season_id,key' }
       );
 
-    await adminClient
+    if (statusUpsertErr) {
+      return {
+        success: false,
+        error: statusUpsertErr.message || 'Failed to update auction session status to live.',
+      };
+    }
+
+    const { error: deletePauseErr } = await adminClient
       .from('season_config')
       .delete()
       .eq('season_id', activeSeason.id)
       .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
 
-    // 3. If a lot is currently in progress, record RESUME event and update lot started_at
+    if (deletePauseErr) {
+      return {
+        success: false,
+        error: deletePauseErr.message || 'Failed to clear paused timer configuration.',
+      };
+    }
+
+    // 4. If a lot is currently in progress, record RESUME event
     if (activeLot) {
-      await adminClient.from('auction_events').insert({
+      const { error: resumeEventErr } = await adminClient.from('auction_events').insert({
         season_id: activeSeason.id,
         auction_lot_id: activeLot.id,
         event_type: 'RESUME',
@@ -1054,10 +1101,12 @@ export async function resumeAuctionAction(): Promise<
         created_at: now,
       });
 
-      await adminClient
-        .from('auction_lots')
-        .update({ started_at: restoredStartedAt, updated_at: now })
-        .eq('id', activeLot.id);
+      if (resumeEventErr) {
+        return {
+          success: false,
+          error: resumeEventErr.message || 'Failed to record auction resume event.',
+        };
+      }
     }
 
     revalidatePath('/admin/auction');

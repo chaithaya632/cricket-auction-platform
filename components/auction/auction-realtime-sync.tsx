@@ -169,9 +169,15 @@ export function createRealtimeRefreshCoordinator({
     getChannelStatus: () => channelStatus,
     notifyLocalActionStarted: () => {
       sawEventDuringLocalAction = false;
+      hasQueuedRefreshAfterInFlight = false;
+      isRefreshInFlight = false;
       if (coalesceTimer) {
         clearTimeout(coalesceTimer);
         coalesceTimer = null;
+      }
+      if (inFlightTimer) {
+        clearTimeout(inFlightTimer);
+        inFlightTimer = null;
       }
     },
     notifyLocalActionCompleted: (didMutate: boolean) => {

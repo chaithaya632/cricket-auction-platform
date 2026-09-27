@@ -477,15 +477,15 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
     resetLocalActionTrackingForTests();
   });
 
-  it('Admin Start / Pause / Resume / Bring to Floor updates cleanly without redundant router.refresh() or stuck loading state', async () => {
+  it('Admin Start / Pause / Resume / Bring to Floor updates cleanly via authoritative sessionState without redundant router.refresh() or stuck loading state', async () => {
     mockStartAuctionAction.mockResolvedValue({ success: true });
     mockPauseAuctionAction.mockResolvedValue({
       success: true,
-      data: { pausedRemainingSeconds: 22 },
+      data: { status: 'paused', remainingSeconds: 22 },
     });
     mockResumeAuctionAction.mockResolvedValue({
       success: true,
-      data: { remainingSeconds: 22 },
+      data: { status: 'live' },
     });
     mockSelectLotAction.mockResolvedValue({
       success: true,
@@ -501,10 +501,26 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
     const notStartedSession = makeSampleSessionState({
       status: 'not_started',
       isLive: false,
+      isPaused: false,
       isNotStarted: true,
     });
 
-    const { getByText, queryByText } = render(
+    const liveSession = makeSampleSessionState({
+      status: 'live',
+      isLive: true,
+      isPaused: false,
+      isNotStarted: false,
+    });
+
+    const pausedSession = makeSampleSessionState({
+      status: 'paused',
+      isLive: false,
+      isPaused: true,
+      isNotStarted: false,
+      pausedRemainingSeconds: 22,
+    });
+
+    const { getByText, queryByText, rerender } = render(
       <OperatorControls
         activeLot={null}
         upcomingLots={[upcomingLot]}
@@ -512,18 +528,25 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
       />
     );
 
-    // 1. Admin clicks START AUCTION
+    // 1. Admin clicks START AUCTION -> Server Action commits and revalidatePath delivers liveSession prop
     const startBtn = getByText('START AUCTION').closest('button')!;
     await act(async () => {
       fireEvent.click(startBtn);
     });
 
     expect(mockStartAuctionAction).toHaveBeenCalledTimes(1);
-    // No redundant router.refresh() called by OperatorControls
     expect(mockRouterRefresh).toHaveBeenCalledTimes(0);
-    // UI immediately transitions out of loading state to ACTIVE
     expect(queryByText('STARTING AUCTION...')).toBeNull();
+
+    rerender(
+      <OperatorControls
+        activeLot={null}
+        upcomingLots={[upcomingLot]}
+        sessionState={liveSession}
+      />
+    );
     expect(getByText('AUCTION SESSION ACTIVE')).toBeTruthy();
+    expect(getByText('PAUSE AUCTION')).toBeTruthy();
 
     // 2. Admin clicks PAUSE AUCTION
     const pauseBtn = getByText('PAUSE AUCTION').closest('button')!;
@@ -533,9 +556,23 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
 
     expect(mockPauseAuctionAction).toHaveBeenCalledTimes(1);
     expect(mockRouterRefresh).toHaveBeenCalledTimes(0);
-    expect(getByText('AUCTION SESSION PAUSED')).toBeTruthy();
 
-    // 3. Admin clicks RESUME AUCTION
+    // D. Authoritative OperatorControls: before server sessionState prop updates to isPaused=true,
+    // OperatorControls does NOT optimistically flip to RESUME AUCTION on its own (no contradictory localSessionState)
+    expect(getByText('PAUSE AUCTION')).toBeTruthy();
+
+    // Server Action revalidatePath delivers pausedSession prop -> renders RESUME AUCTION
+    rerender(
+      <OperatorControls
+        activeLot={null}
+        upcomingLots={[upcomingLot]}
+        sessionState={pausedSession}
+      />
+    );
+    expect(getByText('AUCTION SESSION PAUSED')).toBeTruthy();
+    expect(getByText('RESUME AUCTION')).toBeTruthy();
+
+    // 3. Admin clicks RESUME AUCTION -> Server Action revalidatePath delivers liveSession prop
     const resumeBtn = getByText('RESUME AUCTION').closest('button')!;
     await act(async () => {
       fireEvent.click(resumeBtn);
@@ -543,7 +580,16 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
 
     expect(mockResumeAuctionAction).toHaveBeenCalledTimes(1);
     expect(mockRouterRefresh).toHaveBeenCalledTimes(0);
+
+    rerender(
+      <OperatorControls
+        activeLot={null}
+        upcomingLots={[upcomingLot]}
+        sessionState={liveSession}
+      />
+    );
     expect(getByText('AUCTION SESSION ACTIVE')).toBeTruthy();
+    expect(getByText('PAUSE AUCTION')).toBeTruthy();
 
     // 4. Admin clicks Bring to Floor on upcoming player
     const bringToFloorBtn = getByText('Bring to Floor').closest('button')!;
@@ -766,6 +812,126 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
     });
 
     // Because our local action failed (didMutate = false), the Realtime update is flushed immediately
+    expect(mockRouterRefresh).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it('D. Authoritative OperatorControls: sessionState.isPaused=true -> RESUME AUCTION, sessionState.isPaused=false -> PAUSE AUCTION, with zero contradictory localSessionState', async () => {
+    mockPauseAuctionAction.mockResolvedValue({
+      success: true,
+      data: { status: 'paused', remainingSeconds: 25 },
+    });
+
+    const liveSession = makeSampleSessionState({
+      status: 'live',
+      isLive: true,
+      isPaused: false,
+      pausedRemainingSeconds: null,
+    });
+
+    const pausedSession = makeSampleSessionState({
+      status: 'paused',
+      isLive: false,
+      isPaused: true,
+      pausedRemainingSeconds: 25,
+    });
+
+    const { getByText, queryByText, rerender } = render(
+      <OperatorControls
+        activeLot={makeSampleLot()}
+        upcomingLots={[]}
+        sessionState={liveSession}
+      />
+    );
+
+    // sessionState.isPaused = false -> PAUSE AUCTION
+    expect(getByText('PAUSE AUCTION')).toBeTruthy();
+    expect(queryByText('RESUME AUCTION')).toBeNull();
+    expect(getByText('AUCTION SESSION ACTIVE')).toBeTruthy();
+
+    // Even if pauseAuctionAction resolves while sessionState prop is still liveSession,
+    // OperatorControls never contradicts authoritative sessionState
+    await act(async () => {
+      fireEvent.click(getByText('PAUSE AUCTION').closest('button')!);
+    });
+    expect(getByText('PAUSE AUCTION')).toBeTruthy();
+    expect(queryByText('RESUME AUCTION')).toBeNull();
+
+    // sessionState.isPaused = true -> RESUME AUCTION
+    rerender(
+      <OperatorControls
+        activeLot={makeSampleLot()}
+        upcomingLots={[]}
+        sessionState={pausedSession}
+      />
+    );
+    expect(getByText('RESUME AUCTION')).toBeTruthy();
+    expect(queryByText('PAUSE AUCTION')).toBeNull();
+    expect(getByText('AUCTION SESSION PAUSED')).toBeTruthy();
+
+    // sessionState.isPaused = false -> PAUSE AUCTION
+    rerender(
+      <OperatorControls
+        activeLot={makeSampleLot()}
+        upcomingLots={[]}
+        sessionState={liveSession}
+      />
+    );
+    expect(getByText('PAUSE AUCTION')).toBeTruthy();
+    expect(queryByText('RESUME AUCTION')).toBeNull();
+    expect(getByText('AUCTION SESSION ACTIVE')).toBeTruthy();
+  });
+
+  it('F. Realtime race: cancels any pre-action queued refresh (hasQueuedRefreshAfterInFlight) when a local Server Action starts so it cannot overwrite the newer Server Action RSC state', async () => {
+    vi.useFakeTimers();
+
+    render(<AuctionRealtimeSync seasonId="season-001" fallbackIntervalMs={5000} />);
+    act(() => {
+      capturedSubscribeCallback?.('SUBSCRIBED');
+    });
+
+    // T = 0ms: First Realtime event arrives -> fires router.refresh() #1 at T = 80ms
+    act(() => {
+      capturedChannelCallbacks[0].handler();
+    });
+    act(() => {
+      vi.advanceTimersByTime(80);
+    });
+    expect(mockRouterRefresh).toHaveBeenCalledTimes(1);
+
+    // T = 100ms: Second Realtime event arrives while refresh #1 is in its 300ms in-flight window.
+    // At T = 180ms, executeSingleRefresh runs and sets hasQueuedRefreshAfterInFlight = true.
+    act(() => {
+      vi.advanceTimersByTime(20);
+      capturedChannelCallbacks[0].handler();
+      vi.advanceTimersByTime(80);
+    });
+    expect(mockRouterRefresh).toHaveBeenCalledTimes(1);
+
+    // T = 200ms: Admin clicks PAUSE AUCTION -> runWithLocalActionTracking starts and calls notifyLocalActionStarted().
+    // This MUST cancel the pre-action hasQueuedRefreshAfterInFlight and inFlightTimer!
+    let finishPauseAction!: (res: { success: boolean }) => void;
+    const pausePromise = runWithLocalActionTracking(
+      () =>
+        new Promise<{ success: boolean }>((resolve) => {
+          finishPauseAction = resolve;
+        })
+    );
+
+    // T = 250ms: Pause Server Action completes and commits its authoritative RSC payload
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    finishPauseAction({ success: true });
+    await pausePromise;
+
+    // Advance well past the original 300ms in-flight window (T = 600ms)
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
+
+    // The pre-action queued refresh NEVER fired after the Server Action completed!
     expect(mockRouterRefresh).toHaveBeenCalledTimes(1);
 
     vi.useRealTimers();
