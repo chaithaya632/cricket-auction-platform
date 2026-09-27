@@ -15,7 +15,7 @@
 // 6. BID again → all three receive the new authoritative bid
 // =============================================================================
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { AuctionTimer } from '@/components/auction/auction-timer';
@@ -24,6 +24,10 @@ import { AuctionSessionIndicator } from '@/components/acc/status-badges';
 import { resolveAuctionSessionStatus } from '@/lib/auction/queries';
 import type { AuctionSessionState } from '@/lib/auction/types';
 import { calculateNextBid } from '@/domain/auction/bid-increment';
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
+}));
 
 describe('Three-Browser Live Auction Verification Simulation', () => {
   it('executes full multi-client lifecycle: START -> BID -> PAUSE -> WAIT 10s -> RESUME -> BID', async () => {

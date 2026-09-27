@@ -5,6 +5,7 @@
 // =============================================================================
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   startAuctionAction,
   startAuctionAgainAction,
@@ -82,10 +83,25 @@ export function OperatorControls({
   scarcityReport = null,
   recoveryLots = [],
 }: OperatorControlsProps) {
+  const router = useRouter();
   const [isPending, setIsPending] = useState(false);
   const [activeQueueTab, setActiveQueueTab] = useState<'upcoming' | 'unsold' | 'sold'>('upcoming');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  /** Detects concurrency-related error strings and returns a friendly message instead. */
+  const sanitizeActionError = (error: string | undefined, fallback: string): string => {
+    if (
+      error?.includes('STALE_BID_PRICE') ||
+      error?.includes('no longer in progress') ||
+      error?.includes('Mutation rejected') ||
+      error?.includes('concurrently')
+    ) {
+      router.refresh();
+      return 'The auction state changed concurrently. The page has been updated.';
+    }
+    return error || fallback;
+  };
   const [showUndoModal, setShowUndoModal] = useState(false);
   const [selectedUndoLotId, setSelectedUndoLotId] = useState<string>(
     lastSoldLotId || (soldLots[0]?.id ?? '')
@@ -125,7 +141,7 @@ export function OperatorControls({
       const res = await runWithLocalActionTracking(actionFn);
       onComplete(res);
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Unexpected error executing operator action.');
+      setErrorMsg(sanitizeActionError(err?.message, 'Unexpected error executing operator action.'));
     } finally {
       setIsPending(false);
     }
@@ -161,7 +177,7 @@ export function OperatorControls({
         }),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to execute auction recovery.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to execute auction recovery.'));
         } else {
           const modeLabel = recoveryMode === 'full' ? 'Full Restart' : 'Selective Restart';
           setSuccessMsg(
@@ -187,7 +203,7 @@ export function OperatorControls({
       () => startAuctionAction(),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to start auction.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to start auction.'));
         } else {
           setSuccessMsg('Auction is now LIVE! Bidding floor is open.');
         }
@@ -200,7 +216,7 @@ export function OperatorControls({
       () => startAuctionAgainAction(),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to restart auction session.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to restart auction session.'));
         } else {
           setSuccessMsg('Auction session RESTARTED and LIVE! Bidding floor is reopened.');
         }
@@ -213,7 +229,7 @@ export function OperatorControls({
       () => pauseAuctionAction(),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to pause auction.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to pause auction.'));
         } else {
           setSuccessMsg('Auction session PAUSED.');
         }
@@ -226,7 +242,7 @@ export function OperatorControls({
       () => resumeAuctionAction(),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to resume auction.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to resume auction.'));
         } else {
           setSuccessMsg('Auction session RESUMED and LIVE.');
         }
@@ -239,7 +255,7 @@ export function OperatorControls({
       () => bringDownUnsoldLotAction(lotId),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to return player to lot queue.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to return player to lot queue.'));
         } else {
           setSuccessMsg('Player moved back to Lot Queue.');
         }
@@ -252,7 +268,7 @@ export function OperatorControls({
       () => reAuctionUnsoldLotAction(lotId),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to re-auction player.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to re-auction player.'));
         } else {
           setSuccessMsg(`Player queued for re-auction at base price ₹${res.data?.basePrice}.`);
         }
@@ -265,7 +281,7 @@ export function OperatorControls({
       () => endAuctionAction({ resolveActiveLotMode: endLotMode }),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to end auction.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to end auction.'));
         } else {
           setSuccessMsg('Auction session has officially ENDED and status is COMPLETED.');
           setShowEndModal(false);
@@ -279,7 +295,7 @@ export function OperatorControls({
       () => selectLotAction(lotId),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to select lot.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to select lot.'));
         } else {
           setSuccessMsg('Player brought to floor successfully.');
         }
@@ -293,7 +309,7 @@ export function OperatorControls({
       () => confirmSaleAction(activeLot.id),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to confirm sale.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to confirm sale.'));
         } else {
           setSuccessMsg(`Player SOLD for ₹${res.data?.price}!`);
         }
@@ -307,7 +323,7 @@ export function OperatorControls({
       () => markUnsoldAction(activeLot.id),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to mark unsold.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to mark unsold.'));
         } else {
           setSuccessMsg('Player passed and marked UNSOLD.');
         }
@@ -321,7 +337,7 @@ export function OperatorControls({
       () => skipLotAction(activeLot.id, 'Skipped by operator'),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to skip lot.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to skip lot.'));
         } else {
           setSuccessMsg(
             `Player #${activeLot.draw_number} (${activeLot.player.full_name}) skipped. Can be recalled at the end of Bucket ${activeLot.bucket}.`
@@ -338,7 +354,7 @@ export function OperatorControls({
       () => undoSaleAction(targetLotId, undoMode),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to undo sale.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to undo sale.'));
         } else {
           setSuccessMsg(`Sale successfully undone (Mode: ${undoMode}).`);
           setShowUndoModal(false);
@@ -366,7 +382,7 @@ export function OperatorControls({
       () => adminProxyBidAction(activeLot.id, proxyFranchiseId, proxyBidAmount),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Proxy bid failed.');
+          setErrorMsg(sanitizeActionError(res.error, 'Proxy bid failed.'));
         } else {
           setSuccessMsg(`Proxy bid of ₹${proxyBidAmount} placed successfully.`);
           setShowProxyModal(false);
@@ -380,7 +396,7 @@ export function OperatorControls({
       () => adminStartRoundTwoAction(),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to start Round 2.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to start Round 2.'));
         } else {
           setSuccessMsg(
             `Round 2 activated! Reopened ${res.data?.reopenedCount} unsold player(s) at base price 20 credits.`
@@ -397,7 +413,7 @@ export function OperatorControls({
       () => adminAutoAllotLotAction(activeLot.id),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Auto-allotment failed.');
+          setErrorMsg(sanitizeActionError(res.error, 'Auto-allotment failed.'));
         } else {
           setSuccessMsg(
             `Player ALLOTTED to ${res.data?.franchiseName} at 20 credits under endgame rules.`
@@ -412,7 +428,7 @@ export function OperatorControls({
       () => adminRelaxBucketMinimumAction(relaxBucket, relaxMinimum, relaxReason),
       (res) => {
         if (!res.success) {
-          setErrorMsg(res.error || 'Failed to relax bucket quota.');
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to relax bucket quota.'));
         } else {
           setSuccessMsg(
             `Bucket ${res.data?.bucket} quota relaxed to ${res.data?.newMinimum} uniformly across all franchises.`

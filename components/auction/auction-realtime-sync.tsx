@@ -86,7 +86,7 @@ export interface RealtimeRefreshCoordinator {
 export function createRealtimeRefreshCoordinator({
   onRefresh,
   coalesceMs = 80,
-  inFlightWindowMs = 300,
+  inFlightWindowMs = 150,
   isLocalActionSuppressed,
 }: RealtimeRefreshCoordinatorOptions): RealtimeRefreshCoordinator {
   const checkSuppressed = isLocalActionSuppressed ?? (() => isLocalActionEchoWindowActive());

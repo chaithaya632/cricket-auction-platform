@@ -127,17 +127,8 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
 
       {/* Error banner */}
       {errorMsg && (
-        <div className="rounded-lg bg-red-950/80 border border-red-800/80 p-3 text-xs text-red-200 flex items-center justify-between gap-2">
+        <div className="rounded-lg bg-red-950/80 border border-red-800/80 p-3 text-xs text-red-200 flex items-center gap-2">
           <span>{errorMsg}</span>
-          <button
-            onClick={() => {
-              setErrorMsg(null);
-              router.refresh();
-            }}
-            className="underline font-semibold hover:text-red-100 shrink-0"
-          >
-            Refresh
-          </button>
         </div>
       )}
 
