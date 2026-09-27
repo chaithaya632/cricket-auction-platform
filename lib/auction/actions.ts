@@ -24,6 +24,7 @@ import { validateBidEligibility } from '@/domain/auction/auction-validation';
 import { calculateNextBid } from '@/domain/auction/bid-increment';
 import { getFranchiseSquadData } from '@/lib/franchises/queries';
 import { executeAuctionMutationFlow } from './transaction';
+import { broadcastAuctionUpdate } from './realtime';
 import { writeAuditLog } from '@/lib/audit/logger';
 import type {
   AuctionActionResult,
@@ -140,6 +141,8 @@ export async function selectLotAction(
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
+
+    await broadcastAuctionUpdate(lot.season_id, 'PLAYER_SELECTED');
 
     return { success: true, data: { lotId: lot.id } };
   } catch (err: any) {
@@ -277,6 +280,8 @@ export async function placeBidAction(
     revalidatePath('/player/auction');
     revalidatePath('/admin/auction');
 
+    await broadcastAuctionUpdate(lot.season_id, 'BID_PLACED');
+
     return { success: true, data: { newPrice: nextBid } };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to place bid.' };
@@ -376,6 +381,8 @@ export async function confirmSaleAction(
     revalidatePath('/franchise');
     revalidatePath('/franchise/squad');
 
+    await broadcastAuctionUpdate(lot.season_id, 'SALE');
+
     return {
       success: true,
       data: {
@@ -457,6 +464,8 @@ export async function markUnsoldAction(
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
+
+    await broadcastAuctionUpdate(lot.season_id, 'UNSOLD');
 
     return { success: true };
   } catch (err: any) {
@@ -602,6 +611,10 @@ export async function undoSaleAction(
     revalidatePath('/live/projector');
     revalidatePath('/franchise');
     revalidatePath('/franchise/squad');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+
+    await broadcastAuctionUpdate(lot.season_id, 'UNDO_SALE');
 
     return { success: true, data: { restoredTo: effectiveRestoreTo } };
   } catch (err: any) {
@@ -697,6 +710,8 @@ export async function startAuctionAction(): Promise<
     revalidatePath('/player/auction');
     revalidatePath('/franchise');
     revalidatePath('/player');
+
+    await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_STARTED');
 
     return { success: true, data: { status: 'live' } };
   } catch (err: any) {
@@ -804,6 +819,8 @@ export async function startAuctionAgainAction(): Promise<
     revalidatePath('/player/auction');
     revalidatePath('/franchise');
     revalidatePath('/player');
+
+    await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_RESTARTED');
 
     return { success: true, data: { status: 'live' } };
   } catch (err: any) {
@@ -947,6 +964,8 @@ export async function pauseAuctionAction(): Promise<
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
+
+    await broadcastAuctionUpdate(activeSeason.id, 'PAUSE');
 
     return { success: true, data: { status: 'paused', remainingSeconds } };
   } catch (err: any) {
@@ -1115,6 +1134,8 @@ export async function resumeAuctionAction(): Promise<
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
 
+    await broadcastAuctionUpdate(activeSeason.id, 'RESUME');
+
     return { success: true, data: { status: 'live' } };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to resume auction session.' };
@@ -1280,6 +1301,8 @@ export async function endAuctionAction(
     revalidatePath('/franchise');
     revalidatePath('/player');
 
+    await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_ENDED');
+
     return { success: true, data: { status: 'completed' } };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to end auction session.' };
@@ -1402,6 +1425,8 @@ export async function adminAddPlayerToQueueAction(
     revalidatePath('/admin');
     revalidatePath('/live');
 
+    await broadcastAuctionUpdate(targetSeasonId, 'QUEUE_UPDATED');
+
     return {
       success: true,
       data: { lotId: newLot.id, drawNumber: newLot.draw_number },
@@ -1507,6 +1532,10 @@ export async function adminProxyBidAction(
     revalidatePath('/admin/auction');
     revalidatePath('/live');
     revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+
+    await broadcastAuctionUpdate(lot.season_id, 'BID_PLACED');
 
     return { success: true, data: { newPrice: nextBid } };
   } catch (err: any) {
@@ -1584,6 +1613,8 @@ export async function adminStartRoundTwoAction(): Promise<
     revalidatePath('/admin/auction');
     revalidatePath('/admin/queue');
     revalidatePath('/live');
+
+    await broadcastAuctionUpdate(activeSeason.id, 'ROUND_TWO_STARTED');
 
     return { success: true, data: { reopenedCount: lotIds.length } };
   } catch (err: any) {
@@ -1733,6 +1764,8 @@ export async function adminAutoAllotLotAction(
     revalidatePath('/live');
     revalidatePath('/franchise/squad');
 
+    await broadcastAuctionUpdate(lot.season_id, 'ALLOTMENT');
+
     return {
       success: true,
       data: {
@@ -1800,6 +1833,8 @@ export async function adminRelaxBucketMinimumAction(
     revalidatePath('/admin/auction');
     revalidatePath('/admin');
     revalidatePath('/live');
+
+    await broadcastAuctionUpdate(activeSeason.id, 'BUCKET_RELAXATION');
 
     return { success: true, data: { bucket, newMinimum } };
   } catch (err: any) {
@@ -1889,6 +1924,8 @@ export async function adminDirectAssignAction(
     revalidatePath('/admin');
     revalidatePath('/live');
     revalidatePath('/franchise/squad');
+
+    await broadcastAuctionUpdate(lot.season_id, 'DIRECT_ASSIGNMENT');
 
     return { success: true, data: { lotId, franchiseId, price: customPrice } };
   } catch (err: any) {
@@ -2044,6 +2081,8 @@ export async function adminRegisterScoutedPlayerAction(params: {
     revalidatePath('/live');
     revalidatePath('/franchise/squad');
 
+    await broadcastAuctionUpdate(activeSeason.id, 'SCOUTING');
+
     return { success: true, data: { lotId: newLot.id, playerId: player.id } };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Scouting registration failed.' };
@@ -2125,6 +2164,10 @@ export async function skipLotAction(
     revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+
+    await broadcastAuctionUpdate(lot.season_id, 'SKIP_LOT');
 
     return { success: true, data: { lotId } };
   } catch (err: any) {
@@ -2198,6 +2241,11 @@ export async function recallSkippedLotAction(
     revalidatePath('/admin/auction');
     revalidatePath('/admin/queue');
     revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+
+    await broadcastAuctionUpdate(lot.season_id, 'RECALL_LOT');
 
     return { success: true, data: { lotId } };
   } catch (err: any) {
@@ -2512,6 +2560,8 @@ export async function reAuctionUnsoldLotAction(
     revalidatePath('/live');
     revalidatePath('/live/projector');
 
+    await broadcastAuctionUpdate(lot.season_id, 'RE_ENTER');
+
     return {
       success: true,
       data: {
@@ -2633,6 +2683,8 @@ export async function bringDownUnsoldLotAction(
     revalidatePath('/admin/players');
     revalidatePath('/live');
     revalidatePath('/live/projector');
+
+    await broadcastAuctionUpdate(lot.season_id, 'QUEUE_UPDATED');
 
     return {
       success: true,
@@ -3032,6 +3084,8 @@ export async function adminAuctionRestartRecoveryAction(
     revalidatePath('/franchise');
     revalidatePath('/franchise/squad');
     revalidatePath('/player');
+
+    await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_RECOVERY');
 
     return {
       success: true,

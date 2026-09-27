@@ -237,42 +237,6 @@ export function AuctionRealtimeSync({
           coordinator.handleRealtimeEvent();
         }
       )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'auction_lots',
-          filter: `season_id=eq.${seasonId}`,
-        },
-        () => {
-          coordinator.handleRealtimeEvent();
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'auction_events',
-          filter: `season_id=eq.${seasonId}`,
-        },
-        () => {
-          coordinator.handleRealtimeEvent();
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'season_config',
-          filter: `season_id=eq.${seasonId}`,
-        },
-        () => {
-          coordinator.handleRealtimeEvent();
-        }
-      )
       .subscribe((status) => {
         if (
           status === 'SUBSCRIBED' ||

@@ -66,7 +66,16 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
       );
       if (!res.success) {
         setOptimisticBid(null);
-        setErrorMsg(res.error || 'Failed to place bid.');
+        const isStale = res.error?.includes('STALE_BID_PRICE') ||
+          res.error?.includes('no longer in progress') ||
+          res.error?.includes('concurrent') ||
+          res.error?.includes('expected price');
+        if (isStale) {
+          router.refresh();
+          setErrorMsg('Another franchise placed a bid first. The auction has been updated.');
+        } else {
+          setErrorMsg(res.error || 'Failed to place bid.');
+        }
       }
       // On success, placeBidAction already called revalidatePath() on the server
       // and returned the authoritative RSC payload; no redundant router.refresh() needed.

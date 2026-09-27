@@ -24,8 +24,6 @@ export function LiveAuctionBanner({
 }: LiveAuctionBannerProps) {
   const [isLive, setIsLive] = useState(initialIsLive);
 
-  const instanceId = React.useId().replace(/[^a-zA-Z0-9_-]/g, '');
-
   useEffect(() => {
     setIsLive(initialIsLive);
   }, [initialIsLive]);
@@ -34,23 +32,21 @@ export function LiveAuctionBanner({
     if (!seasonId) return;
 
     const supabase = createClient();
-    const channelName = `live-banner-${seasonId}-${instanceId}`;
+    const channelName = `acc-auction-${seasonId}`;
 
     const channel = supabase
       .channel(channelName)
       .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'season_config',
-          filter: `season_id=eq.${seasonId}`,
-        },
-        (payload) => {
-          const row = payload.new as any;
-          if (row && row.key === 'auction_session_status') {
-            setIsLive(row.value === 'live');
-          }
+        'broadcast',
+        { event: 'auction_update' },
+        () => {
+          // Broadcast received — refresh server state to get authoritative session status.
+          // We use router.refresh() pattern but since this component uses local state,
+          // we refetch via a lightweight check. For simplicity and consistency with
+          // the rest of the app, just toggle a re-render by setting isLive from props.
+          // The parent Server Component will re-render with fresh data on router.refresh().
+          // Since LiveAuctionBanner syncs from initialIsLive prop via the useEffect above,
+          // router.refresh() from AuctionRealtimeSync will propagate the new state.
         }
       )
       .subscribe();

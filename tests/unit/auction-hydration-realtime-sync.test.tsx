@@ -673,11 +673,11 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
         })
     );
 
-    // Self-echo multi-table burst arrives on Initiating Browser A while its Server Action is in flight
+    // Self-echo broadcast event arrives on Initiating Browser A while its Server Action is in flight
     act(() => {
       for (const cb of capturedChannelCallbacks) {
-        if (cb.type === 'postgres_changes') {
-          cb.handler({ new: { season_id: 'season-001' } });
+        if (cb.type === 'broadcast') {
+          cb.handler({ type: 'auction_update', seasonId: 'season-001' });
         }
       }
     });
@@ -705,10 +705,12 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
       capturedSubscribeCallback?.('SUBSCRIBED');
     });
 
+    // In this browser tab (no local action), receive the broadcast event
+    // and coalesce it into 1 router.refresh().
     act(() => {
       for (const cb of capturedChannelCallbacks) {
-        if (cb.type === 'postgres_changes') {
-          cb.handler({ new: { season_id: 'season-001' } });
+        if (cb.type === 'broadcast') {
+          cb.handler({ type: 'auction_update', seasonId: 'season-001' });
         }
       }
     });
@@ -794,11 +796,11 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
         })
     );
 
-    // Another franchise's winning bid Realtime event arrives while our failing bid action is in flight
+    // Another franchise's winning bid broadcast event arrives while our failing bid action is in flight
     act(() => {
       for (const cb of capturedChannelCallbacks) {
-        if (cb.type === 'postgres_changes') {
-          cb.handler({ new: { season_id: 'season-001' } });
+        if (cb.type === 'broadcast') {
+          cb.handler({ type: 'auction_update', seasonId: 'season-001' });
         }
       }
     });

@@ -19,6 +19,8 @@ import { LiveExitBar } from '@/components/auction/live-exit-bar';
 import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
 import { FranchiseStatusBar } from '@/components/auction/franchise-status-bar';
 
+export const dynamic = 'force-dynamic';
+
 export default async function ProjectorPage() {
   const adminClient = createAdminClient();
   const activeSeason = await getActiveSeason(adminClient);
