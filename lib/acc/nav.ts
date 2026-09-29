@@ -40,6 +40,12 @@ export const ROLE_NAV: Record<Role, NavSection[]> = {
       ],
     },
     {
+      label: "Tournament",
+      items: [
+        { title: "Matches", href: "/admin/matches", icon: Trophy },
+      ],
+    },
+    {
       label: "Registry",
       items: [
         { title: "Players", href: "/admin/players", icon: Users },

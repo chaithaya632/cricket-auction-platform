@@ -11,6 +11,7 @@ import { Menu } from "lucide-react"
 
 const LINKS = [
   { title: "Home", href: "/" },
+  { title: "Live Matches", href: "/matches" },
   { title: "Live Auction", href: "/auction" },
   { title: "Teams", href: "/teams" },
   { title: "Players", href: "/players" },
