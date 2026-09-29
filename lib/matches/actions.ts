@@ -52,7 +52,21 @@ export async function createMatchAction(
     const parsed = createMatchSchema.parse(inputWithSeason);
     const adminClient = createAdminClient();
 
-    // Verify both franchises exist in database and belong to specified season
+    // 1. Verify specified season exists in database
+    const { data: seasonCheck, error: seasonError } = await adminClient
+      .from('seasons')
+      .select('id')
+      .eq('id', parsed.seasonId)
+      .maybeSingle();
+
+    if (seasonError || !seasonCheck) {
+      return {
+        success: false,
+        error: 'Specified season does not exist.',
+      };
+    }
+
+    // 2. Verify both franchises exist in database and belong to specified season
     const { data: teams, error: teamsError } = await adminClient
       .from('franchises')
       .select('id, season_id')

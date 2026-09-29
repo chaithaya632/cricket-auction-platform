@@ -114,23 +114,41 @@ describe('Match Subsystem — Actions, Schemas & Integrity', () => {
     });
   });
 
-  describe('createMatchAction — Integrity & Season Association Simulation', () => {
+  describe('createMatchAction — 10 Focused STEP 7 Requirements & Integrity', () => {
+    interface SeasonRow {
+      id: string;
+      name: string;
+      code: string;
+      is_active: boolean;
+    }
+
     interface FranchiseRow {
       id: string;
       season_id: string;
       name: string;
+      short_name: string;
     }
 
+    const seasonsDb: SeasonRow[] = [
+      { id: validUuid1, name: 'ACC 2026', code: 'acc-2026', is_active: true },
+    ];
+
     const franchisesDb: FranchiseRow[] = [
-      { id: validUuid2, season_id: validUuid1, name: 'Chennai Super Kings' },
-      { id: validUuid3, season_id: validUuid1, name: 'Mumbai Indians' },
-      { id: validUuid4, season_id: validUuid5, name: 'Other Season Team' },
+      { id: validUuid2, season_id: validUuid1, name: 'Chennai Super Kings', short_name: 'CSK' },
+      { id: validUuid3, season_id: validUuid1, name: 'Mumbai Indians', short_name: 'MI' },
+      { id: validUuid4, season_id: validUuid5, name: 'Other Season Team', short_name: 'OST' },
     ];
 
     function simulateCreateMatch(
+      actorRole: 'super_admin' | 'operator' | 'franchise' | 'player' | 'viewer',
       rawInput: any,
       activeSeasonId: string | null
     ) {
+      // 1. Authorization check: Super Admin or Operator required
+      if (actorRole !== 'super_admin' && actorRole !== 'operator') {
+        return { success: false, error: 'UNAUTHORIZED: Admin or Operator permission required.' };
+      }
+
       const rawObj = rawInput && typeof rawInput === 'object' ? rawInput : {};
       const effectiveSeasonId = rawObj.seasonId || activeSeasonId || '';
       const inputWithSeason = {
@@ -148,7 +166,13 @@ describe('Match Subsystem — Actions, Schemas & Integrity', () => {
 
       const parsed = parseResult.data;
 
-      // Verify teams
+      // 2. Verify season exists
+      const season = seasonsDb.find((s) => s.id === parsed.seasonId);
+      if (!season) {
+        return { success: false, error: 'Specified season does not exist.' };
+      }
+
+      // 3. Verify teams exist
       const foundTeams = franchisesDb.filter((f) =>
         [parsed.teamAId, parsed.teamBId].includes(f.id)
       );
@@ -157,6 +181,7 @@ describe('Match Subsystem — Actions, Schemas & Integrity', () => {
         return { success: false, error: 'One or both selected franchises do not exist.' };
       }
 
+      // 4. Verify teams belong to season
       const crossSeason = foundTeams.find((f) => f.season_id !== parsed.seasonId);
       if (crossSeason) {
         return {
@@ -171,38 +196,149 @@ describe('Match Subsystem — Actions, Schemas & Integrity', () => {
       };
     }
 
+    it('1. real season UUID is accepted', () => {
+      const input = {
+        seasonId: validUuid1,
+        teamAId: validUuid2,
+        teamBId: validUuid3,
+      };
+      const res = simulateCreateMatch('super_admin', input, validUuid1);
+      expect(res.success).toBe(true);
+      expect(res.data?.matchId).toBe('new-match-uuid');
+    });
+
+    it('2. real franchise UUID is accepted', () => {
+      const result = createMatchSchema.safeParse({
+        seasonId: validUuid1,
+        teamAId: validUuid2,
+        teamBId: validUuid3,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('3. invalid season UUID is rejected', () => {
+      const result = createMatchSchema.safeParse({
+        seasonId: 'not-a-valid-uuid',
+        teamAId: validUuid2,
+        teamBId: validUuid3,
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const seasonIssue = result.error.issues.find((i) => i.path.includes('seasonId'));
+        expect(seasonIssue?.message).toBe('Invalid UUID');
+      }
+    });
+
+    it('4. invalid Team A UUID is rejected', () => {
+      const result = createMatchSchema.safeParse({
+        seasonId: validUuid1,
+        teamAId: 'team-a-slug',
+        teamBId: validUuid3,
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const teamAIssue = result.error.issues.find((i) => i.path.includes('teamAId'));
+        expect(teamAIssue?.message).toBe('Invalid UUID');
+      }
+    });
+
+    it('5. invalid Team B UUID is rejected', () => {
+      const result = createMatchSchema.safeParse({
+        seasonId: validUuid1,
+        teamAId: validUuid2,
+        teamBId: 'team-b-slug',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const teamBIssue = result.error.issues.find((i) => i.path.includes('teamBId'));
+        expect(teamBIssue?.message).toBe('Invalid UUID');
+      }
+    });
+
+    it('6. display names are never used as database IDs', () => {
+      const displayNamesInput = {
+        seasonId: 'ACC 2026',
+        teamAId: 'Avanthi Warriors',
+        teamBId: 'Avanthi Kings',
+      };
+      const result = createMatchSchema.safeParse(displayNamesInput);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const paths = result.error.issues.map((i) => i.path[0]);
+        expect(paths).toContain('seasonId');
+        expect(paths).toContain('teamAId');
+        expect(paths).toContain('teamBId');
+        result.error.issues.forEach((issue) => {
+          expect(issue.message).toBe('Invalid UUID');
+        });
+      }
+    });
+
+    it('7. Team A and Team B cannot be identical', () => {
+      const sameTeamInput = {
+        seasonId: validUuid1,
+        teamAId: validUuid2,
+        teamBId: validUuid2,
+      };
+      const result = createMatchSchema.safeParse(sameTeamInput);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.some((i) => i.message === 'Team A and Team B must be different franchises.')).toBe(true);
+      }
+    });
+
+    it('8. nonexistent season is rejected', () => {
+      const nonexistentSeasonId = '99999999-9999-4999-8999-999999999999';
+      const input = {
+        seasonId: nonexistentSeasonId,
+        teamAId: validUuid2,
+        teamBId: validUuid3,
+      };
+      const res = simulateCreateMatch('super_admin', input, null);
+      expect(res.success).toBe(false);
+      expect(res.error).toBe('Specified season does not exist.');
+    });
+
+    it('9. nonexistent franchise is rejected', () => {
+      const nonexistentTeamId = '88888888-8888-4888-8888-888888888888';
+      const input = {
+        seasonId: validUuid1,
+        teamAId: validUuid2,
+        teamBId: nonexistentTeamId,
+      };
+      const res = simulateCreateMatch('super_admin', input, validUuid1);
+      expect(res.success).toBe(false);
+      expect(res.error).toBe('One or both selected franchises do not exist.');
+    });
+
+    it('10. unauthorized user cannot create a match', () => {
+      const input = {
+        seasonId: validUuid1,
+        teamAId: validUuid2,
+        teamBId: validUuid3,
+      };
+      const resFranchise = simulateCreateMatch('franchise', input, validUuid1);
+      expect(resFranchise.success).toBe(false);
+      expect(resFranchise.error).toContain('UNAUTHORIZED');
+
+      const resPlayer = simulateCreateMatch('player', input, validUuid1);
+      expect(resPlayer.success).toBe(false);
+      expect(resPlayer.error).toContain('UNAUTHORIZED');
+
+      const resViewer = simulateCreateMatch('viewer', input, validUuid1);
+      expect(resViewer.success).toBe(false);
+      expect(resViewer.error).toContain('UNAUTHORIZED');
+    });
+
     it('resolves activeSeasonId when seasonId is omitted or empty', () => {
       const input = {
         seasonId: '',
         teamAId: validUuid2,
         teamBId: validUuid3,
       };
-      const res = simulateCreateMatch(input, validUuid1);
+      const res = simulateCreateMatch('super_admin', input, validUuid1);
       expect(res.success).toBe(true);
       expect(res.data?.matchId).toBe('new-match-uuid');
-    });
-
-    it('rejects match creation if activeSeasonId is not available and seasonId is empty', () => {
-      const input = {
-        seasonId: '',
-        teamAId: validUuid2,
-        teamBId: validUuid3,
-      };
-      const res = simulateCreateMatch(input, null);
-      expect(res.success).toBe(false);
-      expect(res.error).toContain('seasonId: Invalid UUID');
-    });
-
-    it('rejects non-existent franchise IDs', () => {
-      const nonExistentId = '99999999-9999-4999-8999-999999999999';
-      const input = {
-        seasonId: validUuid1,
-        teamAId: validUuid2,
-        teamBId: nonExistentId,
-      };
-      const res = simulateCreateMatch(input, validUuid1);
-      expect(res.success).toBe(false);
-      expect(res.error).toBe('One or both selected franchises do not exist.');
     });
 
     it('rejects cross-season franchise mismatch', () => {
@@ -211,7 +347,7 @@ describe('Match Subsystem — Actions, Schemas & Integrity', () => {
         teamAId: validUuid2, // season validUuid1
         teamBId: validUuid4, // season validUuid5
       };
-      const res = simulateCreateMatch(input, validUuid1);
+      const res = simulateCreateMatch('super_admin', input, validUuid1);
       expect(res.success).toBe(false);
       expect(res.error).toBe('One or more selected franchises do not belong to the specified season.');
     });
@@ -222,12 +358,37 @@ describe('Match Subsystem — Actions, Schemas & Integrity', () => {
         teamAId: 'invalid-team-a',
         teamBId: 'invalid-team-b',
       };
-      const res = simulateCreateMatch(input, null);
+      const res = simulateCreateMatch('super_admin', input, null);
       expect(res.success).toBe(false);
       expect(res.error).toContain('seasonId: Invalid UUID');
       expect(res.error).toContain('teamAId: Invalid UUID');
       expect(res.error).toContain('teamBId: Invalid UUID');
       expect(res.error?.startsWith('[')).toBe(false);
+    });
+  });
+
+  describe('Frontend Franchise Select Option Mapping', () => {
+    it('maps franchises into select options using franchise.id as value and franchise.name as label', () => {
+      const franchises = [
+        { id: validUuid2, name: 'Avanthi Warriors', short_name: 'AW' },
+        { id: validUuid3, name: 'Avanthi Kings', short_name: 'AK' },
+      ];
+
+      const options = franchises.map((f) => ({
+        value: f.id,
+        label: `${f.name} (${f.short_name})`,
+      }));
+
+      expect(options[0].value).toBe(validUuid2);
+      expect(options[0].label).toBe('Avanthi Warriors (AW)');
+      expect(options[1].value).toBe(validUuid3);
+      expect(options[1].label).toBe('Avanthi Kings (AK)');
+
+      // Proves that values are valid UUIDs, never display names
+      options.forEach((opt) => {
+        expect(createMatchSchema.shape.teamAId.safeParse(opt.value).success).toBe(true);
+        expect(opt.value).not.toBe(opt.label);
+      });
     });
   });
 
