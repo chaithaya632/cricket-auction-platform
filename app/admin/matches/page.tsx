@@ -63,6 +63,31 @@ export default async function AdminMatchesPage() {
     })
   );
 
+  // 5. Preload active match scorers for all matches
+  const { data: scorersData } = await supabase
+    .from('match_scorers')
+    .select('id, match_id, user_id, is_active')
+    .eq('is_active', true);
+
+  const activeScorersMap: Record<
+    string,
+    { id: string; userId: string; userName: string; userEmail: string }
+  > = {};
+
+  if (scorersData) {
+    for (const s of scorersData) {
+      const u = users.find((usr) => usr.id === s.user_id);
+      if (u) {
+        activeScorersMap[s.match_id] = {
+          id: s.id,
+          userId: s.user_id,
+          userName: u.full_name,
+          userEmail: u.email,
+        };
+      }
+    }
+  }
+
   return (
     <DashboardShell
       role="admin"
@@ -77,6 +102,7 @@ export default async function AdminMatchesPage() {
           users={users}
           matches={matches as any}
           squadMap={squadMap}
+          activeScorersMap={activeScorersMap}
         />
       </div>
     </DashboardShell>

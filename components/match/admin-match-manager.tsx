@@ -16,8 +16,12 @@ import {
   Users,
   Award,
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   Trophy,
+  UserCheck,
+  UserX,
+  Search,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -25,6 +29,7 @@ import {
   createMatchAction,
   updateMatchAction,
   assignMatchScorerAction,
+  unassignMatchScorerAction,
   recordTossAction,
   startMatchAction,
   setPlayingXIAction,
@@ -50,6 +55,10 @@ interface AdminMatchManagerProps {
       derivedPlayerType: string | null;
     }>
   >;
+  activeScorersMap?: Record<
+    string,
+    { id: string; userId: string; userName: string; userEmail: string }
+  >;
 }
 
 export function AdminMatchManager({
@@ -59,6 +68,7 @@ export function AdminMatchManager({
   users,
   matches,
   squadMap,
+  activeScorersMap = {},
 }: AdminMatchManagerProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -84,7 +94,8 @@ export function AdminMatchManager({
   const [youtubeInput, setYoutubeInput] = useState('');
 
   // Scorer assignment form
-  const [assignedUserId, setAssignedUserId] = useState(users[0]?.id || '');
+  const [assignedUserId, setAssignedUserId] = useState('');
+  const [userSearchQuery, setUserSearchQuery] = useState('');
 
   // Toss form
   const [tossWinnerId, setTossWinnerId] = useState('');
@@ -131,7 +142,7 @@ export function AdminMatchManager({
     });
   };
 
-  // 2. Submit Scorer Assignment
+  // 2. Submit Scorer Assignment & Unassignment
   const handleAssignScorer = () => {
     if (!selectedMatch || !assignedUserId || isPending) return;
     setErrorMsg(null);
@@ -145,9 +156,31 @@ export function AdminMatchManager({
       });
 
       if (!res.success) {
-        setErrorMsg(res.error || 'Failed to assign scorer.');
+        setErrorMsg(res.error || 'Failed to assign match operator.');
       } else {
-        setSuccessMsg('Scorer assigned successfully.');
+        setSuccessMsg(
+          `Match operator assigned: ${res.data?.userName || 'User'} (${res.data?.userEmail || ''})`
+        );
+        setShowScorerModal(false);
+        router.refresh();
+      }
+    });
+  };
+
+  const handleUnassignScorer = () => {
+    if (!selectedMatch || isPending) return;
+    const currentScorer = activeScorersMap?.[selectedMatch.id];
+    if (!currentScorer) return;
+
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    startTransition(async () => {
+      const res = await unassignMatchScorerAction(selectedMatch.id, currentScorer.userId);
+      if (!res.success) {
+        setErrorMsg(res.error || 'Failed to remove match operator.');
+      } else {
+        setSuccessMsg('Match operator removed successfully.');
         setShowScorerModal(false);
         router.refresh();
       }
@@ -311,6 +344,7 @@ export function AdminMatchManager({
                   <th className="py-3 px-4">Schedule & Venue</th>
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4">Toss</th>
+                  <th className="py-3 px-4">Operator / Scorer</th>
                   <th className="py-3 px-4">Stream</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
@@ -368,6 +402,26 @@ export function AdminMatchManager({
                       )}
                     </td>
 
+                    {/* Operator / Scorer Column */}
+                    <td className="py-3 px-4">
+                      {activeScorersMap?.[m.id] ? (
+                        <div>
+                          <div className="font-bold text-zinc-100 flex items-center gap-1.5">
+                            <UserCheck className="size-3.5 text-emerald-400 shrink-0" />
+                            <span className="truncate max-w-[140px]">{activeScorersMap[m.id].userName}</span>
+                          </div>
+                          <div className="text-[10px] text-zinc-400 truncate max-w-[140px]">
+                            {activeScorersMap[m.id].userEmail}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-zinc-500 text-xs italic flex items-center gap-1">
+                          <UserX className="size-3 text-zinc-600 shrink-0" />
+                          Unassigned
+                        </span>
+                      )}
+                    </td>
+
                     <td className="py-3 px-4">
                       <button
                         onClick={() => {
@@ -410,17 +464,25 @@ export function AdminMatchManager({
                           Playing XI
                         </Button>
 
-                        {/* Assign Scorer */}
+                        {/* Assign / Change Scorer */}
                         <Button
                           size="sm"
                           variant="outline"
                           onClick={() => {
                             setSelectedMatch(m);
+                            const existing = activeScorersMap?.[m.id];
+                            setAssignedUserId(existing?.userId || users[0]?.id || '');
+                            setUserSearchQuery('');
                             setShowScorerModal(true);
                           }}
-                          className="border-zinc-700 text-zinc-300 text-xs h-8"
+                          className={`border-zinc-700 text-xs h-8 flex items-center gap-1 ${
+                            activeScorersMap?.[m.id]
+                              ? 'text-emerald-400 hover:text-emerald-300'
+                              : 'text-zinc-300 hover:text-zinc-100'
+                          }`}
                         >
-                          Assign Scorer
+                          <UserCheck className="size-3" />
+                          <span>{activeScorersMap?.[m.id] ? 'Change Operator' : 'Assign Operator'}</span>
                         </Button>
 
                         {/* Start Match if in toss/scheduled */}
@@ -599,41 +661,177 @@ export function AdminMatchManager({
 
       {/* ASSIGN SCORER DIALOG */}
       <Dialog open={showScorerModal} onOpenChange={setShowScorerModal}>
-        <DialogContent className="sm:max-w-md bg-zinc-950 border-zinc-800 text-zinc-100">
+        <DialogContent className="sm:max-w-lg bg-zinc-950 border-zinc-800 text-zinc-100 max-h-[85vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle className="text-base font-bold uppercase tracking-wider text-amber-400">
-              Assign Official Scorer
+            <DialogTitle className="text-base font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+              <UserCheck className="size-4" />
+              <span>Match Operator / Scorer</span>
             </DialogTitle>
+            {selectedMatch && (
+              <p className="text-xs text-zinc-400 mt-0.5">
+                {selectedMatch.teamA.name} vs {selectedMatch.teamB.name} • {selectedMatch.max_overs} Overs
+              </p>
+            )}
           </DialogHeader>
 
-          <div className="space-y-4 py-2 text-xs">
-            <div>
-              <label className="block text-zinc-400 font-bold mb-1 uppercase">Select User</label>
-              <select
-                value={assignedUserId}
-                onChange={(e) => setAssignedUserId(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-xl p-2.5 text-zinc-100 font-semibold"
-              >
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.full_name} ({u.email})
-                  </option>
-                ))}
-              </select>
-            </div>
-            <p className="text-zinc-400 text-[11px]">
-              Assigned scorers receive authorization to record deliveries and manage innings for this specific match only.
-            </p>
-          </div>
+          {(() => {
+            const currentScorer = selectedMatch ? activeScorersMap?.[selectedMatch.id] : null;
+            const filteredUsers = users.filter((u) => {
+              if (!userSearchQuery.trim()) return true;
+              const q = userSearchQuery.toLowerCase();
+              return u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+            });
+            const isReplacing = Boolean(currentScorer && assignedUserId && assignedUserId !== currentScorer.userId);
+            const selectedUserObj = users.find((u) => u.id === assignedUserId);
 
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" size="sm" onClick={() => setShowScorerModal(false)} className="border-zinc-800 text-zinc-400">
-              Cancel
-            </Button>
-            <Button size="sm" disabled={isPending} onClick={handleAssignScorer} className="bg-amber-500 hover:bg-amber-400 text-black font-bold">
-              Assign Scorer
-            </Button>
-          </DialogFooter>
+            return (
+              <>
+                <div className="space-y-4 py-2 text-xs flex-1 overflow-y-auto pr-1">
+                  {/* 1. Current Operator Section */}
+                  <div>
+                    <span className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">
+                      Current Operator
+                    </span>
+                    {currentScorer ? (
+                      <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex items-center justify-between">
+                        <div>
+                          <div className="font-bold text-emerald-300 text-sm flex items-center gap-1.5">
+                            <UserCheck className="size-4 text-emerald-400" />
+                            <span>{currentScorer.userName}</span>
+                          </div>
+                          <div className="text-xs text-zinc-400">{currentScorer.userEmail}</div>
+                          <div className="text-[10px] text-emerald-400/80 font-medium mt-1">
+                            Authorized to score this match
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={handleUnassignScorer}
+                          disabled={isPending}
+                          className="text-red-400 hover:text-red-300 hover:bg-red-500/10 text-xs h-7 px-2 border border-red-500/20"
+                        >
+                          Unassign
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-900/40 p-3 text-center text-zinc-400 text-xs italic flex items-center justify-center gap-1.5">
+                        <UserX className="size-3.5 text-zinc-500" />
+                        <span>No operator assigned. Select an existing user below to grant scoring access.</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 2. Replacement Warning (if replacing existing operator) */}
+                  {isReplacing && selectedUserObj && (
+                    <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200 flex items-start gap-2.5">
+                      <AlertTriangle className="size-4 text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="font-bold text-amber-300 mb-0.5">Confirmation Required</div>
+                        <div>
+                          Assigning <strong>{selectedUserObj.full_name}</strong> will replace <strong>{currentScorer?.userName}</strong> as the official operator. {currentScorer?.userName} will immediately lose scoring console access for this match.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 3. User Selection with Search */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
+                        Select User from ACC Directory
+                      </label>
+                      <span className="text-[10px] text-zinc-500">
+                        {filteredUsers.length} available
+                      </span>
+                    </div>
+
+                    {/* Search input */}
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-zinc-500" />
+                      <input
+                        type="text"
+                        placeholder="Search by name or email..."
+                        value={userSearchQuery}
+                        onChange={(e) => setUserSearchQuery(e.target.value)}
+                        className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+
+                    {/* User list */}
+                    <div className="max-h-48 overflow-y-auto space-y-1.5 rounded-xl border border-zinc-800 bg-zinc-900/50 p-2">
+                      {filteredUsers.length > 0 ? (
+                        filteredUsers.map((u) => {
+                          const isSelected = assignedUserId === u.id;
+                          const isCurrent = currentScorer?.userId === u.id;
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => setAssignedUserId(u.id)}
+                              className={`w-full text-left p-2.5 rounded-lg flex items-center justify-between transition-colors ${
+                                isSelected
+                                  ? 'bg-amber-500/20 border border-amber-500/50 text-zinc-100'
+                                  : 'hover:bg-zinc-800/60 border border-transparent text-zinc-300'
+                              }`}
+                            >
+                              <div>
+                                <div className="font-semibold text-xs flex items-center gap-1.5">
+                                  <span>{u.full_name}</span>
+                                  {isCurrent && (
+                                    <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                      Current
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[11px] text-zinc-400">{u.email}</div>
+                              </div>
+                              {isSelected && (
+                                <CheckCircle2 className="size-4 text-amber-400 shrink-0" />
+                              )}
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <div className="p-4 text-center text-xs text-zinc-500">
+                          No users matching &quot;{userSearchQuery}&quot; found.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-2.5 text-[11px] text-zinc-400">
+                    <span className="font-semibold text-zinc-300">Authorization Rule: </span>
+                    The assigned user logs in normally via standard login. They will be authorized to access the Scorer Console for this match only.
+                  </div>
+                </div>
+
+                <DialogFooter className="gap-2 sm:gap-0 pt-3 border-t border-zinc-800">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowScorerModal(false)}
+                    className="border-zinc-800 text-zinc-400"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={isPending || !assignedUserId || (currentScorer?.userId === assignedUserId)}
+                    onClick={handleAssignScorer}
+                    className="bg-amber-500 hover:bg-amber-400 text-black font-bold"
+                  >
+                    {isPending
+                      ? 'Saving...'
+                      : isReplacing
+                      ? 'Confirm Reassignment'
+                      : 'Assign Operator'}
+                  </Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
 

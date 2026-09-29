@@ -123,17 +123,60 @@ export async function updateMatchAction(
 }
 
 /**
- * Assigns or unassigns a scorer to a specific match.
+ * Assigns or unassigns a scorer/operator to a specific match.
  * Super Admin or Operator only.
+ * Validates match existence, season scoping, user existence in public.users,
+ * and deactivates prior active scorers upon reassignment.
  */
 export async function assignMatchScorerAction(
   rawInput: unknown
-): Promise<MatchActionResult<{ scorerId: string }>> {
+): Promise<MatchActionResult<{ scorerId: string; userId: string; matchId: string; userName: string; userEmail: string }>> {
   try {
-    await requireAdmin();
+    const adminContext = await requireAdmin();
     const parsed = assignScorerSchema.parse(rawInput);
     const adminClient = createAdminClient();
 
+    // 1. Verify match exists
+    const { data: match, error: matchError } = await adminClient
+      .from('matches')
+      .select('id, season_id, status')
+      .eq('id', parsed.matchId)
+      .single();
+
+    if (matchError || !match) {
+      return { success: false, error: 'Match not found.' };
+    }
+
+    // 2. Verify match belongs to active season if season is scoped
+    if (adminContext.activeSeason?.id && match.season_id !== adminContext.activeSeason.id) {
+      return { success: false, error: 'Match does not belong to the active season.' };
+    }
+
+    // 3. Verify selected user exists in public.users and is active
+    const { data: targetUser, error: userError } = await adminClient
+      .from('users')
+      .select('id, full_name, email, is_active')
+      .eq('id', parsed.userId)
+      .single();
+
+    if (userError || !targetUser) {
+      return { success: false, error: 'Selected user does not exist in the system.' };
+    }
+
+    if (!targetUser.is_active) {
+      return { success: false, error: 'Selected user account is deactivated.' };
+    }
+
+    // 4. If activating, deactivate any other active scorer for this match to maintain single active operator
+    if (parsed.isActive) {
+      await adminClient
+        .from('match_scorers')
+        .update({ is_active: false })
+        .eq('match_id', parsed.matchId)
+        .neq('user_id', parsed.userId);
+    }
+
+    // 5. Upsert the assignment record (enforcing UNIQUE (match_id, user_id))
     const { data, error } = await adminClient
       .from('match_scorers')
       .upsert(
@@ -151,11 +194,35 @@ export async function assignMatchScorerAction(
       return { success: false, error: error?.message || 'Failed to assign scorer.' };
     }
 
+    // 6. Revalidate relevant paths
+    revalidatePath('/admin/matches');
+    revalidatePath(`/admin/matches/${parsed.matchId}`);
     revalidatePath(`/admin/matches/${parsed.matchId}/score`);
-    return { success: true, data: { scorerId: data.id } };
+
+    return {
+      success: true,
+      data: {
+        scorerId: data.id,
+        userId: parsed.userId,
+        matchId: parsed.matchId,
+        userName: targetUser.full_name,
+        userEmail: targetUser.email,
+      },
+    };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to assign scorer.' };
   }
+}
+
+/**
+ * Removes or deactivates an assigned scorer from a match.
+ * Super Admin or Operator only.
+ */
+export async function unassignMatchScorerAction(
+  matchId: string,
+  userId: string
+): Promise<MatchActionResult> {
+  return assignMatchScorerAction({ matchId, userId, isActive: false });
 }
 
 /**
