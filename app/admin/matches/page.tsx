@@ -16,19 +16,53 @@ export default async function AdminMatchesPage() {
     createClient(),
   ]);
 
-  const season = await getActiveSeason(supabase);
-  const seasonId = season?.id || '';
-  const seasonName = season?.name || 'ACC 2026';
+  const season = permContext.activeSeason || (await getActiveSeason(supabase));
+  let seasonId = season?.id || '';
+  let seasonName = season?.name || 'ACC 2026';
+
+  // If no active season found, query most recent season or default seed season
+  if (!seasonId) {
+    const { data: latestSeason } = await supabase
+      .from('seasons')
+      .select('id, name')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (latestSeason?.id) {
+      seasonId = latestSeason.id;
+      seasonName = latestSeason.name || 'ACC 2026';
+    } else {
+      seasonId = '00000000-0000-0000-0000-000000000001';
+      seasonName = 'ACC 2026';
+    }
+  }
 
   // 1. Fetch franchises for active season
-  const { data: franchisesData } = await supabase
+  let { data: franchisesData } = await supabase
     .from('franchises')
-    .select('id, name, short_name')
+    .select('id, name, short_name, season_id')
     .eq('season_id', seasonId)
     .eq('is_active', true)
     .order('name', { ascending: true });
 
-  const franchises = franchisesData || [];
+  let franchises = franchisesData || [];
+
+  // Fallback: If no franchises found for this seasonId, check if any active franchises exist
+  if (franchises.length === 0) {
+    const { data: allActiveFranchises } = await supabase
+      .from('franchises')
+      .select('id, name, short_name, season_id')
+      .eq('is_active', true)
+      .order('name', { ascending: true });
+
+    if (allActiveFranchises && allActiveFranchises.length > 0) {
+      franchises = allActiveFranchises;
+      if (allActiveFranchises[0]?.season_id) {
+        seasonId = allActiveFranchises[0].season_id;
+      }
+    }
+  }
 
   // 2. Fetch matches for active season
   const matches = await getMatches(supabase, seasonId);

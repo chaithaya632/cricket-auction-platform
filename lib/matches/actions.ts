@@ -40,9 +40,38 @@ export async function createMatchAction(
   rawInput: unknown
 ): Promise<MatchActionResult<{ matchId: string }>> {
   try {
-    await requireAdmin();
-    const parsed = createMatchSchema.parse(rawInput);
+    const adminContext = await requireAdmin();
+
+    // Fallback: If client omitted or passed empty seasonId, safely resolve to active season
+    const rawObj = rawInput && typeof rawInput === 'object' ? (rawInput as Record<string, any>) : {};
+    const inputWithSeason = {
+      ...rawObj,
+      seasonId: rawObj.seasonId || adminContext.activeSeason?.id,
+    };
+
+    const parsed = createMatchSchema.parse(inputWithSeason);
     const adminClient = createAdminClient();
+
+    // Verify both franchises exist in database and belong to specified season
+    const { data: teams, error: teamsError } = await adminClient
+      .from('franchises')
+      .select('id, season_id')
+      .in('id', [parsed.teamAId, parsed.teamBId]);
+
+    if (teamsError || !teams || teams.length < 2) {
+      return {
+        success: false,
+        error: 'One or both selected franchises do not exist.',
+      };
+    }
+
+    const invalidSeasonTeam = teams.find((t) => t.season_id !== parsed.seasonId);
+    if (invalidSeasonTeam) {
+      return {
+        success: false,
+        error: 'One or more selected franchises do not belong to the specified season.',
+      };
+    }
 
     const normalizedYouTube = normalizeYouTubeVideoId(parsed.youtubeUrlOrId);
 
@@ -72,6 +101,12 @@ export async function createMatchAction(
 
     return { success: true, data: { matchId: match.id } };
   } catch (err: any) {
+    if (err?.name === 'ZodError' && Array.isArray(err.issues)) {
+      const issueSummary = err.issues
+        .map((i: any) => `${i.path.join('.') || 'input'}: ${i.message}`)
+        .join('; ');
+      return { success: false, error: issueSummary };
+    }
     return { success: false, error: err?.message || 'Failed to create match.' };
   }
 }

@@ -58,6 +58,43 @@ describe('Match Subsystem — Actions, Schemas & Integrity', () => {
       expect(result.success).toBe(false);
     });
 
+    it('rejects empty strings for seasonId, teamAId, and teamBId with Invalid UUID issues', () => {
+      const emptyInput = {
+        seasonId: '',
+        teamAId: '',
+        teamBId: '',
+      };
+      const result = createMatchSchema.safeParse(emptyInput);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const uuidIssues = result.error.issues.filter((i) => i.message === 'Invalid UUID');
+        const paths = uuidIssues.map((i) => i.path[0]);
+        expect(paths).toContain('seasonId');
+        expect(paths).toContain('teamAId');
+        expect(paths).toContain('teamBId');
+      }
+    });
+
+    it('rejects distinct non-UUID strings with Invalid UUID for each field', () => {
+      const nonUuidInput = {
+        seasonId: 'not-a-uuid',
+        teamAId: 'team-a-slug',
+        teamBId: 'team-b-slug',
+      };
+      const result = createMatchSchema.safeParse(nonUuidInput);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toHaveLength(3);
+        result.error.issues.forEach((issue) => {
+          expect(issue.message).toBe('Invalid UUID');
+        });
+      }
+    });
+
+    it('rejects null or missing required UUID fields', () => {
+      expect(createMatchSchema.safeParse({}).success).toBe(false);
+    });
+
     it('enforces overs boundaries (1 to 50)', () => {
       const zeroOvers = createMatchSchema.safeParse({
         seasonId: validUuid1,
@@ -74,6 +111,123 @@ describe('Match Subsystem — Actions, Schemas & Integrity', () => {
         maxOvers: 51,
       });
       expect(fiftyOneOvers.success).toBe(false);
+    });
+  });
+
+  describe('createMatchAction — Integrity & Season Association Simulation', () => {
+    interface FranchiseRow {
+      id: string;
+      season_id: string;
+      name: string;
+    }
+
+    const franchisesDb: FranchiseRow[] = [
+      { id: validUuid2, season_id: validUuid1, name: 'Chennai Super Kings' },
+      { id: validUuid3, season_id: validUuid1, name: 'Mumbai Indians' },
+      { id: validUuid4, season_id: validUuid5, name: 'Other Season Team' },
+    ];
+
+    function simulateCreateMatch(
+      rawInput: any,
+      activeSeasonId: string | null
+    ) {
+      const rawObj = rawInput && typeof rawInput === 'object' ? rawInput : {};
+      const effectiveSeasonId = rawObj.seasonId || activeSeasonId || '';
+      const inputWithSeason = {
+        ...rawObj,
+        seasonId: effectiveSeasonId,
+      };
+
+      const parseResult = createMatchSchema.safeParse(inputWithSeason);
+      if (!parseResult.success) {
+        const issueSummary = parseResult.error.issues
+          .map((i) => `${i.path.join('.') || 'input'}: ${i.message}`)
+          .join('; ');
+        return { success: false, error: issueSummary };
+      }
+
+      const parsed = parseResult.data;
+
+      // Verify teams
+      const foundTeams = franchisesDb.filter((f) =>
+        [parsed.teamAId, parsed.teamBId].includes(f.id)
+      );
+
+      if (foundTeams.length < 2) {
+        return { success: false, error: 'One or both selected franchises do not exist.' };
+      }
+
+      const crossSeason = foundTeams.find((f) => f.season_id !== parsed.seasonId);
+      if (crossSeason) {
+        return {
+          success: false,
+          error: 'One or more selected franchises do not belong to the specified season.',
+        };
+      }
+
+      return {
+        success: true,
+        data: { matchId: 'new-match-uuid' },
+      };
+    }
+
+    it('resolves activeSeasonId when seasonId is omitted or empty', () => {
+      const input = {
+        seasonId: '',
+        teamAId: validUuid2,
+        teamBId: validUuid3,
+      };
+      const res = simulateCreateMatch(input, validUuid1);
+      expect(res.success).toBe(true);
+      expect(res.data?.matchId).toBe('new-match-uuid');
+    });
+
+    it('rejects match creation if activeSeasonId is not available and seasonId is empty', () => {
+      const input = {
+        seasonId: '',
+        teamAId: validUuid2,
+        teamBId: validUuid3,
+      };
+      const res = simulateCreateMatch(input, null);
+      expect(res.success).toBe(false);
+      expect(res.error).toContain('seasonId: Invalid UUID');
+    });
+
+    it('rejects non-existent franchise IDs', () => {
+      const nonExistentId = '99999999-9999-4999-8999-999999999999';
+      const input = {
+        seasonId: validUuid1,
+        teamAId: validUuid2,
+        teamBId: nonExistentId,
+      };
+      const res = simulateCreateMatch(input, validUuid1);
+      expect(res.success).toBe(false);
+      expect(res.error).toBe('One or both selected franchises do not exist.');
+    });
+
+    it('rejects cross-season franchise mismatch', () => {
+      const input = {
+        seasonId: validUuid1,
+        teamAId: validUuid2, // season validUuid1
+        teamBId: validUuid4, // season validUuid5
+      };
+      const res = simulateCreateMatch(input, validUuid1);
+      expect(res.success).toBe(false);
+      expect(res.error).toBe('One or more selected franchises do not belong to the specified season.');
+    });
+
+    it('formats multiple Zod invalid UUID errors cleanly instead of JSON array dump', () => {
+      const input = {
+        seasonId: 'not-a-uuid',
+        teamAId: 'invalid-team-a',
+        teamBId: 'invalid-team-b',
+      };
+      const res = simulateCreateMatch(input, null);
+      expect(res.success).toBe(false);
+      expect(res.error).toContain('seasonId: Invalid UUID');
+      expect(res.error).toContain('teamAId: Invalid UUID');
+      expect(res.error).toContain('teamBId: Invalid UUID');
+      expect(res.error?.startsWith('[')).toBe(false);
     });
   });
 

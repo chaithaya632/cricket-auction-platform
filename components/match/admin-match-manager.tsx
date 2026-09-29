@@ -92,6 +92,24 @@ export function AdminMatchManager({
   const [scheduledAt, setScheduledAt] = useState('');
   const [maxOvers, setMaxOvers] = useState(20);
   const [youtubeInput, setYoutubeInput] = useState('');
+  const [createModalError, setCreateModalError] = useState<string | null>(null);
+
+  // Synchronize team selections when franchises change or if empty/unselected
+  React.useEffect(() => {
+    if (franchises.length >= 2) {
+      if (!teamAId || !franchises.some((f) => f.id === teamAId)) {
+        setTeamAId(franchises[0].id);
+      }
+      if (!teamBId || !franchises.some((f) => f.id === teamBId)) {
+        const fallbackTeamB = franchises.find((f) => f.id !== franchises[0]?.id) || franchises[1];
+        if (fallbackTeamB) {
+          setTeamBId(fallbackTeamB.id);
+        }
+      }
+    } else if (franchises.length === 1) {
+      if (!teamAId) setTeamAId(franchises[0].id);
+    }
+  }, [franchises, teamAId, teamBId]);
 
   // Scorer assignment form
   const [assignedUserId, setAssignedUserId] = useState('');
@@ -115,9 +133,26 @@ export function AdminMatchManager({
     if (isPending) return;
     setErrorMsg(null);
     setSuccessMsg(null);
+    setCreateModalError(null);
+
+    if (franchises.length < 2) {
+      const err = 'At least two active franchises are required in this season to schedule a match.';
+      setErrorMsg(err);
+      setCreateModalError(err);
+      return;
+    }
+
+    if (!seasonId || !teamAId || !teamBId) {
+      const err = 'Please select valid teams and ensure an active season is configured.';
+      setErrorMsg(err);
+      setCreateModalError(err);
+      return;
+    }
 
     if (teamAId === teamBId) {
-      setErrorMsg('Team A and Team B must be different franchises.');
+      const err = 'Team A and Team B must be different franchises.';
+      setErrorMsg(err);
+      setCreateModalError(err);
       return;
     }
 
@@ -133,10 +168,13 @@ export function AdminMatchManager({
       });
 
       if (!res.success) {
-        setErrorMsg(res.error || 'Failed to create match.');
+        const err = res.error || 'Failed to create match.';
+        setErrorMsg(err);
+        setCreateModalError(err);
       } else {
         setSuccessMsg('Match fixture created successfully.');
         setShowCreateModal(false);
+        setCreateModalError(null);
         router.refresh();
       }
     });
@@ -304,6 +342,11 @@ export function AdminMatchManager({
           onClick={() => {
             setErrorMsg(null);
             setSuccessMsg(null);
+            setCreateModalError(null);
+            if (franchises.length >= 2) {
+              setTeamAId(franchises[0].id);
+              setTeamBId(franchises[1].id);
+            }
             setShowCreateModal(true);
           }}
           className="bg-amber-500 hover:bg-amber-400 text-black font-bold gap-2 text-xs"
@@ -518,20 +561,42 @@ export function AdminMatchManager({
             </DialogTitle>
           </DialogHeader>
 
+          {createModalError && (
+            <div className="rounded-xl bg-red-950/80 border border-red-800/80 p-3 text-xs text-red-200 flex items-center gap-2">
+              <AlertCircle className="size-4 shrink-0 text-red-400" />
+              <span>{createModalError}</span>
+            </div>
+          )}
+
+          {franchises.length < 2 && (
+            <div className="rounded-xl bg-amber-950/60 border border-amber-800/80 p-3 text-xs text-amber-200 flex items-center gap-2">
+              <AlertTriangle className="size-4 shrink-0 text-amber-400" />
+              <span>At least two franchises must exist in this season before scheduling a match.</span>
+            </div>
+          )}
+
           <div className="space-y-4 py-2 text-xs">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-zinc-400 font-bold mb-1 uppercase">Team A</label>
                 <select
                   value={teamAId}
-                  onChange={(e) => setTeamAId(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl p-2.5 text-zinc-100 font-semibold"
+                  onChange={(e) => {
+                    setTeamAId(e.target.value);
+                    setCreateModalError(null);
+                  }}
+                  disabled={franchises.length === 0}
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl p-2.5 text-zinc-100 font-semibold disabled:opacity-50"
                 >
-                  {franchises.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.name} ({f.short_name})
-                    </option>
-                  ))}
+                  {franchises.length === 0 ? (
+                    <option value="">No franchises available</option>
+                  ) : (
+                    franchises.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name} ({f.short_name})
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
 
@@ -539,14 +604,22 @@ export function AdminMatchManager({
                 <label className="block text-zinc-400 font-bold mb-1 uppercase">Team B</label>
                 <select
                   value={teamBId}
-                  onChange={(e) => setTeamBId(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl p-2.5 text-zinc-100 font-semibold"
+                  onChange={(e) => {
+                    setTeamBId(e.target.value);
+                    setCreateModalError(null);
+                  }}
+                  disabled={franchises.length === 0}
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl p-2.5 text-zinc-100 font-semibold disabled:opacity-50"
                 >
-                  {franchises.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.name} ({f.short_name})
-                    </option>
-                  ))}
+                  {franchises.length === 0 ? (
+                    <option value="">No franchises available</option>
+                  ) : (
+                    franchises.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name} ({f.short_name})
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
             </div>
@@ -604,7 +677,12 @@ export function AdminMatchManager({
             <Button variant="outline" size="sm" onClick={() => setShowCreateModal(false)} className="border-zinc-800 text-zinc-400">
               Cancel
             </Button>
-            <Button size="sm" disabled={isPending} onClick={handleCreateMatch} className="bg-amber-500 hover:bg-amber-400 text-black font-bold">
+            <Button
+              size="sm"
+              disabled={isPending || franchises.length < 2 || !teamAId || !teamBId || teamAId === teamBId}
+              onClick={handleCreateMatch}
+              className="bg-amber-500 hover:bg-amber-400 text-black font-bold disabled:opacity-50"
+            >
               Create Match
             </Button>
           </DialogFooter>
