@@ -27,6 +27,7 @@ import {
   startInningsSchema,
   recordDeliverySchema,
   undoDeliverySchema,
+  deleteMatchSchema,
   normalizeYouTubeVideoId,
 } from './validation';
 import type { MatchActionResult, MatchDetails } from './types';
@@ -916,5 +917,57 @@ export async function completeMatchAction(
     return { success: true, data: { matchId } };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to complete match.' };
+  }
+}
+
+/**
+ * Deletes a match and all associated data.
+ * Super Admin or Operator only.
+ */
+export async function deleteMatchAction(
+  rawInput: unknown
+): Promise<MatchActionResult> {
+  try {
+    await requireAdmin();
+    const parsed = deleteMatchSchema.parse(rawInput);
+    const adminClient = createAdminClient();
+
+    const { data: match, error: fetchError } = await adminClient
+      .from('matches')
+      .select('status')
+      .eq('id', parsed.matchId)
+      .single();
+
+    if (fetchError || !match) {
+      return { success: false, error: 'Match not found.' };
+    }
+
+    if (match.status !== 'scheduled' && match.status !== 'live') {
+      return { success: false, error: 'Only scheduled or live matches can be deleted.' };
+    }
+
+    const { error } = await adminClient
+      .from('matches')
+      .delete()
+      .eq('id', parsed.matchId);
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/matches');
+    revalidatePath('/admin/matches');
+
+    await broadcastMatchUpdate(parsed.matchId, 'MATCH_DELETED');
+
+    return { success: true };
+  } catch (err: any) {
+    if (err?.name === 'ZodError' && Array.isArray(err.issues)) {
+      const issueSummary = err.issues
+        .map((i: any) => `${i.path.join('.') || 'input'}: ${i.message}`)
+        .join('; ');
+      return { success: false, error: issueSummary };
+    }
+    return { success: false, error: err?.message || 'Failed to delete match.' };
   }
 }

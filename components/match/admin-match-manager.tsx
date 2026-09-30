@@ -22,6 +22,7 @@ import {
   UserCheck,
   UserX,
   Search,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -33,6 +34,7 @@ import {
   recordTossAction,
   startMatchAction,
   setPlayingXIAction,
+  deleteMatchAction,
 } from '@/lib/matches/actions';
 import type { DbMatch } from '@/lib/matches/types';
 
@@ -82,6 +84,8 @@ export function AdminMatchManager({
   const [showTossModal, setShowTossModal] = useState(false);
   const [showPlayingXIModal, setShowPlayingXIModal] = useState(false);
   const [showYouTubeModal, setShowYouTubeModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   const [selectedMatch, setSelectedMatch] = useState<any | null>(null);
 
@@ -325,6 +329,33 @@ export function AdminMatchManager({
     });
   };
 
+  // Submit Delete Match
+  const handleDeleteMatch = () => {
+    if (!selectedMatch || isPending) return;
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    // For live matches, require typing DELETE
+    const isLive = selectedMatch.status === 'live';
+    if (isLive && deleteConfirmText !== 'DELETE') {
+      setErrorMsg('Type DELETE to confirm removing a live match.');
+      return;
+    }
+
+    startTransition(async () => {
+      const res = await deleteMatchAction({ matchId: selectedMatch.id });
+      if (!res.success) {
+        setErrorMsg(res.error || 'Failed to delete match.');
+      } else {
+        setSuccessMsg('Match deleted successfully.');
+        setShowDeleteModal(false);
+        setDeleteConfirmText('');
+        setSelectedMatch(null);
+        router.refresh();
+      }
+    });
+  };
+
   return (
     <div className="space-y-6">
       {/* Action Header */}
@@ -536,6 +567,23 @@ export function AdminMatchManager({
                             className="bg-blue-600 hover:bg-blue-500 text-white text-xs h-8"
                           >
                             Start Match
+                          </Button>
+                        )}
+
+                        {/* Delete Match */}
+                        {(m.status === 'scheduled' || m.status === 'live') && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedMatch(m);
+                              setDeleteConfirmText('');
+                              setShowDeleteModal(true);
+                            }}
+                            className="border-red-900/60 text-red-400 hover:bg-red-950/50 text-xs h-8"
+                          >
+                            <Trash2 className="size-3.5 mr-1" />
+                            Delete
                           </Button>
                         )}
                       </div>
@@ -1082,6 +1130,72 @@ export function AdminMatchManager({
             </Button>
             <Button size="sm" disabled={isPending} onClick={handleUpdateYouTube} className="bg-red-600 hover:bg-red-500 text-white font-bold">
               Save Video Stream
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* DELETE MATCH DIALOG */}
+      <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
+        <DialogContent className="sm:max-w-md bg-zinc-950 border-zinc-800 text-zinc-100">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold uppercase tracking-wider text-red-400">
+              Delete Match
+            </DialogTitle>
+          </DialogHeader>
+
+          {selectedMatch && (
+            <div className="space-y-4 py-2 text-xs">
+              <div className="rounded-xl bg-red-950/60 border border-red-800/80 p-3 text-red-200 flex items-center gap-2">
+                <AlertTriangle className="size-4 shrink-0 text-red-400" />
+                <span>
+                  {selectedMatch.status === 'live'
+                    ? 'This is a LIVE match. Deletion will permanently remove all match data including innings, deliveries, and scorer assignments.'
+                    : 'This will permanently remove this scheduled match fixture.'}
+                </span>
+              </div>
+
+              <div className="space-y-2 text-zinc-300">
+                <div><span className="text-zinc-500">Team A:</span> <strong>{selectedMatch.teamA?.name || selectedMatch.team_a_id}</strong></div>
+                <div><span className="text-zinc-500">Team B:</span> <strong>{selectedMatch.teamB?.name || selectedMatch.team_b_id}</strong></div>
+                <div><span className="text-zinc-500">Status:</span> <strong className="uppercase">{selectedMatch.status}</strong></div>
+                {selectedMatch.venue && (
+                  <div><span className="text-zinc-500">Venue:</span> {selectedMatch.venue}</div>
+                )}
+              </div>
+
+              {selectedMatch.status === 'live' && (
+                <div>
+                  <label className="block text-zinc-400 font-bold mb-1.5 uppercase">
+                    Type DELETE to confirm
+                  </label>
+                  <input
+                    type="text"
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    placeholder="DELETE"
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl p-2.5 text-zinc-100 font-mono tracking-widest"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="flex gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }} className="border-zinc-800 text-zinc-400">
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={
+                isPending ||
+                (selectedMatch?.status === 'live' &&
+                  deleteConfirmText !== 'DELETE')
+              }
+              onClick={handleDeleteMatch}
+              className="bg-red-600 hover:bg-red-500 text-white font-bold"
+            >
+              {isPending ? 'Deleting...' : 'Delete Match'}
             </Button>
           </DialogFooter>
         </DialogContent>

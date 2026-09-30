@@ -133,3 +133,7 @@ export const undoDeliverySchema = z.object({
   inningsId: z.string().uuid(),
   reason: z.string().min(1).max(200).default('Scorer corrected last ball'),
 });
+
+export const deleteMatchSchema = z.object({
+  matchId: z.string().uuid(),
+});

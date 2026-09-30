@@ -231,7 +231,8 @@ export type MatchEventType =
   | 'WICKET'
   | 'INNINGS_COMPLETED'
   | 'MATCH_COMPLETED'
-  | 'VIDEO_UPDATED';
+  | 'VIDEO_UPDATED'
+  | 'MATCH_DELETED';
 
 export interface MatchActionResult<T = unknown> {
   success: boolean;
