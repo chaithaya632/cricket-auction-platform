@@ -26,13 +26,29 @@ export default async function AdminQueuePage() {
   ])
 
   return (
-    <LotQueueManager
-      sessionUser={sessionUser}
-      activeLot={activeLot}
-      upcomingLots={upcomingLots}
-      unsoldLots={unsoldLots}
-      completedLots={completedLots}
-      candidates={candidates}
-    />
+    <div className="space-y-4">
+      <div className="bg-emerald-950/80 border border-emerald-800 p-4 rounded-xl flex flex-wrap items-center justify-between gap-3 text-xs text-emerald-200">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">🎙</span>
+          <span>
+            <strong>Unified Workflow Available:</strong> The Lot Queue and Live Console are now unified in the new <strong>Auction Control Center</strong>.
+          </span>
+        </div>
+        <a
+          href="/admin/auction"
+          className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow transition-all"
+        >
+          Open Auction Control Center →
+        </a>
+      </div>
+      <LotQueueManager
+        sessionUser={sessionUser}
+        activeLot={activeLot}
+        upcomingLots={upcomingLots}
+        unsoldLots={unsoldLots}
+        completedLots={completedLots}
+        candidates={candidates}
+      />
+    </div>
   )
 }

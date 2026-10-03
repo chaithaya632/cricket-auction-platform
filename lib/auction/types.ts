@@ -139,3 +139,37 @@ export interface AuctionRecoveryResult {
   reversedSoldLotsCount: number;
 }
 
+export const DEFAULT_BUCKET_ORDER = ['B3', 'B4', 'B2', 'B5', 'B1', 'PG'] as const;
+export type AuctionBucket = (typeof DEFAULT_BUCKET_ORDER)[number];
+
+export interface GuestDrawCandidate {
+  cardNumber: number;
+  cardLabel: string;
+  lotId: string;
+  drawNumber: number;
+  playerName: string;
+  rollNumber: string;
+  bucket: string;
+  basePrice: number;
+  photoUrl: string | null;
+  drawn: boolean;
+}
+
+export interface AuctionBroadcastPayload {
+  type: string;
+  seasonId: string;
+  lotId?: string | null;
+  currentPrice?: number | null;
+  highestBidderId?: string | null;
+  highestBidderName?: string | null;
+  highestBidderShortName?: string | null;
+  highestBidderPrimaryColor?: string | null;
+  startedAt?: string | null;
+  durationSeconds?: number | null;
+  remainingSeconds?: number | null;
+  sessionStatus?: string | null;
+  sequenceNumber?: number | string;
+  activeBuckets?: string[] | null;
+  timestamp: string;
+}
+

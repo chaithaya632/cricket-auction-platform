@@ -3,6 +3,9 @@
 // =============================================================================
 
 import React from 'react';
+import { getCurrentUser } from '@/lib/auth/session';
+import { getUserPermissionContext, getActiveSeason } from '@/lib/permissions/context';
+import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   getActiveLot,
@@ -12,18 +15,25 @@ import {
   getActiveLotScarcity,
   getAllFranchisesLiveSummary,
 } from '@/lib/auction/queries';
-import { getActiveSeason } from '@/lib/permissions/context';
 import { ActiveLotCard } from '@/components/auction/active-lot-card';
 import { AuctionTimer } from '@/components/auction/auction-timer';
 import { LiveExitBar } from '@/components/auction/live-exit-bar';
 import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
 import { FranchiseStatusBar } from '@/components/auction/franchise-status-bar';
+import { ProjectorControlDock } from '@/components/auction/projector-control-dock';
 
 export const dynamic = 'force-dynamic';
 
 export default async function ProjectorPage() {
+  const { appUser } = await getCurrentUser();
+  const supabase = await createClient();
   const adminClient = createAdminClient();
-  const activeSeason = await getActiveSeason(adminClient);
+
+  const userContext = appUser
+    ? await getUserPermissionContext(supabase, appUser)
+    : null;
+
+  const activeSeason = userContext?.activeSeason || (await getActiveSeason(adminClient));
   const seasonId = activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 
   const [activeLot, recentEvents, config, sessionState] = await Promise.all([
@@ -41,6 +51,8 @@ export default async function ProjectorPage() {
   const timerDuration = activeLot?.highest_bidder_franchise_id
     ? config.subsequentBidTimerSeconds
     : config.firstBidTimerSeconds;
+
+  const canControl = Boolean(userContext?.isAdmin);
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col justify-between">
@@ -172,6 +184,14 @@ export default async function ProjectorPage() {
         franchises={franchiseSummaries}
         activeLotDrawNumber={activeLot?.draw_number}
       />
+
+      {/* Floating Operator Dock for Authorized Admins/Operators only */}
+      {canControl && (
+        <ProjectorControlDock
+          activeLot={activeLot}
+          sessionState={sessionState}
+        />
+      )}
     </div>
   );
 }

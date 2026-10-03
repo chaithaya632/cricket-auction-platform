@@ -10,7 +10,9 @@ import type {
   AuctionConfigDTO,
   AuctionSessionState,
   FranchiseLiveSummaryItem,
+  GuestDrawCandidate,
 } from './types';
+import { DEFAULT_BUCKET_ORDER } from './types';
 import type { LotStatus, AuctionEventType } from '@/lib/constants';
 import { detectBucketScarcity, type BucketScarcityReport, type FranchiseBucketNeed } from '@/domain/scarcity';
 import { calculateMaxPermissibleBid, type MandatoryBucketDeficit } from '@/domain/franchises/max-bid';
@@ -979,3 +981,204 @@ export async function getAllFranchisesLiveSummary(
     return [];
   }
 }
+
+/**
+ * Retrieves the currently active auction buckets from season_config.
+ * Defaults to all buckets in DEFAULT_BUCKET_ORDER if unset or invalid.
+ */
+export const getActiveBuckets = cache(async (
+  supabase: SupabaseClient,
+  seasonId: string
+): Promise<string[]> => {
+  const { data: config } = await supabase
+    .from('season_config')
+    .select('value')
+    .eq('season_id', seasonId)
+    .eq('key', 'auction_active_buckets')
+    .maybeSingle();
+
+  if (config?.value) {
+    try {
+      const parsed = JSON.parse(config.value);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const valid = parsed.filter((b) => (DEFAULT_BUCKET_ORDER as readonly string[]).includes(b));
+        if (valid.length > 0) {
+          return DEFAULT_BUCKET_ORDER.filter((b) => valid.includes(b));
+        }
+      }
+    } catch {
+      // Fallback on JSON parse error
+    }
+  }
+
+  return [...DEFAULT_BUCKET_ORDER];
+});
+
+/**
+ * Fetches upcoming pending lots filtered by active buckets, sorted deterministically:
+ * 1. Bucket precedence defined by DEFAULT_BUCKET_ORDER (B3 -> B4 -> B2 -> B5 -> B1 -> PG)
+ * 2. draw_number ASC within bucket.
+ */
+export const getAuctionQueueByBuckets = cache(async (
+  supabase: SupabaseClient,
+  seasonId: string,
+  activeBuckets: string[],
+  limit = 50
+): Promise<AuctionLotWithDetails[]> => {
+  if (!activeBuckets || activeBuckets.length === 0) return [];
+
+  const { data: lots, error } = await supabase
+    .from('auction_lots')
+    .select('*')
+    .eq('season_id', seasonId)
+    .eq('status', 'pending')
+    .in('bucket', activeBuckets)
+    .order('round', { ascending: true })
+    .order('draw_number', { ascending: true })
+    .limit(limit * 2);
+
+  if (error || !lots || lots.length === 0) {
+    return [];
+  }
+
+  // Deterministic sorting: bucket priority first, then draw_number ASC
+  const sortedLots = [...lots].sort((a, b) => {
+    const bucketOrderA = DEFAULT_BUCKET_ORDER.indexOf(a.bucket as any);
+    const bucketOrderB = DEFAULT_BUCKET_ORDER.indexOf(b.bucket as any);
+    const rankA = bucketOrderA === -1 ? 999 : bucketOrderA;
+    const rankB = bucketOrderB === -1 ? 999 : bucketOrderB;
+    if (rankA !== rankB) return rankA - rankB;
+    return a.draw_number - b.draw_number;
+  }).slice(0, limit);
+
+  const registrationIds = sortedLots.map((l) => l.registration_id);
+  const { data: playersView } = await supabase
+    .from('public_players_view')
+    .select('registration_id, player_id, full_name, photo_url, programme, academic_year, branch, cricheroes_url')
+    .in('registration_id', registrationIds);
+
+  const playerMap = new Map<string, any>();
+  if (playersView) {
+    for (const p of playersView) {
+      playerMap.set(p.registration_id, p);
+    }
+  }
+
+  return sortedLots.map((lot) => {
+    const playerView = playerMap.get(lot.registration_id);
+    return {
+      id: lot.id,
+      season_id: lot.season_id,
+      registration_id: lot.registration_id,
+      bucket: lot.bucket,
+      draw_number: lot.draw_number,
+      base_price: lot.base_price,
+      round: lot.round,
+      status: lot.status as LotStatus,
+      current_price: lot.current_price,
+      highest_bidder_franchise_id: lot.highest_bidder_franchise_id,
+      started_at: lot.started_at,
+      ended_at: lot.ended_at,
+      created_at: lot.created_at,
+      updated_at: lot.updated_at,
+      player: {
+        id: playerView?.player_id || lot.registration_id,
+        full_name: playerView?.full_name || 'Tournament Player',
+        photo_url: playerView?.photo_url || null,
+      },
+      registration: {
+        id: lot.registration_id,
+        branch: playerView?.branch || '',
+        academic_year: playerView?.academic_year || 1,
+        programme: playerView?.programme || '',
+        cricheroes_profile_url: playerView?.cricheroes_url || null,
+      },
+      highest_bidder: null,
+    };
+  });
+});
+
+/**
+ * Fetches stable Guest Draw candidates for a specific bucket.
+ * Card numbers (01, 02, ...) are deterministically assigned from
+ * all lots in the bucket sorted by draw_number ASC.
+ */
+export const getGuestDrawCandidates = cache(async (
+  supabase: SupabaseClient,
+  seasonId: string,
+  bucket: string
+): Promise<GuestDrawCandidate[]> => {
+  const { data: lots, error } = await supabase
+    .from('auction_lots')
+    .select('id, draw_number, bucket, base_price, registration_id, status')
+    .eq('season_id', seasonId)
+    .eq('bucket', bucket)
+    .order('draw_number', { ascending: true });
+
+  if (error || !lots) return [];
+
+  const registrationIds = lots.map((l) => l.registration_id);
+  const { data: playersView } = await supabase
+    .from('public_players_view')
+    .select('registration_id, player_id, full_name, photo_url, roll_number')
+    .in('registration_id', registrationIds);
+
+  const playerMap = new Map<string, any>();
+  if (playersView) {
+    for (const p of playersView) {
+      playerMap.set(p.registration_id, p);
+    }
+  }
+
+  return lots.map((lot, idx) => {
+    const p = playerMap.get(lot.registration_id);
+    const cardNumber = idx + 1;
+    const cardLabel = cardNumber < 10 ? `0${cardNumber}` : `${cardNumber}`;
+    return {
+      cardNumber,
+      cardLabel,
+      lotId: lot.id,
+      drawNumber: lot.draw_number,
+      playerName: p?.full_name || 'Player',
+      rollNumber: p?.roll_number || '',
+      bucket: lot.bucket,
+      basePrice: lot.base_price,
+      photoUrl: p?.photo_url || null,
+      drawn: lot.status !== 'pending',
+    };
+  });
+});
+
+/**
+ * Returns bucket counts (pending, total, in_progress flag) across all standard buckets.
+ */
+export const getBucketStatistics = cache(async (
+  supabase: SupabaseClient,
+  seasonId: string
+): Promise<Record<string, { pending: number; total: number; inProgress: boolean }>> => {
+  const { data: lots } = await supabase
+    .from('auction_lots')
+    .select('bucket, status')
+    .eq('season_id', seasonId);
+
+  const stats: Record<string, { pending: number; total: number; inProgress: boolean }> = {};
+  for (const b of DEFAULT_BUCKET_ORDER) {
+    stats[b] = { pending: 0, total: 0, inProgress: false };
+  }
+
+  if (lots) {
+    for (const l of lots) {
+      if (!stats[l.bucket]) {
+        stats[l.bucket] = { pending: 0, total: 0, inProgress: false };
+      }
+      stats[l.bucket].total += 1;
+      if (l.status === 'pending') {
+        stats[l.bucket].pending += 1;
+      } else if (l.status === 'in_progress') {
+        stats[l.bucket].inProgress = true;
+      }
+    }
+  }
+
+  return stats;
+});

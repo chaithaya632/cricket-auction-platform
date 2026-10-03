@@ -4,10 +4,14 @@
 // ACC Auction Portal — Components: Active Lot Card
 // =============================================================================
 
-import React, { useState } from 'react';
-import type { AuctionLotWithDetails } from '@/lib/auction/types';
+import React, { useState, useEffect } from 'react';
+import type { AuctionLotWithDetails, AuctionLotFranchiseInfo } from '@/lib/auction/types';
+import type { LotStatus } from '@/lib/constants';
 import { bringDownUnsoldLotAction, reAuctionUnsoldLotAction } from '@/lib/auction/actions';
-import { runWithLocalActionTracking } from '@/components/auction/auction-realtime-sync';
+import {
+  runWithLocalActionTracking,
+  subscribeAuctionDelta,
+} from '@/components/auction/auction-realtime-sync';
 
 interface ActiveLotCardProps {
   lot: AuctionLotWithDetails | null;
@@ -28,6 +32,42 @@ export function ActiveLotCard({
 }: ActiveLotCardProps) {
   const [isPending, setIsPending] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const [currentPrice, setCurrentPrice] = useState<number | null>(lot?.current_price ?? null);
+  const [highestBidder, setHighestBidder] = useState<AuctionLotFranchiseInfo | null>(lot?.highest_bidder ?? null);
+  const [lotStatus, setLotStatus] = useState<LotStatus>(lot?.status ?? 'pending');
+
+  useEffect(() => {
+    setCurrentPrice(lot?.current_price ?? null);
+    setHighestBidder(lot?.highest_bidder ?? null);
+    setLotStatus(lot?.status ?? 'pending');
+  }, [lot?.id, lot?.current_price, lot?.highest_bidder, lot?.status]);
+
+  useEffect(() => {
+    if (!lot) return;
+    return subscribeAuctionDelta((payload) => {
+      if (payload.lotId && payload.lotId !== lot.id) return;
+
+      if (payload.type === 'BID_PLACED') {
+        if (payload.currentPrice !== undefined && payload.currentPrice !== null) {
+          setCurrentPrice(payload.currentPrice);
+        }
+        if (payload.highestBidderId) {
+          setHighestBidder({
+            id: payload.highestBidderId,
+            name: payload.highestBidderName || 'Franchise',
+            short_name: payload.highestBidderShortName || '',
+            primary_color: payload.highestBidderPrimaryColor || '#10b981',
+            secondary_color: null,
+          });
+        }
+      } else if (payload.type === 'SALE') {
+        setLotStatus('sold');
+      } else if (payload.type === 'UNSOLD') {
+        setLotStatus('unsold');
+      }
+    });
+  }, [lot?.id]);
 
   const handleBringDown = async () => {
     if (!lot || isPending || isActionPending) return;
@@ -87,7 +127,7 @@ export function ActiveLotCard({
 
   const isProjector = size === 'projector';
   const priceDisplay =
-    lot.current_price !== null ? `₹${lot.current_price}` : `₹${lot.base_price} (Base)`;
+    currentPrice !== null ? `₹${currentPrice}` : `₹${lot.base_price} (Base)`;
 
   return (
     <div
@@ -115,16 +155,16 @@ export function ActiveLotCard({
         <div className="flex items-center gap-2">
           <span
             className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wider ${
-              lot.status === 'in_progress'
+              lotStatus === 'in_progress'
                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 animate-pulse'
-                : lot.status === 'sold'
+                : lotStatus === 'sold'
                 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-extrabold'
-                : lot.status === 'unsold'
+                : lotStatus === 'unsold'
                 ? 'bg-red-500/20 text-red-400 border border-red-500/30'
                 : 'bg-zinc-800 text-zinc-400'
             }`}
           >
-            {lot.status === 'in_progress' ? 'LIVE ON FLOOR' : lot.status.toUpperCase()}
+            {lotStatus === 'in_progress' ? 'LIVE ON FLOOR' : lotStatus.toUpperCase()}
           </span>
         </div>
       </div>
@@ -210,7 +250,7 @@ export function ActiveLotCard({
 
         {/* Pricing & Highest Bidder Column */}
         <div className="md:col-span-8 flex flex-col justify-center space-y-4">
-          {lot.status === 'sold' ? (
+          {lotStatus === 'sold' ? (
             <div className="rounded-2xl bg-gradient-to-br from-amber-500/15 via-zinc-950 to-emerald-950/30 border-2 border-amber-500/60 p-6 md:p-8 shadow-2xl relative overflow-hidden">
               <div className="flex items-center justify-between gap-4">
                 <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/20 px-4 py-1.5 text-sm font-black uppercase tracking-widest text-emerald-400 border border-emerald-500/50 shadow-sm animate-pulse">
@@ -226,29 +266,29 @@ export function ActiveLotCard({
                   isProjector ? 'text-7xl' : 'text-6xl'
                 }`}
               >
-                ₹{lot.current_price !== null ? lot.current_price : lot.base_price}
+                ₹{currentPrice !== null ? currentPrice : lot.base_price}
               </div>
 
               <div className="mt-6 pt-5 border-t border-zinc-800">
                 <span className="text-xs font-extrabold uppercase tracking-widest text-amber-400 block mb-3">
                   SOLD TO
                 </span>
-                {lot.highest_bidder ? (
+                {highestBidder ? (
                   <div className="flex items-center gap-4 p-4 rounded-xl bg-zinc-900/90 border border-amber-500/30 shadow-inner">
                     <div
                       className="size-14 rounded-xl flex items-center justify-center font-black text-xl text-zinc-950 shadow-md shrink-0"
                       style={{
-                        backgroundColor: lot.highest_bidder.primary_color || '#eab308',
+                        backgroundColor: highestBidder.primary_color || '#eab308',
                       }}
                     >
-                      {lot.highest_bidder.short_name}
+                      {highestBidder.short_name}
                     </div>
                     <div className="min-w-0 flex-1">
                       <h3 className="font-black text-zinc-100 text-2xl md:text-3xl tracking-tight truncate leading-tight">
-                        {lot.highest_bidder.name}
+                        {highestBidder.name}
                       </h3>
                       <p className="text-xs text-emerald-400 font-mono font-semibold mt-1">
-                        Winning Franchise · Acquired for ₹{lot.current_price !== null ? lot.current_price : lot.base_price}
+                        Winning Franchise · Acquired for ₹{currentPrice !== null ? currentPrice : lot.base_price}
                       </p>
                     </div>
                   </div>
@@ -259,7 +299,7 @@ export function ActiveLotCard({
                 )}
               </div>
             </div>
-          ) : lot.status === 'unsold' ? (
+          ) : lotStatus === 'unsold' ? (
             <div className="rounded-2xl bg-zinc-950 border-2 border-red-500/40 p-6 md:p-8 shadow-xl">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/20 px-3.5 py-1 text-xs font-black uppercase tracking-widest text-red-400 border border-red-500/40">
                 UNSOLD
@@ -316,7 +356,7 @@ export function ActiveLotCard({
               <div className="rounded-xl bg-zinc-950/80 border border-zinc-800/80 p-5">
                 <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
                   <span className="size-2 rounded-full bg-emerald-400 animate-ping" />
-                  {lot.current_price !== null ? 'CURRENT BID' : 'OPENING BASE PRICE'}
+                  {currentPrice !== null ? 'CURRENT BID' : 'OPENING BASE PRICE'}
                 </span>
                 <div
                   className={`font-mono font-black text-emerald-400 tracking-tight mt-1 ${
@@ -336,22 +376,22 @@ export function ActiveLotCard({
                   HIGHEST BIDDER
                 </span>
 
-                {lot.highest_bidder ? (
+                {highestBidder ? (
                   <div className="flex items-center gap-3 mt-2">
                     <div
                       className="size-11 rounded-lg flex items-center justify-center font-bold text-zinc-950 shadow shrink-0"
                       style={{
-                        backgroundColor: lot.highest_bidder.primary_color || '#10b981',
+                        backgroundColor: highestBidder.primary_color || '#10b981',
                       }}
                     >
-                      {lot.highest_bidder.short_name}
+                      {highestBidder.short_name}
                     </div>
                     <div>
                       <h4 className="font-bold text-zinc-100 text-lg">
-                        {lot.highest_bidder.name}
+                        {highestBidder.name}
                       </h4>
                       <p className="text-xs text-zinc-400">
-                        Holding highest bid at ₹{lot.current_price}
+                        Holding highest bid at ₹{currentPrice}
                       </p>
                     </div>
                   </div>

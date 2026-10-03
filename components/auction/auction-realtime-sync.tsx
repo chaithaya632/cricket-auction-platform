@@ -15,6 +15,8 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import type { AuctionBroadcastPayload } from '@/lib/auction/types';
+import { playBidGavelChime } from '@/lib/auction/audio';
 
 export type RealtimeChannelHealth =
   | 'CONNECTING'
@@ -22,6 +24,26 @@ export type RealtimeChannelHealth =
   | 'CHANNEL_ERROR'
   | 'TIMED_OUT'
   | 'CLOSED';
+
+export type AuctionDeltaListener = (payload: AuctionBroadcastPayload) => void;
+const deltaListeners = new Set<AuctionDeltaListener>();
+
+export function subscribeAuctionDelta(listener: AuctionDeltaListener): () => void {
+  deltaListeners.add(listener);
+  return () => {
+    deltaListeners.delete(listener);
+  };
+}
+
+export function notifyAuctionDelta(payload: AuctionBroadcastPayload): void {
+  for (const listener of deltaListeners) {
+    try {
+      listener(payload);
+    } catch (e) {
+      console.error('[notifyAuctionDelta] Listener error:', e);
+    }
+  }
+}
 
 // Per-tab in-flight action counter to prevent self-echo Realtime events from
 // firing a competing router.refresh() while a local Server Action is actively
@@ -233,7 +255,14 @@ export function AuctionRealtimeSync({
       .on(
         'broadcast',
         { event: 'auction_update' },
-        () => {
+        (event: any) => {
+          const payload = event?.payload as AuctionBroadcastPayload | undefined;
+          if (payload) {
+            notifyAuctionDelta(payload);
+            if (payload.type === 'BID_PLACED') {
+              playBidGavelChime(payload.lotId, payload.currentPrice);
+            }
+          }
           coordinator.handleRealtimeEvent();
         }
       )

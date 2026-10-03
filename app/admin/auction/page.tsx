@@ -8,11 +8,14 @@ import { createClient } from '@/lib/supabase/server';
 import {
   getActiveLot,
   getAuctionQueue,
+  getAuctionQueueByBuckets,
   getUnsoldLots,
   getRecentAuctionEvents,
   getSeasonAuctionConfig,
   getAuctionSessionState,
   getActiveLotScarcity,
+  getActiveBuckets,
+  getBucketStatistics,
 } from '@/lib/auction/queries';
 import { ActiveLotCard } from '@/components/auction/active-lot-card';
 import { AuctionTimer } from '@/components/auction/auction-timer';
@@ -32,14 +35,18 @@ export default async function AdminAuctionPage() {
   const seasonId =
     adminContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 
-  // 1. Fetch live operational data & session lifecycle state
-  const [activeLot, upcomingLots, unsoldLots, recentEvents, config, sessionState] = await Promise.all([
+  // 1. Fetch active buckets configuration
+  const activeBuckets = await getActiveBuckets(supabase, seasonId);
+
+  // 2. Fetch live operational data & session lifecycle state
+  const [activeLot, upcomingLots, unsoldLots, recentEvents, config, sessionState, bucketStats] = await Promise.all([
     getActiveLot(supabase, seasonId),
-    getAuctionQueue(supabase, seasonId, 50),
+    getAuctionQueueByBuckets(supabase, seasonId, activeBuckets, 50),
     getUnsoldLots(supabase, seasonId, 50),
     getRecentAuctionEvents(supabase, seasonId, 20),
     getSeasonAuctionConfig(supabase, seasonId),
     getAuctionSessionState(supabase, seasonId),
+    getBucketStatistics(supabase, seasonId),
   ]);
 
   // 2. Fetch scarcity report, recent sold lots, active franchises, and all season lots
@@ -152,6 +159,7 @@ export default async function AdminAuctionPage() {
                 isActive={activeLot.status === 'in_progress' && sessionState.isLive}
                 isPaused={sessionState.isPaused}
                 pausedRemainingSeconds={sessionState.pausedRemainingSeconds}
+                showControls={true}
                 size="md"
               />
             </div>
@@ -159,6 +167,7 @@ export default async function AdminAuctionPage() {
 
           {/* Auctioneer Controls & Queue */}
           <OperatorControls
+            seasonId={seasonId}
             activeLot={activeLot}
             upcomingLots={upcomingLots}
             unsoldLots={unsoldLots}
@@ -169,6 +178,8 @@ export default async function AdminAuctionPage() {
             isSuperAdmin={adminContext.isSuperAdmin}
             scarcityReport={scarcityReport}
             recoveryLots={recoveryLots}
+            initialActiveBuckets={activeBuckets}
+            bucketStats={bucketStats}
           />
         </div>
 

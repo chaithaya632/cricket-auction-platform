@@ -12,32 +12,37 @@
 // =============================================================================
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import type { AuctionBroadcastPayload } from './types';
 
 /**
  * Broadcasts an auction update notification to all connected clients on the
- * `acc-auction-{seasonId}` channel. This triggers `router.refresh()` on
- * receiving clients, which fetches authoritative state from the server.
+ * `acc-auction-{seasonId}` channel. Carries authoritative state deltas for
+ * instantaneous UI updates, and triggers background `router.refresh()`.
  *
  * MUST be called ONLY AFTER a successful database mutation.
  * Broadcast failure is logged but NEVER propagated to the caller.
  */
 export async function broadcastAuctionUpdate(
   seasonId: string,
-  eventType: string
+  eventType: string,
+  payloadData?: Partial<AuctionBroadcastPayload>
 ): Promise<void> {
   try {
     const adminClient = createAdminClient();
     const channelName = `acc-auction-${seasonId}`;
     const channel = adminClient.channel(channelName);
 
+    const payload: AuctionBroadcastPayload = {
+      type: eventType,
+      seasonId,
+      timestamp: new Date().toISOString(),
+      ...(payloadData || {}),
+    };
+
     await channel.send({
       type: 'broadcast',
       event: 'auction_update',
-      payload: {
-        type: eventType,
-        seasonId,
-        timestamp: new Date().toISOString(),
-      },
+      payload,
     });
 
     // Clean up the server-side channel after sending

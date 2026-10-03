@@ -25,15 +25,37 @@ import {
   bringDownUnsoldLotAction,
   reAuctionUnsoldLotAction,
   adminAuctionRestartRecoveryAction,
+  updateActiveBucketsAction,
+  drawRandomLotFromBucketsAction,
 } from '@/lib/auction/actions';
 import { runWithLocalActionTracking } from '@/components/auction/auction-realtime-sync';
-import type {
-  AuctionLotWithDetails,
-  AuctionSessionState,
-  RestoreToMode,
+import {
+  DEFAULT_BUCKET_ORDER,
+  type AuctionLotWithDetails,
+  type AuctionSessionState,
+  type RestoreToMode,
 } from '@/lib/auction/types';
 import type { BucketScarcityReport } from '@/domain/scarcity';
-import { Play, Pause, Square, Loader2, AlertCircle, ShieldAlert, Users, RotateCcw, Award, History } from 'lucide-react';
+import { getAudioEnabled, setAudioEnabled } from '@/lib/auction/audio';
+import { GuestDrawDialog } from '@/components/auction/guest-draw-dialog';
+import {
+  Play,
+  Pause,
+  Square,
+  Loader2,
+  AlertCircle,
+  ShieldAlert,
+  Users,
+  RotateCcw,
+  Award,
+  History,
+  Volume2,
+  VolumeX,
+  Shuffle,
+  Sparkles,
+  Layers,
+  ArrowRight,
+} from 'lucide-react';
 
 export interface OperatorSoldLotItem {
   id: string;
@@ -59,6 +81,7 @@ export interface OperatorFranchiseOption {
 }
 
 interface OperatorControlsProps {
+  seasonId?: string;
   activeLot: AuctionLotWithDetails | null;
   upcomingLots: AuctionLotWithDetails[];
   unsoldLots?: AuctionLotWithDetails[];
@@ -69,9 +92,12 @@ interface OperatorControlsProps {
   isSuperAdmin?: boolean;
   scarcityReport?: BucketScarcityReport | null;
   recoveryLots?: OperatorRecoveryLotItem[];
+  initialActiveBuckets?: string[];
+  bucketStats?: Record<string, { pending: number; total: number; inProgress: boolean }>;
 }
 
 export function OperatorControls({
+  seasonId,
   activeLot,
   upcomingLots,
   unsoldLots = [],
@@ -82,6 +108,8 @@ export function OperatorControls({
   isSuperAdmin = false,
   scarcityReport = null,
   recoveryLots = [],
+  initialActiveBuckets,
+  bucketStats,
 }: OperatorControlsProps) {
   const router = useRouter();
   const [isPending, setIsPending] = useState(false);
@@ -128,6 +156,83 @@ export function OperatorControls({
   const [recoveryMode, setRecoveryMode] = useState<'full' | 'selective'>('full');
   const [recoveryTargetLotId, setRecoveryTargetLotId] = useState<string>('');
   const [recoveryReason, setRecoveryReason] = useState<string>('');
+
+  // Phase 5 State: Active Buckets, Audio Toggle, and Guest Draw
+  const [activeBuckets, setActiveBuckets] = useState<string[]>(
+    initialActiveBuckets && initialActiveBuckets.length > 0
+      ? initialActiveBuckets
+      : [...DEFAULT_BUCKET_ORDER]
+  );
+  const [isAudioOn, setIsAudioOn] = useState<boolean>(true);
+  const [showGuestDrawModal, setShowGuestDrawModal] = useState<boolean>(false);
+
+  useEffect(() => {
+    setIsAudioOn(getAudioEnabled());
+  }, []);
+
+  useEffect(() => {
+    if (initialActiveBuckets && initialActiveBuckets.length > 0) {
+      setActiveBuckets(initialActiveBuckets);
+    }
+  }, [initialActiveBuckets]);
+
+  const handleToggleAudio = () => {
+    const next = !isAudioOn;
+    setAudioEnabled(next);
+    setIsAudioOn(next);
+  };
+
+  const handleToggleBucket = (bucket: string) => {
+    let next: string[];
+    if (activeBuckets.includes(bucket)) {
+      if (activeBuckets.length === 1) return; // Prevent empty selection
+      next = activeBuckets.filter((b) => b !== bucket);
+    } else {
+      next = DEFAULT_BUCKET_ORDER.filter((b) => activeBuckets.includes(b) || b === bucket);
+    }
+    setActiveBuckets(next);
+    void runOperatorAction(
+      () => updateActiveBucketsAction(next),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to update active buckets.'));
+          setActiveBuckets(activeBuckets);
+        } else {
+          setSuccessMsg(`Active buckets updated: ${next.join(', ')}`);
+        }
+      }
+    );
+  };
+
+  const handleSelectAllBuckets = () => {
+    const next = [...DEFAULT_BUCKET_ORDER];
+    setActiveBuckets(next);
+    void runOperatorAction(
+      () => updateActiveBucketsAction(next),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to update active buckets.'));
+        } else {
+          setSuccessMsg('All buckets selected.');
+        }
+      }
+    );
+  };
+
+  const handleDrawRandom = () => {
+    void runOperatorAction(
+      () => drawRandomLotFromBucketsAction(),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to draw random player.'));
+        } else {
+          setSuccessMsg(
+            `Random draw: Player #${res.data?.drawNumber} (Bucket ${res.data?.bucket}) brought to floor!`
+          );
+        }
+      }
+    );
+  };
 
   const runOperatorAction = async <T extends { success: boolean }>(
     actionFn: () => Promise<T>,
@@ -707,6 +812,123 @@ export function OperatorControls({
           </div>
         </div>
       )}
+
+      {/* AUCTION BUCKETS & DRAW DISPATCHER */}
+      <div className={`rounded-2xl border border-zinc-800 bg-zinc-900/90 p-5 shadow-xl space-y-4 ${sessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
+          <div className="flex items-center gap-2">
+            <Layers className="size-4 text-emerald-400" />
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-200">
+              Active Auction Buckets
+            </span>
+            <span className="text-[11px] text-zinc-500 font-mono">
+              (Filter & Order)
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleToggleAudio}
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                isAudioOn
+                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30'
+                  : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-zinc-200'
+              }`}
+              title={isAudioOn ? 'Gavel chime enabled' : 'Sound muted'}
+            >
+              {isAudioOn ? <Volume2 className="size-3.5" /> : <VolumeX className="size-3.5" />}
+              <span>{isAudioOn ? 'Sound ON' : 'Sound OFF'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSelectAllBuckets}
+              disabled={isPending || activeBuckets.length === DEFAULT_BUCKET_ORDER.length}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            >
+              All Buckets
+            </button>
+          </div>
+        </div>
+
+        {/* Bucket Pills */}
+        <div className="flex flex-wrap gap-2">
+          {DEFAULT_BUCKET_ORDER.map((bucket) => {
+            const isSelected = activeBuckets.includes(bucket);
+            const pendingCount = bucketStats?.[bucket]?.pending ?? 0;
+            return (
+              <button
+                key={bucket}
+                type="button"
+                onClick={() => handleToggleBucket(bucket)}
+                disabled={isPending}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                  isSelected
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500 shadow-md shadow-amber-950/40'
+                    : 'bg-zinc-950 text-zinc-500 border-zinc-800 hover:border-zinc-700 hover:text-zinc-300'
+                }`}
+              >
+                <span className="font-black text-sm">{bucket}</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${
+                    isSelected
+                      ? 'bg-amber-500/30 text-amber-200 font-bold'
+                      : 'bg-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  {pendingCount} left
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Draw Controls Toolbar */}
+        <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-zinc-800/80">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+            Draw Controls:
+          </span>
+
+          {/* Random Player */}
+          <button
+            type="button"
+            onClick={handleDrawRandom}
+            disabled={Boolean(activeLot && activeLot.status === 'in_progress') || isPending || !isFloorActive}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white shadow transition-all cursor-pointer active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Draw a random player from the active buckets"
+          >
+            <Shuffle className="size-3.5" />
+            <span>Random Player</span>
+          </button>
+
+          {/* Guest Draw */}
+          <button
+            type="button"
+            onClick={() => setShowGuestDrawModal(true)}
+            disabled={Boolean(activeLot && activeLot.status === 'in_progress') || isPending || !isFloorActive}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow transition-all cursor-pointer active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Open guest card reveal dialog"
+          >
+            <Sparkles className="size-3.5" />
+            <span>Guest Draw</span>
+          </button>
+
+          {/* Secondary Manual Fallback: Only visible when floor has no active lot */}
+          {!activeLot && upcomingLots.length > 0 && (
+            <button
+              type="button"
+              onClick={() => upcomingLots[0] && handleSelectLot(upcomingLots[0].id)}
+              disabled={isPending || !isFloorActive}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ml-auto"
+              title="Manual override: call next player when floor is empty"
+            >
+              <ArrowRight className="size-3" />
+              <span>Manual Next (Floor Empty)</span>
+            </button>
+          )}
+        </div>
+      </div>
 
       {/* 2. ACTIVE LOT EXECUTION PANEL */}
       <div className={`rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl space-y-4 ${sessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
@@ -1554,6 +1776,21 @@ export function OperatorControls({
           )
         )}
       </div>
+
+      {/* Guest Draw Dialog */}
+      {seasonId && (
+        <GuestDrawDialog
+          isOpen={showGuestDrawModal}
+          onClose={() => setShowGuestDrawModal(false)}
+          seasonId={seasonId}
+          activeBuckets={activeBuckets}
+          initialBucket={activeBuckets[0] || 'B3'}
+          onPlayerDrawn={(_lotId, playerName) => {
+            setShowGuestDrawModal(false);
+            setSuccessMsg(`Guest Draw: ${playerName} brought to floor!`);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -26,11 +26,13 @@ import { getFranchiseSquadData } from '@/lib/franchises/queries';
 import { executeAuctionMutationFlow } from './transaction';
 import { broadcastAuctionUpdate } from './realtime';
 import { writeAuditLog } from '@/lib/audit/logger';
+import { DEFAULT_BUCKET_ORDER } from './types';
 import type {
   AuctionActionResult,
   RestoreToMode,
   AdminAuctionRestartRecoveryParams,
   AuctionRecoveryResult,
+  GuestDrawCandidate,
 } from './types';
 
 /**
@@ -141,8 +143,21 @@ export async function selectLotAction(
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
+    const { data: timerConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', lot.season_id)
+      .eq('key', 'auction_first_bid_timer_seconds')
+      .maybeSingle();
+    const durationSeconds = timerConfig?.value ? parseInt(timerConfig.value, 10) : 30;
 
-    await broadcastAuctionUpdate(lot.season_id, 'PLAYER_SELECTED');
+    await broadcastAuctionUpdate(lot.season_id, 'PLAYER_SELECTED', {
+      lotId: lot.id,
+      currentPrice: null,
+      highestBidderId: null,
+      startedAt: now,
+      durationSeconds,
+    });
 
     return { success: true, data: { lotId: lot.id } };
   } catch (err: any) {
@@ -280,7 +295,25 @@ export async function placeBidAction(
     revalidatePath('/player/auction');
     revalidatePath('/admin/auction');
 
-    await broadcastAuctionUpdate(lot.season_id, 'BID_PLACED');
+    const franchise = franchiseContext.assignedFranchise;
+    const { data: timerConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', targetSeasonId)
+      .eq('key', 'auction_subsequent_bid_timer_seconds')
+      .maybeSingle();
+    const durationSeconds = timerConfig?.value ? parseInt(timerConfig.value, 10) : 20;
+
+    await broadcastAuctionUpdate(lot.season_id, 'BID_PLACED', {
+      lotId: lot.id,
+      currentPrice: nextBid,
+      highestBidderId: franchise.id,
+      highestBidderName: franchise.name,
+      highestBidderShortName: franchise.short_name,
+      highestBidderPrimaryColor: (franchise as any).color_primary || null,
+      startedAt: now,
+      durationSeconds,
+    });
 
     return { success: true, data: { newPrice: nextBid } };
   } catch (err: any) {
@@ -307,9 +340,170 @@ function validationNextBidTarget(
  * Confirms the sale of an active lot to the highest bidder (Hammer).
  * Guarded by requireAdmin().
  */
+/**
+ * Automatically advances to the next eligible lot based on active buckets and DEFAULT_BUCKET_ORDER.
+ * Returns true if a lot was advanced, false if no pending lots remain in the selected buckets.
+ */
+async function autoAdvanceToNextLot(
+  adminClient: any,
+  seasonId: string,
+  actorUserId: string
+): Promise<{ advanced: boolean; nextLotId: string | null }> {
+  try {
+    // 1. Check session state - do not advance if completed
+    const { data: sessionConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', seasonId)
+      .eq('key', 'auction_session_status')
+      .maybeSingle();
+
+    if (sessionConfig?.value === 'completed') {
+      return { advanced: false, nextLotId: null };
+    }
+
+    // 2. Ensure no lot is currently in_progress
+    const { data: activeLot } = await adminClient
+      .from('auction_lots')
+      .select('id')
+      .eq('season_id', seasonId)
+      .eq('status', 'in_progress')
+      .maybeSingle();
+
+    if (activeLot) {
+      return { advanced: false, nextLotId: activeLot.id };
+    }
+
+    // 3. Read active buckets from season_config
+    const { data: bucketConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', seasonId)
+      .eq('key', 'auction_active_buckets')
+      .maybeSingle();
+
+    let activeBuckets: string[] = [...DEFAULT_BUCKET_ORDER];
+    if (bucketConfig?.value) {
+      try {
+        const parsed = JSON.parse(bucketConfig.value);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const valid = parsed.filter((b: string) =>
+            (DEFAULT_BUCKET_ORDER as readonly string[]).includes(b as any)
+          );
+          if (valid.length > 0) {
+            activeBuckets = DEFAULT_BUCKET_ORDER.filter((b) => valid.includes(b));
+          }
+        }
+      } catch {
+        // Fallback on parse failure
+      }
+    }
+
+    // 4. Query pending lots in active buckets
+    const { data: pendingLots } = await adminClient
+      .from('auction_lots')
+      .select('*')
+      .eq('season_id', seasonId)
+      .eq('status', 'pending')
+      .in('bucket', activeBuckets)
+      .order('round', { ascending: true })
+      .order('draw_number', { ascending: true })
+      .limit(100);
+
+    if (!pendingLots || pendingLots.length === 0) {
+      return { advanced: false, nextLotId: null };
+    }
+
+    // 5. Deterministic sorting: bucket priority (DEFAULT_BUCKET_ORDER) first, then draw_number ASC
+    const nextLot = [...pendingLots].sort((a, b) => {
+      const rankA = DEFAULT_BUCKET_ORDER.indexOf(a.bucket);
+      const rankB = DEFAULT_BUCKET_ORDER.indexOf(b.bucket);
+      const orderA = rankA === -1 ? 999 : rankA;
+      const orderB = rankB === -1 ? 999 : rankB;
+      if (orderA !== orderB) return orderA - orderB;
+      return a.draw_number - b.draw_number;
+    })[0];
+
+    if (!nextLot) {
+      return { advanced: false, nextLotId: null };
+    }
+
+    const now = new Date().toISOString();
+
+    // 6. Activate next lot atomically using existing mutation engine
+    const mutation = await executeAuctionMutationFlow(
+      adminClient,
+      nextLot,
+      {
+        lotId: nextLot.id,
+        expectedStatus: 'pending',
+        newStatus: 'in_progress',
+        newPrice: null,
+        highestBidderId: null,
+        startedAt: now,
+        endedAt: null,
+      },
+      {
+        seasonId,
+        lotId: nextLot.id,
+        eventType: 'PLAYER_SELECTED',
+        actorUserId,
+        reason: `Auto-advanced by auction system (Bucket ${nextLot.bucket})`,
+        createdAt: now,
+      }
+    );
+
+    if (!mutation.success) {
+      return { advanced: false, nextLotId: null };
+    }
+
+    // Clear pause states
+    await adminClient
+      .from('season_config')
+      .delete()
+      .eq('season_id', seasonId)
+      .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
+
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin/queue');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+
+    const { data: timerConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', seasonId)
+      .eq('key', 'auction_first_bid_timer_seconds')
+      .maybeSingle();
+
+    const durationSeconds = timerConfig?.value ? parseInt(timerConfig.value, 10) : 30;
+
+    // Broadcast PLAYER_SELECTED for the new lot
+    await broadcastAuctionUpdate(seasonId, 'PLAYER_SELECTED', {
+      lotId: nextLot.id,
+      currentPrice: null,
+      highestBidderId: null,
+      startedAt: now,
+      durationSeconds,
+    });
+
+    return { advanced: true, nextLotId: nextLot.id };
+  } catch (err) {
+    console.error('[autoAdvanceToNextLot] Error during automatic progression:', err);
+    return { advanced: false, nextLotId: null };
+  }
+}
+
+/**
+ * Confirms the sale of an active lot to the highest bidder (Hammer).
+ * Guarded by requireAdmin().
+ * Automatically advances to the next eligible lot in active buckets.
+ */
 export async function confirmSaleAction(
   lotId: string
-): Promise<AuctionActionResult<{ price: number; franchiseId: string }>> {
+): Promise<AuctionActionResult<{ price: number; franchiseId: string; nextLotId?: string | null }>> {
   try {
     // 1. Session authorization BEFORE any privileged database call
     const adminContext = await requireAdmin();
@@ -381,13 +575,25 @@ export async function confirmSaleAction(
     revalidatePath('/franchise');
     revalidatePath('/franchise/squad');
 
-    await broadcastAuctionUpdate(lot.season_id, 'SALE');
+    await broadcastAuctionUpdate(lot.season_id, 'SALE', {
+      lotId: lot.id,
+      currentPrice: lot.current_price,
+      highestBidderId: lot.highest_bidder_franchise_id,
+    });
+
+    // 3. Concurrency-safe automatic advance to next player
+    const advanceResult = await autoAdvanceToNextLot(
+      adminClient,
+      lot.season_id,
+      adminContext.user.id
+    );
 
     return {
       success: true,
       data: {
         price: lot.current_price,
         franchiseId: lot.highest_bidder_franchise_id,
+        nextLotId: advanceResult.nextLotId,
       },
     };
   } catch (err: any) {
@@ -398,10 +604,11 @@ export async function confirmSaleAction(
 /**
  * Marks an active lot as unsold.
  * Guarded by requireAdmin().
+ * Automatically advances to the next eligible lot in active buckets.
  */
 export async function markUnsoldAction(
   lotId: string
-): Promise<AuctionActionResult<void>> {
+): Promise<AuctionActionResult<{ nextLotId?: string | null }>> {
   try {
     // 1. Session authorization BEFORE any privileged database call
     const adminContext = await requireAdmin();
@@ -465,11 +672,610 @@ export async function markUnsoldAction(
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
 
-    await broadcastAuctionUpdate(lot.season_id, 'UNSOLD');
+    await broadcastAuctionUpdate(lot.season_id, 'UNSOLD', {
+      lotId: lot.id,
+    });
 
-    return { success: true };
+    // 3. Concurrency-safe automatic advance to next player
+    const advanceResult = await autoAdvanceToNextLot(
+      adminClient,
+      lot.season_id,
+      adminContext.user.id
+    );
+
+    return { success: true, data: { nextLotId: advanceResult.nextLotId } };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to mark lot unsold.' };
+  }
+}
+
+/**
+ * Updates the active auction buckets persisted in season_config.
+ * Guarded by requireAdmin().
+ * Normalizes to DEFAULT_BUCKET_ORDER and broadcasts ACTIVE_BUCKETS_UPDATED.
+ */
+export async function updateActiveBucketsAction(
+  buckets: string[]
+): Promise<AuctionActionResult<{ activeBuckets: string[] }>> {
+  try {
+    const adminContext = await requireAdmin();
+    const targetSeasonId =
+      adminContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
+    const adminClient = createAdminClient();
+
+    if (!Array.isArray(buckets) || buckets.length === 0) {
+      return { success: false, error: 'At least one active bucket must be selected.' };
+    }
+
+    const invalidBuckets = buckets.filter(
+      (b) => !(DEFAULT_BUCKET_ORDER as readonly string[]).includes(b as any)
+    );
+    if (invalidBuckets.length > 0) {
+      return {
+        success: false,
+        error: `Invalid bucket selection: ${invalidBuckets.join(', ')}`,
+      };
+    }
+
+    const normalizedBuckets = DEFAULT_BUCKET_ORDER.filter((b) => buckets.includes(b));
+    const now = new Date().toISOString();
+
+    const { error: upsertErr } = await adminClient.from('season_config').upsert(
+      {
+        season_id: targetSeasonId,
+        key: 'auction_active_buckets',
+        value: JSON.stringify(normalizedBuckets),
+        value_type: 'json',
+        description: 'Active auction buckets currently prioritized for progression',
+        updated_at: now,
+      },
+      { onConflict: 'season_id,key' }
+    );
+
+    if (upsertErr) {
+      return { success: false, error: 'Failed to persist active bucket configuration.' };
+    }
+
+    await broadcastAuctionUpdate(targetSeasonId, 'ACTIVE_BUCKETS_UPDATED', {
+      activeBuckets: normalizedBuckets,
+    });
+
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin/queue');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+
+    return {
+      success: true,
+      data: { activeBuckets: normalizedBuckets },
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to update active buckets.' };
+  }
+}
+
+/**
+ * Selects a random eligible pending lot from the currently persisted active buckets.
+ * Guarded by requireAdmin().
+ */
+export async function drawRandomLotFromBucketsAction(): Promise<
+  AuctionActionResult<{ lotId: string; drawNumber: number; bucket: string }>
+> {
+  try {
+    const adminContext = await requireAdmin();
+    const targetSeasonId =
+      adminContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
+    const adminClient = createAdminClient();
+
+    // 1. Verify auction session is not completed
+    const { data: sessionConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', targetSeasonId)
+      .eq('key', 'auction_session_status')
+      .maybeSingle();
+
+    if (sessionConfig?.value === 'completed') {
+      return { success: false, error: 'Cannot draw player: auction session has ended.' };
+    }
+
+    // 2. Ensure no lot is currently in_progress
+    const { data: activeLot } = await adminClient
+      .from('auction_lots')
+      .select('id')
+      .eq('season_id', targetSeasonId)
+      .eq('status', 'in_progress')
+      .maybeSingle();
+
+    if (activeLot) {
+      return {
+        success: false,
+        error: 'Another lot is currently in progress. Complete or pass the active lot first.',
+      };
+    }
+
+    // 3. Read active buckets persisted in season_config (server-authoritative)
+    const { data: bucketConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', targetSeasonId)
+      .eq('key', 'auction_active_buckets')
+      .maybeSingle();
+
+    let activeBuckets: string[] = [...DEFAULT_BUCKET_ORDER];
+    if (bucketConfig?.value) {
+      try {
+        const parsed = JSON.parse(bucketConfig.value);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const valid = parsed.filter((b: string) =>
+            (DEFAULT_BUCKET_ORDER as readonly string[]).includes(b as any)
+          );
+          if (valid.length > 0) {
+            activeBuckets = DEFAULT_BUCKET_ORDER.filter((b) => valid.includes(b));
+          }
+        }
+      } catch {
+        // Fallback
+      }
+    }
+
+    // 4. Query pending lots in active buckets
+    const { data: candidates, error: fetchErr } = await adminClient
+      .from('auction_lots')
+      .select('*')
+      .eq('season_id', targetSeasonId)
+      .eq('status', 'pending')
+      .in('bucket', activeBuckets);
+
+    if (fetchErr || !candidates || candidates.length === 0) {
+      return {
+        success: false,
+        error: 'No eligible pending players remain in the selected buckets.',
+      };
+    }
+
+    // 5. Select a random candidate server-side
+    const selectedLot = candidates[Math.floor(Math.random() * candidates.length)];
+    const now = new Date().toISOString();
+
+    // 6. Activate using existing transaction mechanism
+    const mutation = await executeAuctionMutationFlow(
+      adminClient,
+      selectedLot,
+      {
+        lotId: selectedLot.id,
+        expectedStatus: 'pending',
+        newStatus: 'in_progress',
+        newPrice: null,
+        highestBidderId: null,
+        startedAt: now,
+        endedAt: null,
+      },
+      {
+        seasonId: targetSeasonId,
+        lotId: selectedLot.id,
+        eventType: 'PLAYER_SELECTED',
+        actorUserId: adminContext.user.id,
+        reason: `Random draw from active buckets [${activeBuckets.join(', ')}]`,
+        createdAt: now,
+      }
+    );
+
+    if (!mutation.success) {
+      return { success: false, error: mutation.error };
+    }
+
+    await adminClient
+      .from('season_config')
+      .delete()
+      .eq('season_id', targetSeasonId)
+      .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
+
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin/queue');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+
+    const { data: timerConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', targetSeasonId)
+      .eq('key', 'auction_first_bid_timer_seconds')
+      .maybeSingle();
+
+    const durationSeconds = timerConfig?.value ? parseInt(timerConfig.value, 10) : 30;
+
+    await broadcastAuctionUpdate(targetSeasonId, 'PLAYER_SELECTED', {
+      lotId: selectedLot.id,
+      currentPrice: null,
+      highestBidderId: null,
+      startedAt: now,
+      durationSeconds,
+    });
+
+    return {
+      success: true,
+      data: {
+        lotId: selectedLot.id,
+        drawNumber: selectedLot.draw_number,
+        bucket: selectedLot.bucket,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to draw random lot.' };
+  }
+}
+
+/**
+ * Brings a specific lot selected via Guest Draw to the floor.
+ * Guarded by requireAdmin().
+ * Supports either direct lot ID (card click) or numeric draw number (voice call).
+ * Server independently validates lot belongs to season, matches bucket, and is 'pending'.
+ */
+export async function callGuestDrawNumberAction(
+  lotIdOrDrawNumber: string | number,
+  bucket: string
+): Promise<AuctionActionResult<{ lotId: string; drawNumber: number; playerName: string }>> {
+  try {
+    const adminContext = await requireAdmin();
+    const targetSeasonId =
+      adminContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
+    const adminClient = createAdminClient();
+
+    // 1. Session check
+    const { data: sessionConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', targetSeasonId)
+      .eq('key', 'auction_session_status')
+      .maybeSingle();
+
+    if (sessionConfig?.value === 'completed') {
+      return { success: false, error: 'Cannot select lot: auction session has ended.' };
+    }
+
+    // 2. Ensure no active in_progress lot
+    const { data: activeLot } = await adminClient
+      .from('auction_lots')
+      .select('id')
+      .eq('season_id', targetSeasonId)
+      .eq('status', 'in_progress')
+      .maybeSingle();
+
+    if (activeLot) {
+      return {
+        success: false,
+        error: 'Another lot is currently in progress. Complete or pass the active lot first.',
+      };
+    }
+
+    // 3. Fetch targeted lot and independently validate
+    const isUuid =
+      typeof lotIdOrDrawNumber === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lotIdOrDrawNumber);
+
+    let lotQuery = adminClient
+      .from('auction_lots')
+      .select(`
+        *,
+        player_season_registrations (
+          players (
+            full_name
+          )
+        )
+      `)
+      .eq('season_id', targetSeasonId)
+      .eq('bucket', bucket);
+
+    if (isUuid) {
+      lotQuery = lotQuery.eq('id', lotIdOrDrawNumber);
+    } else {
+      lotQuery = lotQuery.eq('draw_number', Number(lotIdOrDrawNumber));
+    }
+
+    const { data: lots, error: fetchErr } = await lotQuery;
+    const lot: any = lots?.[0];
+
+    if (fetchErr || !lot) {
+      return { success: false, error: 'Selected Guest Draw lot was not found.' };
+    }
+
+    if (lot.bucket !== bucket) {
+      return {
+        success: false,
+        error: `Lot bucket mismatch. Expected '${bucket}', found '${lot.bucket}'.`,
+      };
+    }
+
+    if (lot.status !== 'pending') {
+      return {
+        success: false,
+        error: `Lot is already ${lot.status} and cannot be drawn.`,
+      };
+    }
+
+    const reg: any = Array.isArray(lot.player_season_registrations)
+      ? lot.player_season_registrations[0]
+      : lot.player_season_registrations;
+    const player: any = Array.isArray(reg?.players) ? reg.players[0] : reg?.players;
+    const playerName = player?.full_name || 'Player';
+
+    const now = new Date().toISOString();
+
+    // 4. Activate atomically
+    const mutation = await executeAuctionMutationFlow(
+      adminClient,
+      lot,
+      {
+        lotId: lot.id,
+        expectedStatus: 'pending',
+        newStatus: 'in_progress',
+        newPrice: null,
+        highestBidderId: null,
+        startedAt: now,
+        endedAt: null,
+      },
+      {
+        seasonId: targetSeasonId,
+        lotId: lot.id,
+        eventType: 'PLAYER_SELECTED',
+        actorUserId: adminContext.user.id,
+        reason: `Guest Draw card selection (Bucket ${bucket}, Draw #${lot.draw_number})`,
+        createdAt: now,
+      }
+    );
+
+    if (!mutation.success) {
+      return { success: false, error: mutation.error };
+    }
+
+    await adminClient
+      .from('season_config')
+      .delete()
+      .eq('season_id', targetSeasonId)
+      .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
+
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin/queue');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+
+    const { data: timerConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', targetSeasonId)
+      .eq('key', 'auction_first_bid_timer_seconds')
+      .maybeSingle();
+
+    const durationSeconds = timerConfig?.value ? parseInt(timerConfig.value, 10) : 30;
+
+    await broadcastAuctionUpdate(targetSeasonId, 'PLAYER_SELECTED', {
+      lotId: lot.id,
+      currentPrice: null,
+      highestBidderId: null,
+      startedAt: now,
+      durationSeconds,
+    });
+
+    return {
+      success: true,
+      data: {
+        lotId: lot.id,
+        drawNumber: lot.draw_number,
+        playerName,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to execute Guest Draw selection.' };
+  }
+}
+
+/**
+ * Fetches the stable snapshot of guest draw candidates for a given bucket.
+ * Guarded by requireAdmin().
+ */
+export async function getGuestDrawSnapshotAction(
+  bucket: string
+): Promise<AuctionActionResult<GuestDrawCandidate[]>> {
+  try {
+    const adminContext = await requireAdmin();
+    const targetSeasonId =
+      adminContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
+    const adminClient = createAdminClient();
+
+    const { data: lots, error } = await adminClient
+      .from('auction_lots')
+      .select('id, draw_number, bucket, base_price, registration_id, status')
+      .eq('season_id', targetSeasonId)
+      .eq('bucket', bucket)
+      .order('draw_number', { ascending: true });
+
+    if (error || !lots) {
+      return { success: false, error: 'Failed to query guest draw candidates.' };
+    }
+
+    const registrationIds = lots.map((l) => l.registration_id);
+    const { data: playersView } = await adminClient
+      .from('public_players_view')
+      .select('registration_id, player_id, full_name, photo_url, roll_number')
+      .in('registration_id', registrationIds);
+
+    const playerMap = new Map<string, any>();
+    if (playersView) {
+      for (const p of playersView) {
+        playerMap.set(p.registration_id, p);
+      }
+    }
+
+    const candidates: GuestDrawCandidate[] = lots.map((lot, idx) => {
+      const p = playerMap.get(lot.registration_id);
+      const cardNumber = idx + 1;
+      const cardLabel = cardNumber < 10 ? `0${cardNumber}` : `${cardNumber}`;
+      return {
+        cardNumber,
+        cardLabel,
+        lotId: lot.id,
+        drawNumber: lot.draw_number,
+        playerName: p?.full_name || 'Player',
+        rollNumber: p?.roll_number || '',
+        bucket: lot.bucket,
+        basePrice: lot.base_price,
+        photoUrl: p?.photo_url || null,
+        drawn: lot.status !== 'pending',
+      };
+    });
+
+    return { success: true, data: candidates };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to fetch guest draw snapshot.' };
+  }
+}
+
+/**
+ * Extends the timer for an in_progress lot when TIME UP is reached.
+ * Guarded by requireAdmin().
+ * Validates that current time >= deadline before allowing extension.
+ * Atomically updates started_at, records in audit_logs, and broadcasts TIMER_EXTENDED.
+ */
+export async function extendTimerAction(
+  lotId: string,
+  extensionSeconds: 10 | 20 | 30
+): Promise<AuctionActionResult<{ startedAt: string; extensionSeconds: number }>> {
+  try {
+    if (![10, 20, 30].includes(extensionSeconds)) {
+      return { success: false, error: 'Extension duration must be 10, 20, or 30 seconds.' };
+    }
+
+    const adminContext = await requireAdmin();
+    const adminClient = createAdminClient();
+
+    // 1. Fetch lot
+    const { data: lot, error: fetchErr } = await adminClient
+      .from('auction_lots')
+      .select('*')
+      .eq('id', lotId)
+      .single();
+
+    if (fetchErr || !lot) {
+      return { success: false, error: 'Lot not found.' };
+    }
+
+    if (lot.status !== 'in_progress') {
+      return {
+        success: false,
+        error: `Cannot extend timer. Lot status is '${lot.status}', expected 'in_progress'.`,
+      };
+    }
+
+    if (!lot.started_at) {
+      return { success: false, error: 'Lot has not been started.' };
+    }
+
+    // 2. Fetch session and config
+    const targetSeasonId = lot.season_id;
+    const { data: configRows } = await adminClient
+      .from('season_config')
+      .select('key, value')
+      .eq('season_id', targetSeasonId)
+      .in('key', [
+        'auction_session_status',
+        'auction_first_bid_timer_seconds',
+        'auction_subsequent_bid_timer_seconds',
+      ]);
+
+    const configMap = new Map((configRows || []).map((r) => [r.key, r.value]));
+    const sessionStatus = configMap.get('auction_session_status');
+    if (sessionStatus === 'paused' || sessionStatus === 'completed') {
+      return {
+        success: false,
+        error: `Cannot extend timer while auction session is ${sessionStatus}.`,
+      };
+    }
+
+    const firstBidTimer = parseInt(configMap.get('auction_first_bid_timer_seconds') || '30', 10);
+    const subsequentBidTimer = parseInt(
+      configMap.get('auction_subsequent_bid_timer_seconds') || '20',
+      10
+    );
+
+    const timerDuration = lot.highest_bidder_franchise_id ? subsequentBidTimer : firstBidTimer;
+    const deadlineMs = new Date(lot.started_at).getTime() + timerDuration * 1000;
+    const nowMs = Date.now();
+
+    // 3. Strict verification: extension ONLY allowed when TIME UP has been reached
+    if (nowMs < deadlineMs) {
+      return {
+        success: false,
+        error: 'Timer can only be extended after reaching zero (TIME UP).',
+      };
+    }
+
+    // 4. Calculate new started_at so that (newStartedAt + timerDuration) = (now + extensionSeconds)
+    const newStartedAtMs = nowMs + extensionSeconds * 1000 - timerDuration * 1000;
+    const newStartedAt = new Date(newStartedAtMs).toISOString();
+    const nowIso = new Date(nowMs).toISOString();
+
+    // 5. Concurrency-safe atomic conditional update
+    const { data: updatedLot, error: updateErr } = await adminClient
+      .from('auction_lots')
+      .update({
+        started_at: newStartedAt,
+        updated_at: nowIso,
+      })
+      .eq('id', lot.id)
+      .eq('status', 'in_progress')
+      .eq('started_at', lot.started_at) // Concurrency guard
+      .select()
+      .maybeSingle();
+
+    if (updateErr || !updatedLot) {
+      return {
+        success: false,
+        error: 'Timer was already modified concurrently by another operator or bid.',
+      };
+    }
+
+    // 6. Record in audit_logs
+    await writeAuditLog({
+      seasonId: targetSeasonId,
+      actorUserId: adminContext.user.id,
+      action: 'TIMER_EXTENDED',
+      entityType: 'auction_lot',
+      entityId: lot.id,
+      reason: `Timer extended by ${extensionSeconds}s at TIME UP`,
+      metadata: {
+        extensionSeconds,
+        previousStartedAt: lot.started_at,
+        newStartedAt,
+        timerDuration,
+      },
+    });
+
+    // 7. Broadcast TIMER_EXTENDED
+    await broadcastAuctionUpdate(targetSeasonId, 'TIMER_EXTENDED', {
+      lotId: lot.id,
+      startedAt: newStartedAt,
+      durationSeconds: timerDuration,
+      remainingSeconds: extensionSeconds,
+    });
+
+    revalidatePath('/admin/auction');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+
+    return {
+      success: true,
+      data: {
+        startedAt: newStartedAt,
+        extensionSeconds,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to extend timer.' };
   }
 }
 
@@ -2346,91 +3152,6 @@ export async function drawNextAutoLotAction(
     };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Auto draw failed.' };
-  }
-}
-
-/**
- * Guest-Mode Draw Action (§10).
- * Honorary guest calls a number aloud; operator enters it and that player comes up.
- * Enforces: no number is ever called twice.
- */
-export async function callGuestDrawNumberAction(
-  drawNumber: number,
-  bucket: string
-): Promise<AuctionActionResult<{ lotId: string; drawNumber: number; playerName: string }>> {
-  try {
-    const adminContext = await requireAdmin();
-    const activeSeason = adminContext.activeSeason;
-    if (!activeSeason) {
-      return { success: false, error: 'No active season found.' };
-    }
-
-    if (!drawNumber || drawNumber < 1) {
-      return { success: false, error: 'Please enter a valid draw number.' };
-    }
-
-    const adminClient = createAdminClient();
-
-    // Find lot by draw_number in active bucket
-    const { data: lots, error: lotErr } = await adminClient
-      .from('auction_lots')
-      .select(`
-        id,
-        lot_number,
-        draw_number,
-        bucket,
-        status,
-        base_price,
-        player_season_registrations (
-          players (
-            full_name
-          )
-        )
-      `)
-      .eq('season_id', activeSeason.id)
-      .eq('bucket', bucket)
-      .eq('draw_number', drawNumber);
-
-    if (lotErr || !lots || lots.length === 0) {
-      return { success: false, error: `Draw number #${drawNumber} not found in Bucket ${bucket}.` };
-    }
-
-    const targetLot = lots[0];
-
-    // Enforce: no number is ever called twice (§10)
-    if (targetLot.status === 'sold' || targetLot.status === 'allotted') {
-      return {
-        success: false,
-        error: `Draw number #${drawNumber} has already been called and sold/allotted. No number may be called twice (§10).`,
-      };
-    }
-
-    if (targetLot.status === 'in_progress') {
-      return { success: false, error: `Draw number #${drawNumber} is already on the auction block.` };
-    }
-
-    const reg: any = Array.isArray(targetLot.player_season_registrations)
-      ? targetLot.player_season_registrations[0]
-      : targetLot.player_season_registrations;
-    const player: any = Array.isArray(reg?.players) ? reg.players[0] : reg?.players;
-    const playerName = player?.full_name || 'Player';
-
-    // Bring to floor
-    const selectRes = await selectLotAction(targetLot.id);
-    if (!selectRes.success) {
-      return { success: false, error: selectRes.error };
-    }
-
-    return {
-      success: true,
-      data: {
-        lotId: targetLot.id,
-        drawNumber,
-        playerName,
-      },
-    };
-  } catch (err: any) {
-    return { success: false, error: err?.message || 'Guest draw failed.' };
   }
 }
 
