@@ -94,6 +94,8 @@ interface OperatorControlsProps {
   recoveryLots?: OperatorRecoveryLotItem[];
   initialActiveBuckets?: string[];
   bucketStats?: Record<string, { pending: number; total: number; inProgress: boolean }>;
+  onActiveLotChange?: (lot: AuctionLotWithDetails | null) => void;
+  onSessionStateChange?: (state: AuctionSessionState) => void;
 }
 
 export function OperatorControls({
@@ -110,6 +112,8 @@ export function OperatorControls({
   recoveryLots = [],
   initialActiveBuckets,
   bucketStats,
+  onActiveLotChange,
+  onSessionStateChange,
 }: OperatorControlsProps) {
   const router = useRouter();
   const [isPending, setIsPending] = useState(false);
@@ -226,6 +230,12 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(sanitizeActionError(res.error, 'Failed to draw random player.'));
         } else {
+          if (res.data?.activeLot !== undefined) {
+            onActiveLotChange?.(res.data.activeLot);
+          }
+          if (res.data?.sessionState) {
+            onSessionStateChange?.(res.data.sessionState);
+          }
           setSuccessMsg(
             `Random draw: Player #${res.data?.drawNumber} (Bucket ${res.data?.bucket}) brought to floor!`
           );
@@ -305,11 +315,17 @@ export function OperatorControls({
 
   const handleStartAuction = () => {
     void runOperatorAction(
-      () => startAuctionAction(),
+      () => startAuctionAction(activeBuckets),
       (res) => {
         if (!res.success) {
           setErrorMsg(sanitizeActionError(res.error, 'Failed to start auction.'));
         } else {
+          if (res.data?.sessionState) {
+            onSessionStateChange?.(res.data.sessionState);
+          }
+          if (res.data?.activeLot !== undefined) {
+            onActiveLotChange?.(res.data.activeLot);
+          }
           setSuccessMsg('Auction is now LIVE! Bidding floor is open.');
         }
       }
@@ -323,6 +339,12 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(sanitizeActionError(res.error, 'Failed to restart auction session.'));
         } else {
+          if (res.data?.sessionState) {
+            onSessionStateChange?.(res.data.sessionState);
+          }
+          if (res.data?.activeLot !== undefined) {
+            onActiveLotChange?.(res.data.activeLot);
+          }
           setSuccessMsg('Auction session RESTARTED and LIVE! Bidding floor is reopened.');
         }
       }
@@ -336,6 +358,9 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(sanitizeActionError(res.error, 'Failed to pause auction.'));
         } else {
+          if (res.data?.sessionState) {
+            onSessionStateChange?.(res.data.sessionState);
+          }
           setSuccessMsg('Auction session PAUSED.');
         }
       }
@@ -349,6 +374,9 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(sanitizeActionError(res.error, 'Failed to resume auction.'));
         } else {
+          if (res.data?.sessionState) {
+            onSessionStateChange?.(res.data.sessionState);
+          }
           setSuccessMsg('Auction session RESUMED and LIVE.');
         }
       }
@@ -388,6 +416,10 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(sanitizeActionError(res.error, 'Failed to end auction.'));
         } else {
+          if (res.data?.sessionState) {
+            onSessionStateChange?.(res.data.sessionState);
+          }
+          onActiveLotChange?.(null);
           setSuccessMsg('Auction session has officially ENDED and status is COMPLETED.');
           setShowEndModal(false);
         }
@@ -402,6 +434,12 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(sanitizeActionError(res.error, 'Failed to select lot.'));
         } else {
+          if (res.data?.activeLot !== undefined) {
+            onActiveLotChange?.(res.data.activeLot);
+          }
+          if (res.data?.sessionState) {
+            onSessionStateChange?.(res.data.sessionState);
+          }
           setSuccessMsg('Player brought to floor successfully.');
         }
       }
@@ -416,6 +454,12 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(sanitizeActionError(res.error, 'Failed to confirm sale.'));
         } else {
+          if (res.data?.activeLot !== undefined) {
+            onActiveLotChange?.(res.data.activeLot);
+          }
+          if (res.data?.sessionState) {
+            onSessionStateChange?.(res.data.sessionState);
+          }
           setSuccessMsg(`Player SOLD for ₹${res.data?.price}!`);
         }
       }
@@ -430,6 +474,12 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(sanitizeActionError(res.error, 'Failed to mark unsold.'));
         } else {
+          if (res.data?.activeLot !== undefined) {
+            onActiveLotChange?.(res.data.activeLot);
+          }
+          if (res.data?.sessionState) {
+            onSessionStateChange?.(res.data.sessionState);
+          }
           setSuccessMsg('Player passed and marked UNSOLD.');
         }
       }
@@ -444,6 +494,12 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(sanitizeActionError(res.error, 'Failed to skip lot.'));
         } else {
+          if (res.data?.activeLot !== undefined) {
+            onActiveLotChange?.(res.data.activeLot);
+          }
+          if (res.data?.sessionState) {
+            onSessionStateChange?.(res.data.sessionState);
+          }
           setSuccessMsg(
             `Player #${activeLot.draw_number} (${activeLot.player.full_name}) skipped. Can be recalled at the end of Bucket ${activeLot.bucket}.`
           );
@@ -461,6 +517,12 @@ export function OperatorControls({
         if (!res.success) {
           setErrorMsg(sanitizeActionError(res.error, 'Failed to undo sale.'));
         } else {
+          if (res.data?.activeLot !== undefined) {
+            onActiveLotChange?.(res.data.activeLot);
+          }
+          if (res.data?.sessionState) {
+            onSessionStateChange?.(res.data.sessionState);
+          }
           setSuccessMsg(`Sale successfully undone (Mode: ${undoMode}).`);
           setShowUndoModal(false);
         }
@@ -632,7 +694,7 @@ export function OperatorControls({
           </button>
         </div>
       ) : sessionState.isNotStarted ? (
-        <div className="rounded-2xl border-2 border-dashed border-amber-500/40 bg-zinc-900/90 p-8 text-center space-y-5 shadow-2xl">
+        <div className="rounded-2xl border-2 border-dashed border-amber-500/40 bg-zinc-900/90 p-8 text-center space-y-6 shadow-2xl">
           <div className="inline-flex items-center gap-2 rounded-full bg-amber-500/15 px-3.5 py-1 text-xs font-bold text-amber-400 border border-amber-500/30 uppercase tracking-widest">
             <span className="inline-block size-2 rounded-full bg-amber-400" />
             Session Status: NOT STARTED
@@ -642,13 +704,61 @@ export function OperatorControls({
               Ready to Open Bidding Floor
             </h2>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Starting the auction unlocks all operator controls, activates live room and projector telemetry, and permits franchises to place bids.
+              Select which bucket(s) should be active, then click Start Auction. The first player will automatically be brought to the floor in order.
             </p>
           </div>
+
+          {/* Bucket Selection before Start */}
+          <div className="max-w-xl mx-auto space-y-3 bg-zinc-950/60 p-4 rounded-xl border border-zinc-800">
+            <div className="flex items-center justify-between text-xs text-zinc-300">
+              <span className="font-bold uppercase tracking-wider text-[11px] text-zinc-400">
+                Selected Active Buckets:
+              </span>
+              <button
+                type="button"
+                onClick={handleSelectAllBuckets}
+                disabled={isPending || activeBuckets.length === DEFAULT_BUCKET_ORDER.length}
+                className="text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer disabled:opacity-40"
+              >
+                Select All Buckets
+              </button>
+            </div>
+            <div className="flex flex-wrap justify-center gap-2">
+              {DEFAULT_BUCKET_ORDER.map((bucket) => {
+                const isSelected = activeBuckets.includes(bucket);
+                const pendingCount = bucketStats?.[bucket]?.pending ?? 0;
+                return (
+                  <button
+                    key={bucket}
+                    type="button"
+                    onClick={() => handleToggleBucket(bucket)}
+                    disabled={isPending}
+                    className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                      isSelected
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500 shadow-md shadow-amber-950/40'
+                        : 'bg-zinc-900 text-zinc-500 border-zinc-800 hover:border-zinc-700 hover:text-zinc-300'
+                    }`}
+                  >
+                    <span className="font-black text-sm">{bucket}</span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${
+                        isSelected
+                          ? 'bg-amber-500/30 text-amber-200 font-bold'
+                          : 'bg-zinc-800 text-zinc-400'
+                      }`}
+                    >
+                      {pendingCount} left
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <button
             type="button"
             onClick={handleStartAuction}
-            disabled={isPending}
+            disabled={isPending || activeBuckets.length === 0}
             className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-xl font-black text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-950/50 transition-all duration-150 cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isPending ? (
@@ -814,7 +924,7 @@ export function OperatorControls({
       )}
 
       {/* AUCTION BUCKETS & DRAW DISPATCHER */}
-      <div className={`rounded-2xl border border-zinc-800 bg-zinc-900/90 p-5 shadow-xl space-y-4 ${sessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-5 shadow-xl space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
           <div className="flex items-center gap-2">
             <Layers className="size-4 text-emerald-400" />

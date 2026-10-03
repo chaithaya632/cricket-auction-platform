@@ -23,12 +23,15 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { validateBidEligibility } from '@/domain/auction/auction-validation';
 import { calculateNextBid } from '@/domain/auction/bid-increment';
 import { getFranchiseSquadData } from '@/lib/franchises/queries';
+import { getActiveLot, getAuctionSessionState } from './queries';
 import { executeAuctionMutationFlow } from './transaction';
 import { broadcastAuctionUpdate } from './realtime';
 import { writeAuditLog } from '@/lib/audit/logger';
 import { DEFAULT_BUCKET_ORDER } from './types';
 import type {
   AuctionActionResult,
+  AuctionLotWithDetails,
+  AuctionSessionState,
   RestoreToMode,
   AdminAuctionRestartRecoveryParams,
   AuctionRecoveryResult,
@@ -41,7 +44,13 @@ import type {
  */
 export async function selectLotAction(
   lotId: string
-): Promise<AuctionActionResult<{ lotId: string }>> {
+): Promise<
+  AuctionActionResult<{
+    lotId: string;
+    activeLot?: AuctionLotWithDetails | null;
+    sessionState?: AuctionSessionState;
+  }>
+> {
   try {
     // 1. Session authorization BEFORE any privileged database call
     const adminContext = await requireAdmin();
@@ -138,7 +147,6 @@ export async function selectLotAction(
       .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
 
     revalidatePath('/admin/auction');
-    revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
@@ -159,7 +167,17 @@ export async function selectLotAction(
       durationSeconds,
     });
 
-    return { success: true, data: { lotId: lot.id } };
+    const activeLotWithDetails = await getActiveLot(adminClient, lot.season_id);
+    const sessionState = await getAuctionSessionState(adminClient, lot.season_id);
+
+    return {
+      success: true,
+      data: {
+        lotId: lot.id,
+        activeLot: activeLotWithDetails,
+        sessionState,
+      },
+    };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to select lot.' };
   }
@@ -348,7 +366,7 @@ async function autoAdvanceToNextLot(
   adminClient: any,
   seasonId: string,
   actorUserId: string
-): Promise<{ advanced: boolean; nextLotId: string | null }> {
+): Promise<{ advanced: boolean; nextLotId: string | null; nextLot?: AuctionLotWithDetails | null }> {
   try {
     // 1. Check session state - do not advance if completed
     const { data: sessionConfig } = await adminClient
@@ -359,7 +377,7 @@ async function autoAdvanceToNextLot(
       .maybeSingle();
 
     if (sessionConfig?.value === 'completed') {
-      return { advanced: false, nextLotId: null };
+      return { advanced: false, nextLotId: null, nextLot: null };
     }
 
     // 2. Ensure no lot is currently in_progress
@@ -371,7 +389,8 @@ async function autoAdvanceToNextLot(
       .maybeSingle();
 
     if (activeLot) {
-      return { advanced: false, nextLotId: activeLot.id };
+      const existingDetails = await getActiveLot(adminClient, seasonId);
+      return { advanced: false, nextLotId: activeLot.id, nextLot: existingDetails };
     }
 
     // 3. Read active buckets from season_config
@@ -411,7 +430,7 @@ async function autoAdvanceToNextLot(
       .limit(100);
 
     if (!pendingLots || pendingLots.length === 0) {
-      return { advanced: false, nextLotId: null };
+      return { advanced: false, nextLotId: null, nextLot: null };
     }
 
     // 5. Deterministic sorting: bucket priority (DEFAULT_BUCKET_ORDER) first, then draw_number ASC
@@ -425,7 +444,7 @@ async function autoAdvanceToNextLot(
     })[0];
 
     if (!nextLot) {
-      return { advanced: false, nextLotId: null };
+      return { advanced: false, nextLotId: null, nextLot: null };
     }
 
     const now = new Date().toISOString();
@@ -454,7 +473,7 @@ async function autoAdvanceToNextLot(
     );
 
     if (!mutation.success) {
-      return { advanced: false, nextLotId: null };
+      return { advanced: false, nextLotId: null, nextLot: null };
     }
 
     // Clear pause states
@@ -465,7 +484,6 @@ async function autoAdvanceToNextLot(
       .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
 
     revalidatePath('/admin/auction');
-    revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
@@ -489,10 +507,12 @@ async function autoAdvanceToNextLot(
       durationSeconds,
     });
 
-    return { advanced: true, nextLotId: nextLot.id };
+    const nextLotDetails = await getActiveLot(adminClient, seasonId);
+
+    return { advanced: true, nextLotId: nextLot.id, nextLot: nextLotDetails };
   } catch (err) {
     console.error('[autoAdvanceToNextLot] Error during automatic progression:', err);
-    return { advanced: false, nextLotId: null };
+    return { advanced: false, nextLotId: null, nextLot: null };
   }
 }
 
@@ -503,7 +523,15 @@ async function autoAdvanceToNextLot(
  */
 export async function confirmSaleAction(
   lotId: string
-): Promise<AuctionActionResult<{ price: number; franchiseId: string; nextLotId?: string | null }>> {
+): Promise<
+  AuctionActionResult<{
+    price: number;
+    franchiseId: string;
+    nextLotId?: string | null;
+    activeLot?: AuctionLotWithDetails | null;
+    sessionState?: AuctionSessionState;
+  }>
+> {
   try {
     // 1. Session authorization BEFORE any privileged database call
     const adminContext = await requireAdmin();
@@ -588,12 +616,16 @@ export async function confirmSaleAction(
       adminContext.user.id
     );
 
+    const sessionState = await getAuctionSessionState(adminClient, lot.season_id);
+
     return {
       success: true,
       data: {
         price: lot.current_price,
         franchiseId: lot.highest_bidder_franchise_id,
         nextLotId: advanceResult.nextLotId,
+        activeLot: advanceResult.nextLot ?? null,
+        sessionState,
       },
     };
   } catch (err: any) {
@@ -608,7 +640,13 @@ export async function confirmSaleAction(
  */
 export async function markUnsoldAction(
   lotId: string
-): Promise<AuctionActionResult<{ nextLotId?: string | null }>> {
+): Promise<
+  AuctionActionResult<{
+    nextLotId?: string | null;
+    activeLot?: AuctionLotWithDetails | null;
+    sessionState?: AuctionSessionState;
+  }>
+> {
   try {
     // 1. Session authorization BEFORE any privileged database call
     const adminContext = await requireAdmin();
@@ -666,7 +704,6 @@ export async function markUnsoldAction(
       .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
 
     revalidatePath('/admin/auction');
-    revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
@@ -683,7 +720,16 @@ export async function markUnsoldAction(
       adminContext.user.id
     );
 
-    return { success: true, data: { nextLotId: advanceResult.nextLotId } };
+    const sessionState = await getAuctionSessionState(adminClient, lot.season_id);
+
+    return {
+      success: true,
+      data: {
+        nextLotId: advanceResult.nextLotId,
+        activeLot: advanceResult.nextLot ?? null,
+        sessionState,
+      },
+    };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to mark lot unsold.' };
   }
@@ -759,7 +805,13 @@ export async function updateActiveBucketsAction(
  * Guarded by requireAdmin().
  */
 export async function drawRandomLotFromBucketsAction(): Promise<
-  AuctionActionResult<{ lotId: string; drawNumber: number; bucket: string }>
+  AuctionActionResult<{
+    lotId: string;
+    drawNumber: number;
+    bucket: string;
+    activeLot?: AuctionLotWithDetails | null;
+    sessionState?: AuctionSessionState;
+  }>
 > {
   try {
     const adminContext = await requireAdmin();
@@ -872,7 +924,6 @@ export async function drawRandomLotFromBucketsAction(): Promise<
       .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
 
     revalidatePath('/admin/auction');
-    revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
@@ -895,12 +946,17 @@ export async function drawRandomLotFromBucketsAction(): Promise<
       durationSeconds,
     });
 
+    const activeLotWithDetails = await getActiveLot(adminClient, targetSeasonId);
+    const sessionState = await getAuctionSessionState(adminClient, targetSeasonId);
+
     return {
       success: true,
       data: {
         lotId: selectedLot.id,
         drawNumber: selectedLot.draw_number,
         bucket: selectedLot.bucket,
+        activeLot: activeLotWithDetails,
+        sessionState,
       },
     };
   } catch (err: any) {
@@ -1293,7 +1349,13 @@ export async function extendTimerAction(
 export async function undoSaleAction(
   lotId: string,
   restoreTo: RestoreToMode = 'resume_bidding'
-): Promise<AuctionActionResult<{ restoredTo: RestoreToMode }>> {
+): Promise<
+  AuctionActionResult<{
+    restoredTo: RestoreToMode;
+    activeLot?: AuctionLotWithDetails | null;
+    sessionState?: AuctionSessionState;
+  }>
+> {
   try {
     // 1. Session authorization BEFORE any privileged database call
     const adminContext = await requireAdmin();
@@ -1378,7 +1440,7 @@ export async function undoSaleAction(
         actorUserId: adminContext.user.id,
         franchiseId: lot.highest_bidder_franchise_id,
         price: lot.current_price,
-        reason: `Sale of lot ${lot.lot_number} undone by Super Admin (§12.4). Restored to: ${effectiveRestoreTo}`,
+        reason: `Sale of lot #${lot.draw_number} undone by Super Admin (§12.4). Restored to: ${effectiveRestoreTo}`,
         payload: {
           restored_to: effectiveRestoreTo,
           refunded_franchise_id: lot.highest_bidder_franchise_id,
@@ -1422,7 +1484,17 @@ export async function undoSaleAction(
 
     await broadcastAuctionUpdate(lot.season_id, 'UNDO_SALE');
 
-    return { success: true, data: { restoredTo: effectiveRestoreTo } };
+    const activeLotWithDetails = await getActiveLot(adminClient, lot.season_id);
+    const sessionState = await getAuctionSessionState(adminClient, lot.season_id);
+
+    return {
+      success: true,
+      data: {
+        restoredTo: effectiveRestoreTo,
+        activeLot: activeLotWithDetails,
+        sessionState,
+      },
+    };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to undo sale.' };
   }
@@ -1434,8 +1506,15 @@ export async function undoSaleAction(
  * Idempotent and protected against duplicate start calls.
  * Guarded by requireAdmin().
  */
-export async function startAuctionAction(): Promise<
-  AuctionActionResult<{ status: 'live' }>
+export async function startAuctionAction(
+  selectedBuckets?: string[]
+): Promise<
+  AuctionActionResult<{
+    status: 'live';
+    activeLotId?: string | null;
+    activeLot?: AuctionLotWithDetails | null;
+    sessionState?: AuctionSessionState;
+  }>
 > {
   try {
     const adminContext = await requireAdmin();
@@ -1466,6 +1545,27 @@ export async function startAuctionAction(): Promise<
     }
 
     const now = new Date().toISOString();
+
+    // If selectedBuckets provided, persist them
+    if (selectedBuckets && Array.isArray(selectedBuckets) && selectedBuckets.length > 0) {
+      const valid = selectedBuckets.filter((b) =>
+        (DEFAULT_BUCKET_ORDER as readonly string[]).includes(b as any)
+      );
+      if (valid.length > 0) {
+        const sorted = DEFAULT_BUCKET_ORDER.filter((b) => valid.includes(b));
+        await adminClient.from('season_config').upsert(
+          {
+            season_id: activeSeason.id,
+            key: 'auction_active_buckets',
+            value: JSON.stringify(sorted),
+            value_type: 'json',
+            description: 'Active auction buckets currently open for drawing lots',
+            updated_at: now,
+          },
+          { onConflict: 'season_id,key' }
+        );
+      }
+    }
 
     // 1. Update season status to 'auction'
     const { error: seasonErr } = await adminClient
@@ -1519,7 +1619,34 @@ export async function startAuctionAction(): Promise<
 
     await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_STARTED');
 
-    return { success: true, data: { status: 'live' } };
+    // Automatically bring the first eligible unique-number player to the floor
+    const advanceResult = await autoAdvanceToNextLot(
+      adminClient,
+      activeSeason.id,
+      adminContext.user.id
+    );
+
+    const sessionState: AuctionSessionState = {
+      status: 'live',
+      seasonId: activeSeason.id,
+      seasonName: activeSeason.name,
+      isLive: true,
+      isPaused: false,
+      isNotStarted: false,
+      isCompleted: false,
+      startedAt: now,
+      activeLotId: advanceResult.nextLotId,
+    };
+
+    return {
+      success: true,
+      data: {
+        status: 'live',
+        activeLotId: advanceResult.nextLotId,
+        activeLot: advanceResult.nextLot ?? null,
+        sessionState,
+      },
+    };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to start auction session.' };
   }
@@ -1533,7 +1660,12 @@ export async function startAuctionAction(): Promise<
  * Guarded by requireAdmin().
  */
 export async function startAuctionAgainAction(): Promise<
-  AuctionActionResult<{ status: 'live' }>
+  AuctionActionResult<{
+    status: 'live';
+    activeLotId?: string | null;
+    activeLot?: AuctionLotWithDetails | null;
+    sessionState?: AuctionSessionState;
+  }>
 > {
   try {
     const adminContext = await requireAdmin();
@@ -1628,7 +1760,33 @@ export async function startAuctionAgainAction(): Promise<
 
     await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_RESTARTED');
 
-    return { success: true, data: { status: 'live' } };
+    const advanceResult = await autoAdvanceToNextLot(
+      adminClient,
+      activeSeason.id,
+      adminContext.user.id
+    );
+
+    const sessionState: AuctionSessionState = {
+      status: 'live',
+      seasonId: activeSeason.id,
+      seasonName: activeSeason.name,
+      isLive: true,
+      isPaused: false,
+      isNotStarted: false,
+      isCompleted: false,
+      startedAt: now,
+      activeLotId: advanceResult.nextLotId,
+    };
+
+    return {
+      success: true,
+      data: {
+        status: 'live',
+        activeLotId: advanceResult.nextLotId,
+        activeLot: advanceResult.nextLot ?? null,
+        sessionState,
+      },
+    };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to restart auction session.' };
   }
@@ -1640,7 +1798,11 @@ export async function startAuctionAgainAction(): Promise<
  * Guarded by requireAdmin().
  */
 export async function pauseAuctionAction(): Promise<
-  AuctionActionResult<{ status: 'paused'; remainingSeconds?: number }>
+  AuctionActionResult<{
+    status: 'paused';
+    remainingSeconds?: number;
+    sessionState?: AuctionSessionState;
+  }>
 > {
   try {
     const adminContext = await requireAdmin();
@@ -1773,7 +1935,21 @@ export async function pauseAuctionAction(): Promise<
 
     await broadcastAuctionUpdate(activeSeason.id, 'PAUSE');
 
-    return { success: true, data: { status: 'paused', remainingSeconds } };
+    const sessionState: AuctionSessionState = {
+      status: 'paused',
+      seasonId: activeSeason.id,
+      seasonName: activeSeason.name,
+      isLive: true,
+      isPaused: true,
+      isNotStarted: false,
+      isCompleted: false,
+      startedAt: null,
+      activeLotId: activeLot?.id || null,
+      pausedRemainingSeconds: remainingSeconds,
+      pausedAt: now,
+    };
+
+    return { success: true, data: { status: 'paused', remainingSeconds, sessionState } };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to pause auction session.' };
   }
@@ -1785,7 +1961,7 @@ export async function pauseAuctionAction(): Promise<
  * Guarded by requireAdmin().
  */
 export async function resumeAuctionAction(): Promise<
-  AuctionActionResult<{ status: 'live' }>
+  AuctionActionResult<{ status: 'live'; sessionState?: AuctionSessionState }>
 > {
   try {
     const adminContext = await requireAdmin();
@@ -1942,7 +2118,21 @@ export async function resumeAuctionAction(): Promise<
 
     await broadcastAuctionUpdate(activeSeason.id, 'RESUME');
 
-    return { success: true, data: { status: 'live' } };
+    const sessionState: AuctionSessionState = {
+      status: 'live',
+      seasonId: activeSeason.id,
+      seasonName: activeSeason.name,
+      isLive: true,
+      isPaused: false,
+      isNotStarted: false,
+      isCompleted: false,
+      startedAt: activeLot ? restoredStartedAt : null,
+      activeLotId: activeLot?.id || null,
+      pausedRemainingSeconds: null,
+      pausedAt: null,
+    };
+
+    return { success: true, data: { status: 'live', sessionState } };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to resume auction session.' };
   }
@@ -1956,7 +2146,13 @@ export async function resumeAuctionAction(): Promise<
  */
 export async function endAuctionAction(
   options?: { resolveActiveLotMode?: 'hammer' | 'unsold' }
-): Promise<AuctionActionResult<{ status: 'completed' }>> {
+): Promise<
+  AuctionActionResult<{
+    status: 'completed';
+    activeLot?: AuctionLotWithDetails | null;
+    sessionState?: AuctionSessionState;
+  }>
+> {
   try {
     const adminContext = await requireAdmin();
     const activeSeason = adminContext.activeSeason;
@@ -2109,7 +2305,26 @@ export async function endAuctionAction(
 
     await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_ENDED');
 
-    return { success: true, data: { status: 'completed' } };
+    const sessionState: AuctionSessionState = {
+      status: 'completed',
+      seasonId: activeSeason.id,
+      seasonName: activeSeason.name,
+      isLive: false,
+      isPaused: false,
+      isNotStarted: false,
+      isCompleted: true,
+      startedAt: null,
+      activeLotId: null,
+    };
+
+    return {
+      success: true,
+      data: {
+        status: 'completed',
+        activeLot: null,
+        sessionState,
+      },
+    };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to end auction session.' };
   }
@@ -2372,7 +2587,7 @@ export async function adminStartRoundTwoAction(): Promise<
     // 1. Fetch all unsold / skipped lots from Round 1
     const { data: eligibleLots, error: fetchErr } = await adminClient
       .from('auction_lots')
-      .select('id, lot_number, registration_id, bucket')
+      .select('id, draw_number, registration_id, bucket')
       .eq('season_id', activeSeason.id)
       .in('status', ['unsold', 'skipped']);
 
@@ -2908,7 +3123,14 @@ const BUCKET_DRAW_SEQUENCE = ['B3', 'B4', 'B2', 'B5', 'B1', 'PG'] as const;
 export async function skipLotAction(
   lotId: string,
   reason: string = 'Skipped by operator'
-): Promise<AuctionActionResult<{ lotId: string }>> {
+): Promise<
+  AuctionActionResult<{
+    lotId: string;
+    nextLotId?: string | null;
+    activeLot?: AuctionLotWithDetails | null;
+    sessionState?: AuctionSessionState;
+  }>
+> {
   try {
     const adminContext = await requireAdmin();
     const adminClient = createAdminClient();
@@ -2947,7 +3169,7 @@ export async function skipLotAction(
     await adminClient.from('auction_events').insert({
       season_id: lot.season_id,
       auction_lot_id: lotId,
-      event_type: 'SKIP_LOT',
+      event_type: 'SKIP',
       actor_user_id: adminContext.user.id,
       reason: reason.trim(),
       created_at: now,
@@ -2957,25 +3179,41 @@ export async function skipLotAction(
       {
         seasonId: lot.season_id,
         actorUserId: adminContext.user.id,
-        action: 'SKIP_LOT',
+        action: 'SKIP',
         entityType: 'auction_lot',
         entityId: lotId,
         reason: reason.trim(),
-        metadata: { lot_number: lot.lot_number, bucket: lot.bucket },
+        metadata: { draw_number: lot.draw_number, bucket: lot.bucket },
       },
       adminClient
     );
 
     revalidatePath('/admin/auction');
-    revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
 
-    await broadcastAuctionUpdate(lot.season_id, 'SKIP_LOT');
+    await broadcastAuctionUpdate(lot.season_id, 'SKIP');
 
-    return { success: true, data: { lotId } };
+    // Concurrency-safe automatic advance to next player
+    const advanceResult = await autoAdvanceToNextLot(
+      adminClient,
+      lot.season_id,
+      adminContext.user.id
+    );
+
+    const sessionState = await getAuctionSessionState(adminClient, lot.season_id);
+
+    return {
+      success: true,
+      data: {
+        lotId,
+        nextLotId: advanceResult.nextLotId,
+        activeLot: advanceResult.nextLot ?? null,
+        sessionState,
+      },
+    };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to skip lot.' };
   }
@@ -3025,9 +3263,9 @@ export async function recallSkippedLotAction(
     await adminClient.from('auction_events').insert({
       season_id: lot.season_id,
       auction_lot_id: lotId,
-      event_type: 'RECALL_LOT',
+      event_type: 'RE_ENTER',
       actor_user_id: adminContext.user.id,
-      reason: `Recalled skipped player ${lot.lot_number} back to floor queue at base price ${lot.base_price} credits`,
+      reason: `Recalled skipped player #${lot.draw_number} back to floor queue at base price ${lot.base_price} credits`,
       created_at: now,
     });
 
@@ -3039,19 +3277,18 @@ export async function recallSkippedLotAction(
         entityType: 'auction_lot',
         entityId: lotId,
         reason: 'Recalled skipped player back to auction queue (§10)',
-        metadata: { lot_number: lot.lot_number, bucket: lot.bucket },
+        metadata: { draw_number: lot.draw_number, bucket: lot.bucket },
       },
       adminClient
     );
 
     revalidatePath('/admin/auction');
-    revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
 
-    await broadcastAuctionUpdate(lot.season_id, 'RECALL_LOT');
+    await broadcastAuctionUpdate(lot.season_id, 'RE_ENTER');
 
     return { success: true, data: { lotId } };
   } catch (err: any) {
@@ -3079,7 +3316,7 @@ export async function drawNextAutoLotAction(
     // Check if a lot is already in progress
     const { data: existingActive } = await adminClient
       .from('auction_lots')
-      .select('id, lot_number')
+      .select('id, draw_number')
       .eq('season_id', activeSeason.id)
       .eq('status', 'in_progress')
       .limit(1);
@@ -3101,7 +3338,6 @@ export async function drawNextAutoLotAction(
         .from('auction_lots')
         .select(`
           id,
-          lot_number,
           draw_number,
           bucket,
           base_price,
@@ -3145,7 +3381,7 @@ export async function drawNextAutoLotAction(
       success: true,
       data: {
         lotId: chosenLot.id,
-        drawNumber: chosenLot.draw_number || chosenLot.lot_number,
+        drawNumber: chosenLot.draw_number,
         bucket: selectedBucket,
         playerName,
       },

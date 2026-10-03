@@ -17,9 +17,8 @@ import {
   getActiveBuckets,
   getBucketStatistics,
 } from '@/lib/auction/queries';
-import { ActiveLotCard } from '@/components/auction/active-lot-card';
-import { AuctionTimer } from '@/components/auction/auction-timer';
-import { OperatorControls, type OperatorSoldLotItem } from '@/components/auction/operator-controls';
+import { AuctionOperatorFloor } from '@/components/auction/auction-operator-floor';
+import { type OperatorSoldLotItem } from '@/components/auction/operator-controls';
 import { RecentActivityStream } from '@/components/auction/recent-activity-stream';
 import { DashboardShell } from '@/components/acc/dashboard-shell';
 import { getSessionUser } from '@/lib/acc/server-session';
@@ -35,23 +34,26 @@ export default async function AdminAuctionPage() {
   const seasonId =
     adminContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 
-  // 1. Fetch active buckets configuration
-  const activeBuckets = await getActiveBuckets(supabase, seasonId);
-
-  // 2. Fetch live operational data & session lifecycle state
-  const [activeLot, upcomingLots, unsoldLots, recentEvents, config, sessionState, bucketStats] = await Promise.all([
+  // 1. Fetch active buckets, active lot, session state, events, and tables in parallel
+  const [
+    activeBuckets,
+    activeLot,
+    unsoldLots,
+    recentEvents,
+    config,
+    sessionState,
+    bucketStats,
+    soldLotsResult,
+    franchisesResult,
+    allSeasonLotsResult,
+  ] = await Promise.all([
+    getActiveBuckets(supabase, seasonId),
     getActiveLot(supabase, seasonId),
-    getAuctionQueueByBuckets(supabase, seasonId, activeBuckets, 50),
     getUnsoldLots(supabase, seasonId, 50),
     getRecentAuctionEvents(supabase, seasonId, 20),
     getSeasonAuctionConfig(supabase, seasonId),
     getAuctionSessionState(supabase, seasonId),
     getBucketStatistics(supabase, seasonId),
-  ]);
-
-  // 2. Fetch scarcity report, recent sold lots, active franchises, and all season lots
-  const [scarcityReport, soldLotsResult, franchisesResult, allSeasonLotsResult] = await Promise.all([
-    activeLot?.bucket ? getActiveLotScarcity(supabase, seasonId, activeLot.bucket) : null,
     supabase
       .from('auction_lots')
       .select('id, draw_number, current_price, bucket, highest_bidder:franchises(name), registration:player_season_registrations(player:players(full_name))')
@@ -70,6 +72,12 @@ export default async function AdminAuctionPage() {
       .select('id, draw_number, bucket, status, registration:player_season_registrations(player:players(full_name))')
       .eq('season_id', seasonId)
       .order('draw_number', { ascending: true }),
+  ]);
+
+  // 2. Fetch bucket-filtered upcoming queue and active lot scarcity report in parallel
+  const [upcomingLots, scarcityReport] = await Promise.all([
+    getAuctionQueueByBuckets(supabase, seasonId, activeBuckets, 50),
+    activeLot?.bucket ? getActiveLotScarcity(supabase, seasonId, activeLot.bucket) : null,
   ]);
 
   const soldLots: OperatorSoldLotItem[] = (soldLotsResult.data || []).map((l: any) => ({
@@ -91,11 +99,6 @@ export default async function AdminAuctionPage() {
 
   const lastSoldLotId = soldLots[0]?.id || null;
   const franchises = franchisesResult.data || [];
-
-  // Determine current timer duration based on whether first bid has occurred
-  const timerDuration = activeLot?.highest_bidder_franchise_id
-    ? config.subsequentBidTimerSeconds
-    : config.firstBidTimerSeconds;
 
   return (
     <DashboardShell
@@ -147,39 +150,21 @@ export default async function AdminAuctionPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Left Column: Active Floor & Controls */}
         <div className="lg:col-span-8 space-y-6">
-          {/* Active Lot Display */}
-          <ActiveLotCard lot={activeLot} isAdmin={true} />
-
-          {/* Countdown Timer */}
-          {activeLot && (
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-5 shadow-lg">
-              <AuctionTimer
-                startedAt={activeLot.started_at}
-                durationSeconds={timerDuration}
-                isActive={activeLot.status === 'in_progress' && sessionState.isLive}
-                isPaused={sessionState.isPaused}
-                pausedRemainingSeconds={sessionState.pausedRemainingSeconds}
-                showControls={true}
-                size="md"
-              />
-            </div>
-          )}
-
-          {/* Auctioneer Controls & Queue */}
-          <OperatorControls
+          <AuctionOperatorFloor
             seasonId={seasonId}
-            activeLot={activeLot}
-            upcomingLots={upcomingLots}
-            unsoldLots={unsoldLots}
+            initialActiveLot={activeLot}
+            initialUpcomingLots={upcomingLots}
+            initialUnsoldLots={unsoldLots}
             lastSoldLotId={lastSoldLotId}
             soldLots={soldLots}
             franchises={franchises}
-            sessionState={sessionState}
+            initialSessionState={sessionState}
             isSuperAdmin={adminContext.isSuperAdmin}
             scarcityReport={scarcityReport}
             recoveryLots={recoveryLots}
             initialActiveBuckets={activeBuckets}
             bucketStats={bucketStats}
+            config={config}
           />
         </div>
 

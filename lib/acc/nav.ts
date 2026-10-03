@@ -36,7 +36,6 @@ export const ROLE_NAV: Record<Role, NavSection[]> = {
       label: "Auction",
       items: [
         { title: "Live Console", href: "/admin/auction", icon: Gavel },
-        { title: "Lot Queue", href: "/admin/queue", icon: ListChecks },
       ],
     },
     {

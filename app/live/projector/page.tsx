@@ -52,7 +52,7 @@ export default async function ProjectorPage() {
     ? config.subsequentBidTimerSeconds
     : config.firstBidTimerSeconds;
 
-  const canControl = Boolean(userContext?.isAdmin);
+  const canControl = Boolean(userContext?.isAdmin || userContext?.isOperator);
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col justify-between">
