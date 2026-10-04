@@ -108,105 +108,133 @@ export default async function AdminAuctionPage() {
       actions={<AuctionSessionIndicator status={sessionState.status} />}
     >
       <AuctionRealtimeSync seasonId={seasonId} />
-      <div className="space-y-8 max-w-7xl mx-auto">
+      <div className="space-y-8 max-w-[1800px] mx-auto">
         {/* Page Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800 pb-6">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-2xl">🎙</span>
-            <h1 className="text-2xl font-black text-zinc-100 tracking-tight">
-              Auction Operator Console
-            </h1>
-            <span className="rounded-md bg-amber-500/20 px-2.5 py-0.5 text-xs font-bold text-amber-400 border border-amber-500/30">
-              OPERATOR CONTROL
-            </span>
-          </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            Season: {adminContext.activeSeason?.name || 'ACC 2026'} • Full server authority active
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <a
-            href="/live"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-3.5 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 border border-zinc-700 flex items-center gap-1.5"
-          >
-            <span>Open Live Room</span> ↗
-          </a>
-          <a
-            href="/live/projector"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white shadow flex items-center gap-1.5"
-          >
-            <span>Auditorium Projector</span> ↗
-          </a>
-        </div>
-      </div>
-
-      {/* Main Floor Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* Left Column: Active Floor & Controls */}
-        <div className="lg:col-span-8 space-y-6">
-          <AuctionOperatorFloor
-            seasonId={seasonId}
-            initialActiveLot={activeLot}
-            initialUpcomingLots={upcomingLots}
-            initialUnsoldLots={unsoldLots}
-            lastSoldLotId={lastSoldLotId}
-            soldLots={soldLots}
-            franchises={franchises}
-            initialSessionState={sessionState}
-            isSuperAdmin={adminContext.isSuperAdmin}
-            scarcityReport={scarcityReport}
-            recoveryLots={recoveryLots}
-            initialActiveBuckets={activeBuckets}
-            bucketStats={bucketStats}
-            config={config}
-          />
-        </div>
-
-        {/* Right Column: Live Event Stream & Telemetry */}
-        <div className="lg:col-span-4 space-y-6">
-          {/* Recent Activity Audit Stream */}
-          <RecentActivityStream events={recentEvents} />
-
-          {/* Session Rules Summary */}
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 text-xs text-zinc-400 space-y-3">
-            <h4 className="font-bold text-zinc-200 uppercase tracking-wider text-[11px]">
-              Auction Session Parameters
-            </h4>
-            <div className="space-y-1.5">
-              <div className="flex justify-between">
-                <span>First Bid Clock:</span>
-                <span className="font-mono text-zinc-200">
-                  {config.firstBidTimerSeconds}s
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800 pb-6">
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-black text-zinc-100 tracking-tight uppercase">
+                ACC AUCTION 2026
+              </h1>
+              <div className="h-6 w-px bg-zinc-700" />
+              {sessionState.isLive && !sessionState.isPaused && (
+                <span className="flex items-center gap-2 text-emerald-400">
+                  <span className="relative flex size-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full size-3 bg-emerald-500" />
+                  </span>
+                  <span className="text-lg font-black">LIVE</span>
                 </span>
-              </div>
-              <div className="flex justify-between">
-                <span>Subsequent Bid Clock:</span>
-                <span className="font-mono text-zinc-200">
-                  {config.subsequentBidTimerSeconds}s
+              )}
+              {sessionState.isLive && sessionState.isPaused && (
+                <span className="flex items-center gap-2 text-amber-500">
+                  <span className="relative flex size-3">
+                    <span className="relative inline-flex rounded-full size-3 bg-amber-500" />
+                  </span>
+                  <span className="text-lg font-black">PAUSED</span>
                 </span>
-              </div>
-              <div className="flex justify-between">
-                <span>Min Auction Purchases:</span>
-                <span className="font-mono text-zinc-200">
-                  {config.minAuctionPurchases} players
+              )}
+              {!sessionState.isLive && sessionState.isNotStarted && (
+                <span className="flex items-center gap-2 text-zinc-400">
+                  <span className="relative flex size-3">
+                    <span className="relative inline-flex rounded-full size-3 bg-zinc-400" />
+                  </span>
+                  <span className="text-lg font-black">NOT STARTED</span>
                 </span>
-              </div>
-              <div className="flex justify-between">
-                <span>Squad Bounds:</span>
-                <span className="font-mono text-zinc-200">
-                  {config.minSquadSize} – {config.maxSquadSize} players
+              )}
+              {!sessionState.isLive && sessionState.isCompleted && (
+                <span className="flex items-center gap-2 text-blue-400">
+                  <span className="relative flex size-3">
+                    <span className="relative inline-flex rounded-full size-3 bg-blue-400" />
+                  </span>
+                  <span className="text-lg font-black">COMPLETED</span>
                 </span>
-              </div>
+              )}
             </div>
           </div>
+
+          <div className="flex items-center gap-3">
+            <a
+              href="/live"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3.5 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 border border-zinc-700 flex items-center gap-1.5"
+            >
+              <span>Open Live Room</span> ↗
+            </a>
+            <a
+              href="/live/projector"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white shadow flex items-center gap-1.5"
+            >
+              <span>Auditorium Projector</span> ↗
+            </a>
+          </div>
         </div>
-      </div>
+
+        {/* Main Floor Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          {/* Left Column: Active Floor & Controls */}
+          <div className="lg:col-span-7 space-y-6">
+            <AuctionOperatorFloor
+              seasonId={seasonId}
+              initialActiveLot={activeLot}
+              initialUpcomingLots={upcomingLots}
+              initialUnsoldLots={unsoldLots}
+              lastSoldLotId={lastSoldLotId}
+              soldLots={soldLots}
+              franchises={franchises}
+              initialSessionState={sessionState}
+              isSuperAdmin={adminContext.isSuperAdmin}
+              scarcityReport={scarcityReport}
+              recoveryLots={recoveryLots}
+              initialActiveBuckets={activeBuckets}
+              bucketStats={bucketStats}
+              config={config}
+            />
+          </div>
+
+          {/* Right Column: Live Event Stream & Telemetry */}
+          <div className="lg:col-span-5 space-y-6">
+            {/* Recent Activity Audit Stream */}
+            <RecentActivityStream events={recentEvents} />
+
+            {/* Session Rules Summary */}
+            <details className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 group">
+              <summary className="font-bold text-zinc-200 uppercase tracking-wider text-[11px] cursor-pointer list-none flex items-center justify-between">
+                ⚙ Auction Settings
+                <span className="text-zinc-500 group-open:rotate-180 transition-transform">▼</span>
+              </summary>
+              <div className="space-y-1.5 mt-4 text-xs text-zinc-400">
+                <div className="flex justify-between">
+                  <span>First Bid Clock:</span>
+                  <span className="font-mono text-zinc-200">
+                    {config.firstBidTimerSeconds}s
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Subsequent Bid Clock:</span>
+                  <span className="font-mono text-zinc-200">
+                    {config.subsequentBidTimerSeconds}s
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Min Auction Purchases:</span>
+                  <span className="font-mono text-zinc-200">
+                    {config.minAuctionPurchases} players
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Squad Bounds:</span>
+                  <span className="font-mono text-zinc-200">
+                    {config.minSquadSize} – {config.maxSquadSize} players
+                  </span>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
       </div>
     </DashboardShell>
   );

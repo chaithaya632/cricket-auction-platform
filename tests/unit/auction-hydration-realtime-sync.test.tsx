@@ -591,15 +591,10 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
     expect(getByText('AUCTION SESSION ACTIVE')).toBeTruthy();
     expect(getByText('PAUSE AUCTION')).toBeTruthy();
 
-    // 4. Admin clicks Bring to Floor on upcoming player
-    const bringToFloorBtn = getByText('Bring to Floor').closest('button')!;
-    await act(async () => {
-      fireEvent.click(bringToFloorBtn);
-    });
-
-    expect(mockSelectLotAction).toHaveBeenCalledWith('lot-upcoming-1');
-    expect(mockRouterRefresh).toHaveBeenCalledTimes(0);
-    expect(getByText(/Player brought to floor successfully/i)).toBeTruthy();
+    // 4. Verify upcoming player is visible in read-only list (no Bring to Floor button)
+    expect(getByText('Virat Kohli')).toBeTruthy();
+    // Phase 5.2: "Bring to Floor" button was intentionally removed from the upcoming list
+    expect(queryByText('Bring to Floor')).toBeNull();
   });
 
   it('Franchise Bid applies optimistic bid immediately, completes without redundant router.refresh(), and never gets stuck in Submitting state', async () => {
@@ -725,7 +720,7 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
     vi.useRealTimers();
   });
 
-  it('Admin Hammer / Sell and Pass / Unsold complete cleanly without redundant router.refresh() or stuck pending state', async () => {
+  it('Admin SOLD and UNSOLD actions complete cleanly without redundant router.refresh() or stuck pending state', async () => {
     mockConfirmSaleAction.mockResolvedValue({
       success: true,
       data: { price: 60 },
@@ -761,7 +756,7 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
       />
     );
 
-    const hammerBtn = getByText('HAMMER / SELL').closest('button')!;
+    const hammerBtn = getByText('SOLD').closest('button')!;;
     await act(async () => {
       fireEvent.click(hammerBtn);
     });
@@ -770,7 +765,7 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
     expect(mockRouterRefresh).toHaveBeenCalledTimes(0);
     expect(getByText(/Player SOLD for ₹60/i)).toBeTruthy();
 
-    const passBtn = getByText('PASS / UNSOLD').closest('button')!;
+    const passBtn = getByText('UNSOLD').closest('button')!;;
     await act(async () => {
       fireEvent.click(passBtn);
     });

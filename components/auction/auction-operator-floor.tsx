@@ -139,7 +139,7 @@ export function AuctionOperatorFloor({
 
       {/* Countdown Timer */}
       {activeLot && (
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-5 shadow-lg">
+        <div className="rounded-2xl border-2 border-zinc-700/50 bg-zinc-900/90 p-8 shadow-xl">
           <AuctionTimer
             startedAt={activeLot.started_at}
             durationSeconds={timerDuration}
@@ -147,7 +147,7 @@ export function AuctionOperatorFloor({
             isPaused={sessionState.isPaused}
             pausedRemainingSeconds={sessionState.pausedRemainingSeconds}
             showControls={true}
-            size="md"
+            size="lg"
           />
         </div>
       )}

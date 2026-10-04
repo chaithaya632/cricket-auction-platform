@@ -117,7 +117,8 @@ export function OperatorControls({
 }: OperatorControlsProps) {
   const router = useRouter();
   const [isPending, setIsPending] = useState(false);
-  const [activeQueueTab, setActiveQueueTab] = useState<'upcoming' | 'unsold' | 'sold'>('upcoming');
+  const [activeQueueTab, setActiveQueueTab] = useState<'upcoming' | 'unsold' | 'sold'>('unsold');
+  const [showAdvancedControls, setShowAdvancedControls] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -1024,27 +1025,31 @@ export function OperatorControls({
             <span>Guest Draw</span>
           </button>
 
-          {/* Secondary Manual Fallback: Only visible when floor has no active lot */}
-          {!activeLot && upcomingLots.length > 0 && (
-            <button
-              type="button"
-              onClick={() => upcomingLots[0] && handleSelectLot(upcomingLots[0].id)}
-              disabled={isPending || !isFloorActive}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ml-auto"
-              title="Manual override: call next player when floor is empty"
-            >
-              <ArrowRight className="size-3" />
-              <span>Manual Next (Floor Empty)</span>
-            </button>
-          )}
+
         </div>
       </div>
+
+      {/* Secondary Manual Fallback: Only visible when floor has no active lot */}
+      {!activeLot && upcomingLots.length > 0 && (
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={() => upcomingLots[0] && handleSelectLot(upcomingLots[0].id)}
+            disabled={isPending || !isFloorActive}
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-zinc-900/50 hover:bg-zinc-900 text-amber-500 border border-dashed border-amber-500/50 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Manual override: call next player when floor is empty"
+          >
+            <ArrowRight className="size-3" />
+            <span>Manual Recovery</span>
+          </button>
+        </div>
+      )}
 
       {/* 2. ACTIVE LOT EXECUTION PANEL */}
       <div className={`rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl space-y-4 ${sessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-400">
-            Auctioneer Floor Controls
+            AUCTION CONTROLS
           </h3>
           {sessionState.isPaused && (
             <span className="text-xs text-amber-400 font-semibold">
@@ -1075,7 +1080,7 @@ export function OperatorControls({
                 className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm shadow-md transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed flex items-center gap-2"
               >
                 <span>⬇️</span>
-                <span>BRING DOWN TO LOT QUEUE</span>
+                <span>RETURN TO QUEUE</span>
               </button>
               <button
                 type="button"
@@ -1090,7 +1095,7 @@ export function OperatorControls({
           </div>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           {/* HAMMER / SELL */}
           <button
             type="button"
@@ -1103,7 +1108,7 @@ export function OperatorControls({
             }`}
           >
             <span className="text-xl">🔨</span>
-            <span>HAMMER / SELL</span>
+            <span>SOLD</span>
             <span className="text-[10px] font-normal opacity-80">
               {activeLot?.current_price ? `At ₹${activeLot.current_price}` : 'No bids'}
             </span>
@@ -1121,7 +1126,7 @@ export function OperatorControls({
             }`}
           >
             <span className="text-xl">🛑</span>
-            <span>PASS / UNSOLD</span>
+            <span>UNSOLD</span>
             <span className="text-[10px] font-normal opacity-80">
               Move lot to unsold
             </span>
@@ -1139,35 +1144,46 @@ export function OperatorControls({
             }`}
           >
             <span className="text-xl">⏭</span>
-            <span>SKIP LOT</span>
+            <span>SKIP</span>
             <span className="text-[10px] font-normal opacity-80">
               Recalled at bucket end
             </span>
           </button>
+        </div>
 
-          {/* UNDO SALE */}
+        {/* UNDO SALE */}
+        <div className="mt-3">
           <button
             type="button"
             onClick={() => setShowUndoModal(true)}
             disabled={(!lastSoldLotId && soldLots.length === 0) || isPending || !isFloorActive}
-            className={`py-4 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all duration-150 flex flex-col items-center justify-center gap-1 ${
+            className={`w-full py-2 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all duration-150 flex items-center justify-center gap-2 ${
               (lastSoldLotId || soldLots.length > 0) && !isPending && isFloorActive
-                ? 'bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-amber-500/40 shadow-lg cursor-pointer active:scale-95'
-                : 'bg-zinc-800/50 text-zinc-600 cursor-not-allowed border border-zinc-800'
+                ? 'bg-transparent hover:bg-amber-500/10 text-amber-500 border border-amber-500/50 cursor-pointer active:scale-95'
+                : 'bg-transparent text-zinc-600 cursor-not-allowed border border-zinc-800'
             }`}
           >
-            <span className="text-xl">↩</span>
-            <span>UNDO SALE</span>
-            <span className="text-[10px] font-normal opacity-80">
-              Deterministic recovery
-            </span>
+            <span className="text-base">↩</span>
+            <span>UNDO SALE (Deterministic recovery)</span>
           </button>
         </div>
       </div>
 
       {/* 2.5 SUPER ADMIN GOVERNANCE CONTROLS */}
       {isSuperAdmin && (
-        <div className="rounded-2xl border border-amber-500/40 bg-zinc-900/90 p-5 shadow-xl space-y-3">
+        <div className="rounded-2xl border border-amber-500/40 bg-zinc-900/90 shadow-xl overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowAdvancedControls(!showAdvancedControls)}
+            className="w-full flex items-center justify-between p-4 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 transition-colors"
+          >
+            <span className="font-bold text-sm flex items-center gap-2">
+              <span>⚠</span> Advanced / Emergency Controls
+            </span>
+            <span className={`text-xs transition-transform ${showAdvancedControls ? 'rotate-180' : ''}`}>▼</span>
+          </button>
+          {showAdvancedControls && (
+            <div className="p-5 space-y-3 border-t border-amber-500/20">
           <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
             <div className="flex items-center gap-2">
               <ShieldAlert className="size-4 text-amber-400" />
@@ -1664,24 +1680,51 @@ export function OperatorControls({
               </button>
             </div>
           </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* 3. PLAYER QUEUE & LOT STATUS SELECTOR */}
+      {/* 3A. NEXT PLAYERS (READ-ONLY) */}
+      <div className={`rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl space-y-4 ${sessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
+        <div className="border-b border-zinc-800 pb-3">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-400">
+            NEXT PLAYERS
+          </h3>
+        </div>
+        <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+          {upcomingLots.length === 0 ? (
+            <div className="text-center py-4 text-xs text-zinc-500">
+              No pending lots remaining in the active queue.
+            </div>
+          ) : (
+            upcomingLots.slice(0, 8).map((lot) => (
+              <div
+                key={lot.id}
+                className="rounded-xl bg-zinc-950/70 border border-zinc-800/80 p-3 flex items-center gap-3"
+              >
+                <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-mono font-bold text-zinc-300">
+                  #{lot.draw_number}
+                </span>
+                <span className="rounded bg-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-400">
+                  {lot.bucket}
+                </span>
+                <h4 className="text-xs font-bold text-zinc-200 truncate flex-1">
+                  {lot.player.full_name}
+                </h4>
+                <span className="text-xs font-mono font-bold text-zinc-400">
+                  ₹{lot.base_price}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* 3B. UNSOLD & SOLD TABS */}
       <div className={`rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl space-y-4 ${sessionState.isNotStarted ? 'opacity-40 pointer-events-none' : ''}`}>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveQueueTab('upcoming')}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeQueueTab === 'upcoming'
-                  ? 'bg-zinc-800 text-zinc-100 shadow border border-zinc-700'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              Upcoming ({upcomingLots.length})
-            </button>
             <button
               type="button"
               onClick={() => setActiveQueueTab('unsold')}
@@ -1711,77 +1754,11 @@ export function OperatorControls({
             )}
           </div>
           <span className="text-xs text-zinc-500 font-mono">
-            {activeQueueTab === 'upcoming'
-              ? 'Organized by Round & Bucket'
-              : activeQueueTab === 'unsold'
+            {activeQueueTab === 'unsold'
               ? 'Round 2 Reopening Candidate'
               : 'Completed Floor Sales'}
           </span>
         </div>
-
-        {activeQueueTab === 'upcoming' && (
-          upcomingLots.length === 0 ? (
-            <div className="text-center py-8 space-y-2">
-              <p className="text-xs text-zinc-400">
-                No pending lots remaining in the active queue.
-              </p>
-              {unsoldLots.length > 0 && (
-                <div className="space-y-2 pt-1">
-                  <p className="text-[11px] text-zinc-500">
-                    {unsoldLots.length} player{unsoldLots.length === 1 ? '' : 's'} went unsold in Round 1 and will reopen in Round 2.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setActiveQueueTab('unsold')}
-                    className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 border border-zinc-700 cursor-pointer"
-                  >
-                    View Unsold Lots ({unsoldLots.length}) →
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-              {upcomingLots.map((lot) => (
-                <div
-                  key={lot.id}
-                  className="rounded-xl bg-zinc-950/70 border border-zinc-800/80 p-3.5 flex items-center justify-between gap-3"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-mono font-bold text-zinc-300">
-                      #{lot.draw_number}
-                    </span>
-                    <span className="rounded bg-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-400">
-                      {lot.bucket}
-                    </span>
-                    <div className="min-w-0">
-                      <h4 className="text-xs font-bold text-zinc-200 truncate">
-                        {lot.player.full_name}
-                      </h4>
-                      <span className="text-[10px] text-zinc-500 block truncate">
-                        {lot.registration.branch} • Year {lot.registration.academic_year} •
-                        Base: ₹{lot.base_price}
-                      </span>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleSelectLot(lot.id)}
-                    disabled={Boolean(activeLot && activeLot.status === 'in_progress') || isPending || !isFloorActive}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 ${
-                      (!activeLot || activeLot.status !== 'in_progress') && isFloorActive
-                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer shadow'
-                        : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-                    }`}
-                  >
-                    Bring to Floor
-                  </button>
-                </div>
-              ))}
-            </div>
-          )
-        )}
 
         {activeQueueTab === 'unsold' && (
           unsoldLots.length === 0 ? (
@@ -1799,18 +1776,15 @@ export function OperatorControls({
                     <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-mono font-bold text-zinc-300">
                       #{lot.draw_number}
                     </span>
-                    <span className="rounded bg-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-400">
+                    <span className="rounded bg-red-900/40 px-2 py-0.5 text-xs font-bold text-red-400 border border-red-800/50">
                       {lot.bucket}
-                    </span>
-                    <span className="rounded bg-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-400 border border-red-500/30">
-                      UNSOLD
                     </span>
                     <div className="min-w-0">
                       <h4 className="text-xs font-bold text-zinc-200 truncate">
                         {lot.player.full_name}
                       </h4>
                       <span className="text-[10px] text-zinc-500 block truncate">
-                        {lot.registration.branch} • Year {lot.registration.academic_year} • Base: ₹{lot.base_price} • Round {lot.round}
+                        Base: ₹{lot.base_price}
                       </span>
                     </div>
                   </div>
@@ -1819,22 +1793,18 @@ export function OperatorControls({
                     <button
                       type="button"
                       onClick={() => handleBringDownUnsoldLot(lot.id)}
-                      disabled={isPending}
-                      className="px-2.5 py-1.5 rounded-lg bg-amber-600/80 hover:bg-amber-600 disabled:opacity-50 text-white font-bold text-xs shadow transition-all cursor-pointer disabled:cursor-not-allowed flex items-center gap-1"
-                      title="Return player to lot queue at original base price"
+                      disabled={isPending || !isFloorActive}
+                      className="px-3 py-1.5 rounded-lg bg-amber-600/80 hover:bg-amber-500 text-white text-[10px] font-bold shadow disabled:opacity-50 transition-all cursor-pointer"
                     >
-                      <span>⬇️</span>
-                      <span>Queue</span>
+                      Queue
                     </button>
                     <button
                       type="button"
                       onClick={() => handleReAuctionUnsoldLot(lot.id)}
-                      disabled={isPending}
-                      className="px-2.5 py-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 disabled:opacity-50 text-white font-bold text-xs shadow transition-all cursor-pointer disabled:cursor-not-allowed flex items-center gap-1"
-                      title="Re-auction player at original base price"
+                      disabled={isPending || !isFloorActive}
+                      className="px-3 py-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-500 text-white text-[10px] font-bold shadow disabled:opacity-50 transition-all cursor-pointer"
                     >
-                      <span>🔄</span>
-                      <span>Re-Auction</span>
+                      Re-Auction
                     </button>
                   </div>
                 </div>
@@ -1846,39 +1816,30 @@ export function OperatorControls({
         {activeQueueTab === 'sold' && (
           soldLots.length === 0 ? (
             <div className="text-center py-8 text-xs text-zinc-500">
-              No completed sales recorded yet.
+              No players sold yet.
             </div>
           ) : (
             <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-              {soldLots.map((sl) => (
+              {soldLots.map((lot) => (
                 <div
-                  key={sl.id}
+                  key={lot.id}
                   className="rounded-xl bg-zinc-950/70 border border-emerald-900/30 p-3.5 flex items-center justify-between gap-3"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-mono font-bold text-zinc-300">
-                      #{sl.draw_number}
+                      #{lot.draw_number}
                     </span>
-                    <span className="rounded bg-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-400">
-                      {sl.bucket}
-                    </span>
-                    <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30">
-                      SOLD
+                    <span className="rounded bg-emerald-900/40 px-2 py-0.5 text-xs font-bold text-emerald-400 border border-emerald-800/50">
+                      {lot.bucket}
                     </span>
                     <div className="min-w-0">
                       <h4 className="text-xs font-bold text-zinc-200 truncate">
-                        {sl.player_name}
+                        {lot.player_name}
                       </h4>
-                      <span className="text-[10px] text-zinc-400 block truncate">
-                        Won by <strong className="text-emerald-400">{sl.franchise_name}</strong>
+                      <span className="text-[10px] text-zinc-500 block truncate">
+                        Sold to <span className="font-bold text-emerald-400">{lot.franchise_name}</span> for ₹{lot.price}
                       </span>
                     </div>
-                  </div>
-
-                  <div className="text-right shrink-0">
-                    <span className="text-xs font-mono font-bold text-emerald-400 block">
-                      ₹{sl.price}
-                    </span>
                   </div>
                 </div>
               ))}
@@ -1886,6 +1847,7 @@ export function OperatorControls({
           )
         )}
       </div>
+
 
       {/* Guest Draw Dialog */}
       {seasonId && (
