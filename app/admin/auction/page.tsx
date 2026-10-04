@@ -43,6 +43,7 @@ export default async function AdminAuctionPage() {
     config,
     sessionState,
     bucketStats,
+    completedBucketsResult,
     soldLotsResult,
     franchisesResult,
     allSeasonLotsResult,
@@ -54,6 +55,12 @@ export default async function AdminAuctionPage() {
     getSeasonAuctionConfig(supabase, seasonId),
     getAuctionSessionState(supabase, seasonId),
     getBucketStatistics(supabase, seasonId),
+    supabase
+      .from('season_config')
+      .select('value')
+      .eq('season_id', seasonId)
+      .eq('key', 'auction_completed_buckets')
+      .maybeSingle(),
     supabase
       .from('auction_lots')
       .select('id, draw_number, current_price, bucket, highest_bidder:franchises(name), registration:player_season_registrations(player:players(full_name))')
@@ -79,6 +86,14 @@ export default async function AdminAuctionPage() {
     getAuctionQueueByBuckets(supabase, seasonId, activeBuckets, 50),
     activeLot?.bucket ? getActiveLotScarcity(supabase, seasonId, activeLot.bucket) : null,
   ]);
+
+  let completedBuckets: string[] = [];
+  if (completedBucketsResult.data?.value) {
+    try {
+      const parsed = JSON.parse(completedBucketsResult.data.value);
+      if (Array.isArray(parsed)) completedBuckets = parsed;
+    } catch {}
+  }
 
   const soldLots: OperatorSoldLotItem[] = (soldLotsResult.data || []).map((l: any) => ({
     id: l.id,
@@ -190,6 +205,7 @@ export default async function AdminAuctionPage() {
               scarcityReport={scarcityReport}
               recoveryLots={recoveryLots}
               initialActiveBuckets={activeBuckets}
+              completedBuckets={completedBuckets}
               bucketStats={bucketStats}
               config={config}
             />

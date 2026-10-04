@@ -35,9 +35,13 @@ export interface FranchiseReferralState {
 
 /**
  * Checks if a franchise has capacity for an additional referred player.
+ * Per consolidated workflow rules, there is no fixed referral cap (unlimited allowed subject to squad capacity).
  */
 export function canAddReferral(state: FranchiseReferralState): boolean {
-  const max = state.maxReferrals ?? SQUAD_RULES.MAX_REFERRALS;
+  const max =
+    state.maxReferrals !== undefined && state.maxReferrals !== null
+      ? state.maxReferrals
+      : SQUAD_RULES.MAX_REFERRALS;
   return state.referralCount < max;
 }
 

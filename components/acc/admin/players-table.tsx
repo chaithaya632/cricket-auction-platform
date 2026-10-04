@@ -29,9 +29,19 @@ import { PlayerStatusBadge } from "@/components/acc/status-badges"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { formatCredits, BUCKET_ORDER, STATUS_CONFIG } from "@/lib/acc/config"
 import type { Player, PlayerStatus } from "@/lib/acc/types"
-import { Search, Users, Trash2, ShieldCheck, CheckCircle2, AlertTriangle, Eye, ShieldAlert, RotateCcw, Loader2 } from "lucide-react"
+import { Search, Users, Trash2, ShieldCheck, CheckCircle2, AlertTriangle, Eye, ShieldAlert, RotateCcw, Loader2, ArrowRightLeft, UserPlus } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { reAuctionUnsoldLotAction } from "@/lib/auction/actions"
+import { adminUpdatePlayerBucketAction } from "@/lib/players/actions"
+import { adminAddReferredPlayerToTeamAction } from "@/lib/referrals/actions"
 import { toast } from "sonner"
 import { DeletePlayerDialog } from "./delete-player-dialog"
 import { PlayerReviewDialog } from "./player-review-dialog"
@@ -57,8 +67,58 @@ export function PlayersTable({ players }: { players: Player[] }) {
   const [groupFilter, setGroupFilter] = useState<string>("all")
   const [playerToDelete, setPlayerToDelete] = useState<Player | null>(null)
   const [playerToReview, setPlayerToReview] = useState<Player | null>(null)
+  const [playerToChangeBucket, setPlayerToChangeBucket] = useState<Player | null>(null)
+  const [targetBucket, setTargetBucket] = useState<'B1' | 'B2' | 'B3' | 'B4' | 'B5' | 'PG'>("B1")
+  const [isChangingBucket, setIsChangingBucket] = useState(false)
+  const [addingTeamId, setAddingTeamId] = useState<string | null>(null)
   const [reAuctioningId, setReAuctioningId] = useState<string | null>(null)
   const router = useRouter()
+
+  function openChangeBucket(p: Player) {
+    setPlayerToChangeBucket(p)
+    setTargetBucket(p.bucket)
+  }
+
+  async function handleConfirmChangeBucket() {
+    if (!playerToChangeBucket) return
+    const regId = playerToChangeBucket.registrationId || playerToChangeBucket.id
+    setIsChangingBucket(true)
+    try {
+      const res = await adminUpdatePlayerBucketAction(regId, targetBucket)
+      if (!res.success) {
+        toast.error(res.error || "Failed to update player bucket.")
+      } else {
+        toast.success(`Bucket for ${playerToChangeBucket.fullName} updated to ${targetBucket}.`)
+        setPlayerToChangeBucket(null)
+        router.refresh()
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to update player bucket.")
+    } finally {
+      setIsChangingBucket(false)
+    }
+  }
+
+  async function handleAddToTeam(player: Player) {
+    if (!player.referralId) {
+      toast.error("No referral claim found for this player.")
+      return
+    }
+    setAddingTeamId(player.id)
+    try {
+      const res = await adminAddReferredPlayerToTeamAction(player.referralId)
+      if (!res.success) {
+        toast.error(res.error || "Failed to add referred player to squad.")
+      } else {
+        toast.success(`Added ${player.fullName} to ${player.referredFranchiseName || 'the franchise'} squad at ₹0!`)
+        router.refresh()
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to add player to squad.")
+    } finally {
+      setAddingTeamId(null)
+    }
+  }
 
   async function handleReAuction(player: Player) {
     const targetId = player.registrationId || player.id
@@ -346,7 +406,29 @@ export function PlayersTable({ players }: { players: Player[] }) {
                           <span className="font-mono text-xs text-muted-foreground">
                             {p.rollNumber} · {p.program} {p.branch ? `· ${p.branch}` : ""}
                           </span>
-                          {p.discrepancyNote && !p.yearOverride && (
+                          {p.isDetained && (
+                            <span
+                              title={`Detained / Re-admitted: ${p.discrepancyNote || 'Academic year override applied'}`}
+                              className="inline-flex items-center gap-1 rounded bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-bold text-orange-600 dark:text-orange-400 border border-orange-500/30"
+                            >
+                              <span>🟠</span>
+                              <span>DETAINED / RE-ADMITTED</span>
+                            </span>
+                          )}
+                          {p.isReferred && (
+                            <span
+                              title={p.isSquadMember ? `Squad Member of ${p.referredFranchiseName}` : `Referred by ${p.referredFranchiseName}`}
+                              className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-bold text-blue-600 dark:text-blue-400 border border-blue-500/30"
+                            >
+                              <span>🔵</span>
+                              <span>
+                                {p.isSquadMember
+                                  ? `REFERRED ✓ SQUAD MEMBER Team: ${p.referredFranchiseName || 'Franchise'}`
+                                  : `REFERRED ${p.referredFranchiseName || 'Franchise'}`}
+                              </span>
+                            </span>
+                          )}
+                          {p.discrepancyNote && !p.yearOverride && !p.isDetained && (
                             <span
                               title={`Flagged Discrepancy: ${p.discrepancyNote}`}
                               className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400 border border-amber-500/30"
@@ -362,11 +444,21 @@ export function PlayersTable({ players }: { players: Player[] }) {
 
                   {/* Category & Base Price */}
                   <TableCell className="hidden md:table-cell">
-                    <div className="flex items-center gap-2">
-                      <CategoryBadge bucket={p.bucket} />
-                      <span className="font-mono text-xs font-semibold tabular-nums text-foreground">
-                        {formatCredits(p.status === "SOLD" ? p.soldPrice ?? p.basePrice : p.basePrice)}
-                      </span>
+                    <div className="flex flex-col gap-1 items-start">
+                      <div className="flex items-center gap-2">
+                        <CategoryBadge bucket={p.bucket} />
+                        <span className="font-mono text-xs font-semibold tabular-nums text-foreground">
+                          {formatCredits(p.status === "SOLD" ? p.soldPrice ?? p.basePrice : p.basePrice)}
+                        </span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-5 px-1.5 text-[10px] font-semibold text-muted-foreground hover:text-foreground hover:bg-muted"
+                        onClick={() => openChangeBucket(p)}
+                      >
+                        [ CHANGE BUCKET ]
+                      </Button>
                     </div>
                   </TableCell>
 
@@ -447,6 +539,24 @@ export function PlayersTable({ players }: { players: Player[] }) {
                         </Button>
                       )}
 
+                      {p.isReferred && !p.isSquadMember && p.referralId && (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="h-8 px-2.5 text-xs font-bold gap-1 bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
+                          disabled={addingTeamId === p.id}
+                          onClick={() => handleAddToTeam(p)}
+                          title={`Add ${p.fullName} to ${p.referredFranchiseName || 'franchise'} squad at ₹0`}
+                        >
+                          {addingTeamId === p.id ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <UserPlus className="size-3.5" />
+                          )}
+                          <span>[ ADD TO TEAM ]</span>
+                        </Button>
+                      )}
+
                       <Button
                         variant="outline"
                         size="sm"
@@ -509,6 +619,55 @@ export function PlayersTable({ players }: { players: Player[] }) {
         open={!!playerToDelete}
         onOpenChange={(open) => !open && setPlayerToDelete(null)}
       />
+
+      {/* Change Bucket Dialog */}
+      <Dialog open={!!playerToChangeBucket} onOpenChange={(open) => !open && setPlayerToChangeBucket(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Change Auction Bucket</DialogTitle>
+            <DialogDescription>
+              Assign {playerToChangeBucket?.fullName} ({playerToChangeBucket?.rollNumber}) to a different auction tier.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-3">
+            <label className="text-xs font-semibold text-muted-foreground block">
+              Select Target Bucket:
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {(['B1', 'B2', 'B3', 'B4', 'B5', 'PG'] as const).map((b) => (
+                <Button
+                  key={b}
+                  type="button"
+                  variant={targetBucket === b ? 'default' : 'outline'}
+                  className={`h-10 font-bold text-sm ${targetBucket === b ? 'bg-primary text-primary-foreground' : ''}`}
+                  onClick={() => setTargetBucket(b)}
+                >
+                  {b}
+                </Button>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Current Bucket: <strong>{playerToChangeBucket?.bucket}</strong>. Updating this bucket changes player pricing and progression sequence.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setPlayerToChangeBucket(null)}
+              disabled={isChangingBucket}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmChangeBucket}
+              disabled={isChangingBucket || Boolean(playerToChangeBucket && targetBucket === playerToChangeBucket.bucket)}
+            >
+              {isChangingBucket ? <Loader2 className="size-4 animate-spin mr-1" /> : null}
+              Save Bucket
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

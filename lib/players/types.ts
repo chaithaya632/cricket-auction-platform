@@ -22,6 +22,8 @@ export interface PlayerRegistrationInput {
   branch?: string | null;
   year_override?: number | null;
   year_override_reason?: string | null;
+  is_detained?: boolean;
+  discrepancy_note?: string | null;
 }
 
 export interface PlayerSkillInput {

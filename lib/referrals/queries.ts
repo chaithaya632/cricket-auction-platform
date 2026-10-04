@@ -145,3 +145,56 @@ export async function getAllSeasonReferrals(
     return [];
   }
 }
+
+export interface PlayerIncomingReferral {
+  referralId: string;
+  franchiseId: string;
+  franchiseName: string;
+  franchiseShortName: string;
+  status: 'pending' | 'approved' | 'rejected' | 'conflict';
+  notes: string | null;
+  createdAt: string;
+}
+
+/**
+ * Retrieves incoming franchise referrals declared for a specific player registration.
+ */
+export async function getPlayerIncomingReferrals(
+  supabase: SupabaseClient,
+  registrationId: string
+): Promise<PlayerIncomingReferral[]> {
+  try {
+    const { data, error } = await supabase
+      .from('franchise_referrals')
+      .select(`
+        id,
+        franchise_id,
+        status,
+        notes,
+        created_at,
+        franchises (
+          id,
+          name,
+          short_name
+        )
+      `)
+      .eq('registration_id', registrationId)
+      .neq('status', 'rejected')
+      .order('created_at', { ascending: false });
+
+    if (error || !data) return [];
+
+    return data.map((r: any) => ({
+      referralId: r.id,
+      franchiseId: r.franchise_id,
+      franchiseName: r.franchises?.name || 'Franchise',
+      franchiseShortName: r.franchises?.short_name || 'FR',
+      status: r.status,
+      notes: r.notes,
+      createdAt: r.created_at,
+    }));
+  } catch (err) {
+    console.error('Failed to get player incoming referrals:', err);
+    return [];
+  }
+}

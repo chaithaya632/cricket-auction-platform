@@ -38,6 +38,7 @@ export interface AuctionOperatorFloorProps {
   scarcityReport?: BucketScarcityReport | null;
   recoveryLots?: OperatorRecoveryLotItem[];
   initialActiveBuckets?: string[];
+  completedBuckets?: string[];
   bucketStats?: Record<string, { pending: number; total: number; inProgress: boolean }>;
   config: AuctionConfigDTO;
 }
@@ -55,6 +56,7 @@ export function AuctionOperatorFloor({
   scarcityReport = null,
   recoveryLots = [],
   initialActiveBuckets,
+  completedBuckets = [],
   bucketStats,
   config,
 }: AuctionOperatorFloorProps) {
@@ -166,6 +168,7 @@ export function AuctionOperatorFloor({
         scarcityReport={scarcityReport}
         recoveryLots={recoveryLots}
         initialActiveBuckets={initialActiveBuckets}
+        completedBuckets={completedBuckets}
         bucketStats={bucketStats}
         onActiveLotChange={setActiveLot}
         onSessionStateChange={setSessionState}

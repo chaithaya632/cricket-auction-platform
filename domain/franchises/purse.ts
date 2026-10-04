@@ -8,7 +8,7 @@ import {
   type MaxPermissibleBidResult,
 } from './max-bid';
 
-export type AcquisitionType = 'sold' | 'allotted' | 'scouted';
+export type AcquisitionType = 'sold' | 'allotted' | 'scouted' | 'referred';
 
 export interface AcquiredLotSummary {
   lotId: string;

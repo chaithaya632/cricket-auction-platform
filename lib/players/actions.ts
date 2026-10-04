@@ -158,13 +158,20 @@ export async function registerPlayerSeasonAction(
 
     const isPg = parsedRoll.programme === 'pg';
     const programme = parsedRoll.programme;
-    const academicYear = isPg
+    const isDetained = Boolean(validation.data.is_detained);
+    const discrepancyNote = validation.data.discrepancy_note || (isDetained ? 'Detained/re-admitted student' : null);
+
+    // Detained/re-admitted students or PG students use their actual study year; normal students derive from roll number
+    const academicYear = (isPg || isDetained)
       ? (inputYear || 1)
       : calculateAcademicYear(parsedRoll.admissionYear!, programme, ACC_REFERENCE_DATE);
     const branch = isPg
       ? (inputBranch || 'PG')
       : (parsedRoll.branchName || null);
     const derivedPlayerBucket = isPg ? 'PG' : deriveBucket(programme, academicYear);
+
+    const yearOverride = isDetained ? academicYear : null;
+    const yearOverrideReason = isDetained ? discrepancyNote : null;
 
     const supabase = await createClient();
 
@@ -212,6 +219,8 @@ export async function registerPlayerSeasonAction(
           base_price,
           cricheroes_url: cricheroes_url || null,
           cricheroes_registered_mobile: cricheroes_registered_mobile || null,
+          year_override: yearOverride,
+          year_override_reason: yearOverrideReason,
           updated_at: new Date().toISOString(),
         })
         .eq('id', existingRegistration.id)
@@ -247,6 +256,8 @@ export async function registerPlayerSeasonAction(
         cricheroes_status: 'unverified',
         payment_status: 'unpaid',
         is_auction_eligible: false,
+        year_override: yearOverride,
+        year_override_reason: yearOverrideReason,
       })
       .select('*')
       .single();
@@ -1356,5 +1367,93 @@ export async function uploadPlayerPhotoAction(
     return { success: true, url: result.url };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to upload photo.' };
+  }
+}
+
+/**
+ * Super Admin or Operator manually overrides a detained/re-admitted player's bucket (§9).
+ * Permitted: B1, B2, B3, B4, B5, PG.
+ * Strictly locked once auction starts (season.status === 'auction' or auction_session_status !== 'not_started').
+ */
+export async function adminUpdatePlayerBucketAction(
+  registrationId: string,
+  newBucket: 'B1' | 'B2' | 'B3' | 'B4' | 'B5' | 'PG'
+): Promise<PlayerActionResult<{ registrationId: string; bucket: string }>> {
+  try {
+    const adminContext = await requireAdmin();
+    const adminClient = createAdminClient();
+
+    const allowedBuckets = ['B1', 'B2', 'B3', 'B4', 'B5', 'PG'] as const;
+    if (!allowedBuckets.includes(newBucket as any)) {
+      return { success: false, error: `Invalid bucket: ${newBucket}. Permitted: ${allowedBuckets.join(', ')}.` };
+    }
+
+    // 1. Fetch registration
+    const { data: reg, error: regErr } = await adminClient
+      .from('player_season_registrations')
+      .select('id, season_id, bucket, year_override, year_override_reason, is_auction_eligible, seasons(id, status)')
+      .eq('id', registrationId)
+      .maybeSingle();
+
+    if (regErr || !reg) {
+      return { success: false, error: 'Player registration not found.' };
+    }
+
+    // 2. Check auction session state - must be locked once auction has started
+    const seasonStatus = (reg.seasons as any)?.status;
+    const { data: sessionConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', reg.season_id)
+      .eq('key', 'auction_session_status')
+      .maybeSingle();
+
+    const isAuctionStarted =
+      seasonStatus === 'auction' ||
+      (sessionConfig?.value && sessionConfig.value !== 'not_started');
+
+    if (isAuctionStarted) {
+      return {
+        success: false,
+        error: 'Bucket modification locked: Auction has already started or progressed. Bucket cannot be modified once auction starts.',
+      };
+    }
+
+    // 3. Update registration bucket
+    const now = new Date().toISOString();
+    const { error: updateErr } = await adminClient
+      .from('player_season_registrations')
+      .update({
+        bucket: newBucket,
+        updated_at: now,
+      })
+      .eq('id', registrationId);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message || 'Failed to update player bucket.' };
+    }
+
+    // 4. Write audit log
+    await writeAuditLog(
+      {
+        seasonId: reg.season_id,
+        actorUserId: adminContext.user.id,
+        action: 'BUCKET_OVERRIDE',
+        entityType: 'player_season_registration',
+        entityId: registrationId,
+        reason: `Admin changed detained player bucket from ${reg.bucket} to ${newBucket}`,
+        metadata: {
+          previous_bucket: reg.bucket,
+          new_bucket: newBucket,
+        },
+      },
+      adminClient
+    );
+
+    revalidatePath('/admin/players');
+    revalidatePath('/admin/auction');
+    return { success: true, data: { registrationId, bucket: newBucket } };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to change player bucket.' };
   }
 }

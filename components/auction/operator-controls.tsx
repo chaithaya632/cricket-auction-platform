@@ -27,6 +27,7 @@ import {
   adminAuctionRestartRecoveryAction,
   updateActiveBucketsAction,
   drawRandomLotFromBucketsAction,
+  startNextBucketGroupAction,
 } from '@/lib/auction/actions';
 import { runWithLocalActionTracking } from '@/components/auction/auction-realtime-sync';
 import {
@@ -93,6 +94,7 @@ interface OperatorControlsProps {
   scarcityReport?: BucketScarcityReport | null;
   recoveryLots?: OperatorRecoveryLotItem[];
   initialActiveBuckets?: string[];
+  completedBuckets?: string[];
   bucketStats?: Record<string, { pending: number; total: number; inProgress: boolean }>;
   onActiveLotChange?: (lot: AuctionLotWithDetails | null) => void;
   onSessionStateChange?: (state: AuctionSessionState) => void;
@@ -111,6 +113,7 @@ export function OperatorControls({
   scarcityReport = null,
   recoveryLots = [],
   initialActiveBuckets,
+  completedBuckets = [],
   bucketStats,
   onActiveLotChange,
   onSessionStateChange,
@@ -219,6 +222,42 @@ export function OperatorControls({
           setErrorMsg(sanitizeActionError(res.error, 'Failed to update active buckets.'));
         } else {
           setSuccessMsg('All buckets selected.');
+        }
+      }
+    );
+  };
+
+  const [selectedRemainingBuckets, setSelectedRemainingBuckets] = useState<string[]>([]);
+
+  const activeBucketsPendingTotal = activeBuckets.reduce(
+    (acc, b) => acc + (bucketStats?.[b]?.pending ?? 0),
+    0
+  );
+  const isBucketGroupComplete =
+    sessionState.isLive &&
+    !activeLot &&
+    activeBuckets.length > 0 &&
+    activeBucketsPendingTotal === 0;
+
+  const handleToggleRemainingBucket = (bucket: string) => {
+    setSelectedRemainingBuckets((prev) =>
+      prev.includes(bucket) ? prev.filter((item) => item !== bucket) : [...prev, bucket]
+    );
+  };
+
+  const handleStartNextBucketGroup = () => {
+    if (selectedRemainingBuckets.length === 0) return;
+    void runOperatorAction(
+      () => startNextBucketGroupAction(selectedRemainingBuckets),
+      (res) => {
+        if (!res.success) {
+          setErrorMsg(sanitizeActionError(res.error, 'Failed to start next bucket group.'));
+        } else {
+          setSuccessMsg(`Next bucket group started: ${selectedRemainingBuckets.join(', ')}`);
+          setSelectedRemainingBuckets([]);
+          if (res.data?.activeLot && onActiveLotChange) {
+            onActiveLotChange(res.data.activeLot);
+          }
         }
       }
     );
@@ -1028,6 +1067,87 @@ export function OperatorControls({
 
         </div>
       </div>
+
+      {/* CURRENT BUCKET GROUP COMPLETE PANEL */}
+      {isBucketGroupComplete && (
+        <div className="rounded-2xl border-2 border-emerald-500/50 bg-gradient-to-b from-emerald-950/40 via-zinc-950 to-zinc-950 p-6 text-center space-y-5 shadow-2xl">
+          <div className="space-y-1">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black tracking-wider uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+              <span>✓</span>
+              <span>CURRENT BUCKET GROUP COMPLETE</span>
+            </span>
+            <h3 className="text-xl font-black text-white mt-2">All Lots in Active Group Concluded</h3>
+            <p className="text-xs text-zinc-400 max-w-md mx-auto">
+              All players in the selected buckets have been auctioned. Completed buckets are locked. Select the next bucket group to proceed.
+            </p>
+          </div>
+
+          {/* Completed Buckets Badges */}
+          <div className="flex flex-wrap justify-center gap-2">
+            {activeBuckets.map((b) => (
+              <span
+                key={b}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-black bg-zinc-800/80 text-zinc-300 border border-zinc-700"
+              >
+                <span>{b}</span>
+                <span className="text-emerald-400 font-bold">✓ COMPLETED</span>
+              </span>
+            ))}
+          </div>
+
+          {/* Remaining Buckets Selector */}
+          <div className="pt-2 border-t border-zinc-800/80 max-w-lg mx-auto space-y-3">
+            <p className="text-xs font-bold uppercase tracking-wider text-amber-400">
+              SELECT REMAINING BUCKETS
+            </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {DEFAULT_BUCKET_ORDER.map((bucket) => {
+                const isCompleted =
+                  (completedBuckets || []).includes(bucket) ||
+                  (activeBuckets.includes(bucket) && (bucketStats?.[bucket]?.pending ?? 0) === 0);
+                const isSelected = selectedRemainingBuckets.includes(bucket);
+                const pendingCount = bucketStats?.[bucket]?.pending ?? 0;
+                return (
+                  <button
+                    key={bucket}
+                    type="button"
+                    disabled={isCompleted || isPending || pendingCount === 0}
+                    onClick={() => handleToggleRemainingBucket(bucket)}
+                    className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all border ${
+                      isCompleted
+                        ? 'bg-zinc-900/40 text-zinc-600 border-zinc-800/40 cursor-not-allowed'
+                        : isSelected
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500 shadow-md shadow-amber-950/40 cursor-pointer'
+                        : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200 cursor-pointer'
+                    }`}
+                  >
+                    <span className="font-black text-sm">{bucket}</span>
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono">
+                      {isCompleted ? '✓ Done' : `${pendingCount} left`}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                disabled={isPending || selectedRemainingBuckets.length === 0}
+                onClick={handleStartNextBucketGroup}
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-950/50 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Play className="size-4 fill-white" />
+                )}
+                <span>START SELECTED BUCKETS</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Secondary Manual Fallback: Only visible when floor has no active lot */}
       {!activeLot && upcomingLots.length > 0 && (

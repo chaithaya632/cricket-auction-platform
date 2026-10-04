@@ -81,6 +81,11 @@ export interface Player {
   yearOverride?: number | null
   yearOverrideReason?: string | null
   discrepancyNote?: string | null
+  isDetained?: boolean
+  isReferred?: boolean
+  isSquadMember?: boolean
+  referralId?: string | null
+  referredFranchiseName?: string | null
   eligibilityReasons?: string[]
   skillDetails?: {
     battingStyle?: string | null

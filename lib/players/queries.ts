@@ -239,6 +239,18 @@ export const getAdminPlayersList = cache(async (
               status,
               current_price,
               highest_bidder_franchise_id
+            ),
+            franchise_referrals (
+              id,
+              franchise_id,
+              status,
+              notes,
+              verified_at,
+              franchises (
+                id,
+                name,
+                short_name
+              )
             )
           )
         `),
@@ -330,6 +342,16 @@ export const getAdminPlayersList = cache(async (
         }
       }
 
+      const referralList = reg?.franchise_referrals;
+      const acceptedReferral = Array.isArray(referralList)
+        ? referralList.find((r: any) => r.status === 'approved' || r.notes === 'ACCEPTED_BY_PLAYER')
+        : referralList;
+      const isSquadMember = acceptedReferral?.status === 'approved';
+      const isReferred = Boolean(acceptedReferral);
+      const referredFranchiseName = acceptedReferral?.franchises?.name || null;
+      const referralId = acceptedReferral?.id || null;
+      const isDetained = Boolean(reg?.year_override || discrepancyNote);
+
       return {
         id: p.id,
         rollNumber: p.roll_number,
@@ -362,6 +384,11 @@ export const getAdminPlayersList = cache(async (
         yearOverride: reg?.year_override || null,
         yearOverrideReason: reg?.year_override_reason || null,
         discrepancyNote,
+        isDetained,
+        isReferred,
+        isSquadMember,
+        referralId,
+        referredFranchiseName,
         eligibilityReasons: eligibilityBreakdown.missingRequirements,
         skillDetails: {
           battingStyle: skill?.batting_style || null,

@@ -6,10 +6,12 @@
 
 import { revalidatePath } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireAdmin, requireFranchise } from '@/lib/permissions/guards';
+import { requireAdmin, requireFranchise, requirePlayer } from '@/lib/permissions/guards';
 import { parseRollNumber } from '@/domain/academic';
-import { canAddReferral, evaluateReferralConflict } from '@/domain/referrals';
+import { canAddReferral } from '@/domain/referrals';
 import { writeAuditLog } from '@/lib/audit/logger';
+import { getFranchiseSquadData } from '@/lib/franchises/queries';
+import { executeAuctionMutationFlow } from '@/lib/auction/transaction';
 
 export interface ReferralActionResult<T = unknown> {
   success: boolean;
@@ -69,10 +71,10 @@ export async function declareFranchiseReferralAction(
       .eq('franchise_id', franchiseId)
       .in('status', ['pending', 'approved']);
 
-    if (!canAddReferral({ franchiseId, referralCount: currentReferralCount || 0, maxReferrals: 5 })) {
+    if (!canAddReferral({ franchiseId, referralCount: currentReferralCount || 0 })) {
       return {
         success: false,
-        error: `Franchise quota reached: Maximum 5 referred players per franchise permitted (§6). Current active referrals: ${currentReferralCount}.`,
+        error: `Franchise referral capacity exceeded.`,
       };
     }
 
@@ -137,19 +139,20 @@ export async function declareFranchiseReferralAction(
       return { success: false, error: 'Cannot refer player: already registered as team captain/vice-captain of another franchise.' };
     }
 
-    // 6. Two-sided Conflict Evaluation (§6)
+    // 6. Multiple franchises may declare referrals (status = 'pending').
+    // Player will choose their preferred franchise during registration.
     const { data: existingReferrals } = await adminClient
       .from('franchise_referrals')
       .select('id, franchise_id, status')
       .eq('registration_id', registrationId);
 
-    const conflictEval = evaluateReferralConflict({
-      claimingFranchiseId: franchiseId,
-      existingReferrals: (existingReferrals || []) as any,
-    });
+    const alreadyApproved = (existingReferrals || []).find((r) => r.status === 'approved');
+    if (alreadyApproved) {
+      return { success: false, error: 'Cannot refer player: already approved for another franchise.' };
+    }
 
     const now = new Date().toISOString();
-    const finalStatus = conflictEval.status; // 'pending' or 'conflict'
+    const finalStatus = 'pending';
 
     // 7. Upsert referral record
     const { data: newReferral, error: upsertErr } = await adminClient
@@ -159,7 +162,7 @@ export async function declareFranchiseReferralAction(
           franchise_id: franchiseId,
           registration_id: registrationId,
           status: finalStatus,
-          notes: notes ? `${notes} ${conflictEval.reason || ''}`.trim() : conflictEval.reason || null,
+          notes: notes?.trim() || null,
           updated_at: now,
         },
         { onConflict: 'franchise_id,registration_id' }
@@ -171,18 +174,6 @@ export async function declareFranchiseReferralAction(
       return { success: false, error: upsertErr?.message || 'Failed to record referral declaration.' };
     }
 
-    // 8. If another referral was pending for another franchise, mark it conflict as well (§6)
-    if (conflictEval.hasConflict) {
-      await adminClient
-        .from('franchise_referrals')
-        .update({
-          status: 'conflict',
-          notes: 'Conflict detected: Multiple franchises have claimed this player as a referral (§6).',
-          updated_at: now,
-        })
-        .eq('registration_id', registrationId);
-    }
-
     // 9. Write audit log
     await writeAuditLog(
       {
@@ -191,14 +182,11 @@ export async function declareFranchiseReferralAction(
         action: 'REFERRAL_DECLARED',
         entityType: 'franchise_referral',
         entityId: newReferral.id,
-        reason: conflictEval.hasConflict
-          ? `Referral declared with CONFLICT: ${conflictEval.reason}`
-          : 'Franchise declared referral (§6)',
+        reason: 'Franchise declared referral (§6)',
         metadata: {
           franchise_id: franchiseId,
           registration_id: registrationId,
           status: finalStatus,
-          is_conflict: conflictEval.hasConflict,
         },
       },
       adminClient
@@ -224,11 +212,16 @@ export async function declareFranchiseReferralAction(
 /**
  * Super Admin manually approves a franchise referral after checking records (§6).
  *
- * Rules enforced:
- * 1. Only Super Admin can approve.
- * 2. Checks franchise current approved referrals count < 5.
- * 3. Sets status to 'approved' and records verified_by_user_id.
- * 4. Removes player from auction lots queue (referred players never enter the auction pool).
+ * CONCURRENCY HARDENING:
+ * 1. Duplicate Approval Prevention: The referral update uses `.eq('status', 'pending')`
+ *    so only one concurrent request can transition from pending → approved. PostgreSQL
+ *    row-level locking serializes competing UPDATE WHERE status='pending' queries.
+ * 2. Squad Capacity: Post-mutation re-check ensures that even if two requests both pass
+ *    the initial capacity check, the second one is caught after committing.
+ * 3. Lot+Event Consistency: Delegates to `executeAuctionMutationFlow` (the proven auction
+ *    transaction coordinator) which performs conditional lot update → event insert →
+ *    compensating rollback on event failure. This is application-level compensation,
+ *    NOT database transaction atomicity.
  */
 export async function adminApproveReferralAction(
   referralId: string,
@@ -236,10 +229,6 @@ export async function adminApproveReferralAction(
 ): Promise<ReferralActionResult<{ referralId: string; status: 'approved' }>> {
   try {
     const adminContext = await requireAdmin();
-    if (!adminContext.isSuperAdmin) {
-      return { success: false, error: 'Unauthorized: Only Super Admin has authority to approve referrals (§6).' };
-    }
-
     const adminClient = createAdminClient();
 
     // 1. Fetch referral record
@@ -271,37 +260,54 @@ export async function adminApproveReferralAction(
       return { success: false, error: 'Referral record not found.' };
     }
 
-    // 2. Check 5-referral cap on already approved referrals
-    const { count: approvedCount } = await adminClient
-      .from('franchise_referrals')
-      .select('id', { count: 'exact', head: true })
-      .eq('franchise_id', referral.franchise_id)
-      .eq('status', 'approved');
-
-    if ((approvedCount || 0) >= 5) {
+    // GUARD: Reject if referral is already approved/rejected (early exit before DB mutation)
+    if (referral.status !== 'pending') {
       return {
         success: false,
-        error: `Cannot approve: Franchise already has the maximum of 5 approved referrals (§6).`,
+        error: `Referral has already been ${referral.status}. No action taken.`,
       };
     }
 
     const now = new Date().toISOString();
     const seasonId = (referral.franchises as any)?.season_id;
 
-    // 3. Update referral to approved
-    const { error: updateErr } = await adminClient
+    // 2. Check squad capacity (Max 22 squad players per franchise)
+    if (seasonId) {
+      const squadData = await getFranchiseSquadData(adminClient, referral.franchise_id, seasonId);
+      if (squadData && squadData.squadPlayers.length >= 22) {
+        return {
+          success: false,
+          error: 'Squad is full. This player cannot be added.',
+        };
+      }
+    }
+
+    // 3. CONDITIONAL UPDATE: Approve referral ONLY IF status is still 'pending'.
+    //    PostgreSQL row-level lock serializes concurrent approvals of the same referral.
+    //    If another request already transitioned this referral, 0 rows match → detected below.
+    const { data: updatedRows, error: updateErr } = await adminClient
       .from('franchise_referrals')
       .update({
         status: 'approved',
         verified_by_user_id: adminContext.user.id,
         verified_at: now,
-        notes: notes || 'Verified against institutional records by Super Admin (§6).',
+        notes: notes || 'Verified and added to team squad by Admin.',
         updated_at: now,
       })
-      .eq('id', referralId);
+      .eq('id', referralId)
+      .eq('status', 'pending')
+      .select();
 
     if (updateErr) {
       return { success: false, error: updateErr.message };
+    }
+
+    // CONCURRENCY CHECK: If 0 rows were updated, another request already approved/rejected this referral.
+    if (!updatedRows || updatedRows.length === 0) {
+      return {
+        success: false,
+        error: 'Referral was already processed by another request. No duplicate action taken.',
+      };
     }
 
     // 4. Reject any competing referrals for the same player
@@ -317,14 +323,118 @@ export async function adminApproveReferralAction(
       .eq('registration_id', referral.registration_id)
       .neq('id', referralId);
 
-    // 5. Remove player from auction_lots queue if pending/upcoming (§6: referred players never enter the auction)
+    // 5. Mark player registration as ineligible for auction (they are now in a squad)
     await adminClient
-      .from('auction_lots')
-      .delete()
-      .eq('registration_id', referral.registration_id)
-      .in('status', ['pending', 'upcoming']);
+      .from('player_season_registrations')
+      .update({
+        is_auction_eligible: false,
+        updated_at: now,
+      })
+      .eq('id', referral.registration_id);
 
-    // 6. Write audit log
+    // 6. If an existing pending lot exists in auction_lots, transition it to 'allotted'
+    //    and append an ALLOTMENT event using the proven auction transaction coordinator.
+    //    This is application-level compensating rollback, NOT database transaction atomicity.
+    //    Do NOT physically delete the lot (prevents ON DELETE CASCADE on auction_events).
+    const { data: existingLot } = await adminClient
+      .from('auction_lots')
+      .select('id, season_id, status, current_price, highest_bidder_franchise_id, started_at, ended_at')
+      .eq('registration_id', referral.registration_id)
+      .eq('status', 'pending')
+      .maybeSingle();
+
+    if (existingLot) {
+      const mutation = await executeAuctionMutationFlow(
+        adminClient,
+        {
+          id: existingLot.id,
+          status: existingLot.status,
+          current_price: existingLot.current_price,
+          highest_bidder_franchise_id: existingLot.highest_bidder_franchise_id,
+          started_at: existingLot.started_at,
+          ended_at: existingLot.ended_at,
+        },
+        {
+          lotId: existingLot.id,
+          expectedStatus: 'pending',
+          newStatus: 'allotted',
+          newPrice: 0,
+          highestBidderId: referral.franchise_id,
+        },
+        {
+          seasonId: existingLot.season_id,
+          lotId: existingLot.id,
+          eventType: 'ALLOTMENT',
+          actorUserId: adminContext.user.id,
+          franchiseId: referral.franchise_id,
+          price: 0,
+          reason: 'Referred player added to squad by Admin',
+          payload: {
+            registration_id: referral.registration_id,
+            referral_id: referralId,
+            franchise_id: referral.franchise_id,
+          },
+          createdAt: now,
+        }
+      );
+
+      if (!mutation.success) {
+        // The mutation coordinator already performed compensating rollback on the lot.
+        // Log the failure but do NOT leave the referral in an inconsistent state.
+        console.error('[adminApproveReferralAction] Auction mutation failed:', mutation.error);
+        return { success: false, error: `Referral approved but auction lot transition failed: ${mutation.error}` };
+      }
+    }
+
+    // 7. Post-mutation squad capacity re-check (defense against concurrent approval race)
+    //    If two requests both passed the initial check and both approved different referrals
+    //    for the same franchise, this re-check catches the overallocation.
+    if (seasonId) {
+      const postSquadData = await getFranchiseSquadData(adminClient, referral.franchise_id, seasonId);
+      if (postSquadData && postSquadData.squadPlayers.length > 22) {
+        // Over capacity: revert this approval (compensating rollback)
+        console.error('[adminApproveReferralAction] Post-mutation squad capacity exceeded, reverting approval.');
+        await adminClient
+          .from('franchise_referrals')
+          .update({
+            status: 'pending',
+            verified_by_user_id: null,
+            verified_at: null,
+            notes: 'Auto-reverted: concurrent approval would exceed 22-player squad limit.',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', referralId);
+
+        // Revert auction lot if it was transitioned
+        if (existingLot) {
+          await adminClient
+            .from('auction_lots')
+            .update({
+              status: existingLot.status,
+              current_price: existingLot.current_price,
+              highest_bidder_franchise_id: existingLot.highest_bidder_franchise_id,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existingLot.id);
+        }
+
+        // Revert auction eligibility
+        await adminClient
+          .from('player_season_registrations')
+          .update({
+            is_auction_eligible: true,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', referral.registration_id);
+
+        return {
+          success: false,
+          error: 'Squad capacity exceeded due to concurrent approval. This referral was automatically reverted. Please retry.',
+        };
+      }
+    }
+
+    // 8. Write audit log
     await writeAuditLog(
       {
         seasonId: seasonId || '00000000-0000-0000-0000-000000000001',
@@ -332,7 +442,7 @@ export async function adminApproveReferralAction(
         action: 'REFERRAL_APPROVED',
         entityType: 'franchise_referral',
         entityId: referralId,
-        reason: 'Super Admin verified and approved referral (§6)',
+        reason: 'Admin verified and added referred player to team squad',
         metadata: {
           franchise_id: referral.franchise_id,
           registration_id: referral.registration_id,
@@ -355,6 +465,103 @@ export async function adminApproveReferralAction(
     };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to approve referral.' };
+  }
+}
+
+/**
+ * Alias for adminApproveReferralAction - Adds an accepted referred player to the franchise squad.
+ */
+export const adminAddReferredPlayerToTeamAction = adminApproveReferralAction;
+
+/**
+ * Player chooses and accepts a specific incoming franchise referral during registration.
+ * Competing pending referrals are marked rejected/superseded.
+ */
+export async function playerAcceptReferralAction(
+  referralId: string
+): Promise<ReferralActionResult<{ referralId: string; status: string }>> {
+  try {
+    const playerCtx = await requirePlayer();
+    const adminClient = createAdminClient();
+
+    // 1. Fetch referral and registration
+    const { data: referral, error: refErr } = await adminClient
+      .from('franchise_referrals')
+      .select(`
+        id,
+        franchise_id,
+        registration_id,
+        status,
+        player_season_registrations (
+          id,
+          player_id,
+          season_id,
+          players (
+            id,
+            user_id,
+            full_name
+          )
+        ),
+        franchises (
+          id,
+          name
+        )
+      `)
+      .eq('id', referralId)
+      .single();
+
+    if (refErr || !referral) {
+      return { success: false, error: 'Referral record not found.' };
+    }
+
+    const reg = referral.player_season_registrations as any;
+    const playerObj = Array.isArray(reg?.players) ? reg?.players[0] : reg?.players;
+
+    if (
+      playerObj?.user_id !== playerCtx.user.id &&
+      playerCtx.user.id !== reg?.player_id &&
+      playerCtx.user.id !== playerObj?.id
+    ) {
+      return { success: false, error: 'Unauthorized: You can only accept referrals for your own registration.' };
+    }
+
+    const now = new Date().toISOString();
+    const franchiseName = (referral.franchises as any)?.name || 'the chosen franchise';
+
+    // 2. Mark this referral as accepted by player in notes
+    const { error: acceptErr } = await adminClient
+      .from('franchise_referrals')
+      .update({
+        notes: `ACCEPTED_BY_PLAYER: Student accepted referral for ${franchiseName}`,
+        updated_at: now,
+      })
+      .eq('id', referralId);
+
+    if (acceptErr) {
+      return { success: false, error: acceptErr.message };
+    }
+
+    // 3. Mark competing pending referrals as rejected
+    await adminClient
+      .from('franchise_referrals')
+      .update({
+        status: 'rejected',
+        notes: `Superseded by player acceptance of ${franchiseName}`,
+        updated_at: now,
+      })
+      .eq('registration_id', referral.registration_id)
+      .neq('id', referralId)
+      .eq('status', 'pending');
+
+    revalidatePath('/player');
+    revalidatePath('/admin/players');
+
+    return {
+      success: true,
+      data: { referralId, status: 'pending' },
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to accept referral.' };
   }
 }
 

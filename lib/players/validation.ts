@@ -61,6 +61,8 @@ export const playerRegistrationSchema = z.object({
     .regex(mobilePattern, 'CricHeroes mobile must be a valid 10-digit phone number')
     .optional()
     .or(z.literal('')),
+  is_detained: z.boolean().optional(),
+  discrepancy_note: z.string().trim().max(500).optional().nullable(),
 });
 
 export const playerSkillSchema = z.object({

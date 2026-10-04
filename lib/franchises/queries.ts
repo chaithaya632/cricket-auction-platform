@@ -38,6 +38,7 @@ export const getFranchiseSquadData = cache(async (
     bucketRulesResult,
     lotsResult,
     membersResult,
+    referralsResult,
   ] = await Promise.all([
     supabase.from('franchises').select('*').eq('id', franchiseId).maybeSingle(),
     supabase.from('season_config').select('key, value').eq('season_id', seasonId),
@@ -57,6 +58,18 @@ export const getFranchiseSquadData = cache(async (
       .select('role, player_registration_id')
       .eq('franchise_id', franchiseId)
       .eq('is_active', true),
+    supabase
+      .from('franchise_referrals')
+      .select(`
+        id,
+        registration_id,
+        status,
+        player_season_registrations (
+          bucket
+        )
+      `)
+      .eq('franchise_id', franchiseId)
+      .eq('status', 'approved'),
   ]);
 
   const franchise = franchiseResult.data as DbFranchise | null;
@@ -89,7 +102,7 @@ export const getFranchiseSquadData = cache(async (
   }[];
 
   // Map to AcquiredLotSummary for domain calculations
-  const acquiredLots: AcquiredLotSummary[] = rawLots.map((lot) => {
+  const acquiredLotsFromLots: AcquiredLotSummary[] = rawLots.map((lot) => {
     let effectivePrice = lot.current_price;
     if (effectivePrice === null || effectivePrice === undefined) {
       effectivePrice = lot.status === 'sold' ? lot.base_price : 20;
@@ -103,6 +116,17 @@ export const getFranchiseSquadData = cache(async (
     };
   });
 
+  const approvedReferrals = (referralsResult.data || []) as any[];
+  const referredLots: AcquiredLotSummary[] = approvedReferrals.map((ref) => ({
+    lotId: `ref-${ref.id}`,
+    registrationId: ref.registration_id,
+    bucket: (ref.player_season_registrations as any)?.bucket || 'B1',
+    status: 'referred' as AcquisitionType,
+    price: 0,
+  }));
+
+  const acquiredLots = [...acquiredLotsFromLots, ...referredLots];
+
   const membersData = membersResult.data;
   const captainRegId = membersData?.find((m) => m.role === 'captain')?.player_registration_id;
   const viceCaptainRegId = membersData?.find(
@@ -110,7 +134,7 @@ export const getFranchiseSquadData = cache(async (
   )?.player_registration_id;
 
   // 6. Fetch player profile projections via public_players_view (strictly privacy-safe)
-  const registrationIds = rawLots.map((l) => l.registration_id);
+  const registrationIds = acquiredLots.map((l) => l.registrationId);
   const playerMap = new Map<string, any>();
 
   if (registrationIds.length > 0) {

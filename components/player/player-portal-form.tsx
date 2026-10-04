@@ -22,10 +22,13 @@ import { derivePlayerType, validateSkills } from '@/domain/players';
 import { BASE_PRICE_LADDER, type BasePrice } from '@/lib/constants';
 import type { PlayerFullData } from '@/lib/players/types';
 import type { DbPlayerSkillProfile } from '@/lib/db/types';
+import type { PlayerIncomingReferral } from '@/lib/referrals/queries';
+import { playerAcceptReferralAction } from '@/lib/referrals/actions';
 
 interface PlayerPortalFormProps {
   initialData: PlayerFullData;
   activeSeasonName: string;
+  incomingReferrals?: PlayerIncomingReferral[];
 }
 
 /**
@@ -142,7 +145,11 @@ function parseInitialSkills(profile: DbPlayerSkillProfile | null) {
   };
 }
 
-export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortalFormProps) {
+export function PlayerPortalForm({
+  initialData,
+  activeSeasonName,
+  incomingReferrals = [],
+}: PlayerPortalFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
@@ -430,14 +437,6 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
     }
   };
 
-  const isAutoDerivedCourse =
-    Boolean(programme) &&
-    programme !== 'pg' &&
-    parseRollNumber(regRollNumber || rollNumber).isValid;
-  const isCourseDisabled = !isEditingReg || isEligible || isAutoDerivedCourse;
-  const isYearDisabled = !isEditingReg || isEligible || programme !== 'pg';
-  const isBranchDisabled = !isEditingReg || isEligible || programme !== 'pg';
-
   // Registration Extras (CricHeroes Pending, Discrepancy, Referral)
   const initialParsedSkills = useMemo(
     () => parseInitialSkills(initialData.skillProfile),
@@ -459,6 +458,22 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
   const [referredFranchise, setReferredFranchise] = useState(
     initialParsedSkills.referredFranchise
   );
+
+  const isAutoDerivedCourse =
+    Boolean(programme) &&
+    programme !== 'pg' &&
+    parseRollNumber(regRollNumber || rollNumber).isValid;
+  const isCourseDisabled = !isEditingReg || isEligible || isAutoDerivedCourse;
+  const isYearDisabled = !isEditingReg || isEligible || (programme !== 'pg' && !hasYearDiscrepancy);
+  const isBranchDisabled = !isEditingReg || isEligible || programme !== 'pg';
+
+  const initialAcceptedReferral = incomingReferrals.find(
+    (r) => r.notes?.includes('ACCEPTED_BY_PLAYER') || r.status === 'approved'
+  );
+  const [selectedReferralId, setSelectedReferralId] = useState<string>(
+    initialAcceptedReferral ? initialAcceptedReferral.referralId : (incomingReferrals[0]?.referralId || '')
+  );
+  const [isAcceptingReferral, setIsAcceptingReferral] = useState(false);
 
   const [regSnapshot, setRegSnapshot] = useState({
     regRollNumber: initialData.player?.roll_number || rollNumber,
@@ -749,6 +764,8 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
         base_price: basePrice,
         cricheroes_url: cricheroesUrl,
         cricheroes_registered_mobile: cricheroesMobile,
+        is_detained: hasYearDiscrepancy,
+        discrepancy_note: discrepancyNote || (hasYearDiscrepancy ? 'Detained/re-admitted student' : null),
       });
 
       if (!res.success) {
@@ -777,6 +794,22 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
       }
     });
   }
+
+  const handleAcceptReferral = (refId: string) => {
+    if (!refId) return;
+    setIsAcceptingReferral(true);
+    setMessage(null);
+    startTransition(async () => {
+      const res = await playerAcceptReferralAction(refId);
+      setIsAcceptingReferral(false);
+      if (!res.success) {
+        setMessage({ type: 'error', text: res.error || 'Failed to accept referral.' });
+      } else {
+        setMessage({ type: 'success', text: 'Referral confirmed. Awaiting Admin team assignment.' });
+        router.refresh();
+      }
+    });
+  };
 
   async function handleSaveSkills(e: React.FormEvent) {
     e.preventDefault();
@@ -1498,70 +1531,145 @@ export function PlayerPortalForm({ initialData, activeSeasonName }: PlayerPortal
             </div>
 
             {/* Detained Student / Discrepancy Flag (§4.1) */}
-            <div className="sm:col-span-2 p-3 rounded-md bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800">
-              <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+            <div className="sm:col-span-2 p-3.5 rounded-lg bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 space-y-2">
+              <label className="flex items-start gap-2.5 text-xs font-semibold cursor-pointer text-amber-950 dark:text-amber-200">
                 <input
                   type="checkbox"
                   disabled={!isEditingReg || isEligible}
                   checked={hasYearDiscrepancy}
                   onChange={(e) => setHasYearDiscrepancy(e.target.checked)}
-                  className="rounded text-blue-600 h-4 w-4"
+                  className="rounded text-amber-600 h-4 w-4 mt-0.5"
                 />
-                My current study year is different from my roll number (e.g. detained or re-admitted student)
+                <span>
+                  I am a detained/re-admitted student and my current study year differs from my roll number.
+                </span>
               </label>
               {hasYearDiscrepancy && (
-                <div className="mt-2 pl-6 space-y-2">
-                  <p className="text-[11px] text-blue-800 dark:text-blue-300">
-                    Students with academic discrepancies are not blocked from registering. Select your actual current year in the dropdown above, and provide a note below. Super Admin will verify and apply the official academic year override.
+                <div className="pl-6 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-amber-800 dark:text-amber-300 bg-amber-100/60 dark:bg-amber-900/40 p-2 rounded">
+                    <span>Academic Year: {academicYear ? `${academicYear}th Year` : 'Select Year above'}</span>
+                    <span>•</span>
+                    <span>Bucket: {derivedBucket || 'B1'}</span>
+                    <span className="text-[10px] font-normal text-amber-700 dark:text-amber-400">
+                      (Auto-derived from study year)
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                    The Academic Year dropdown above is unlocked. Please ensure your actual current study year is selected.
                   </p>
                   <input
                     type="text"
                     disabled={!isEditingReg || isEligible}
                     value={discrepancyNote}
                     onChange={(e) => setDiscrepancyNote(e.target.value)}
-                    placeholder="Reason for discrepancy (e.g. Year-back in 2024, re-admitted to 2nd year)"
+                    placeholder="Reason / discrepancy note (e.g. Year-back in 2024, re-admitted to 2nd year)"
                     className="w-full rounded border px-2 py-1 text-xs bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed"
                   />
                 </div>
               )}
             </div>
 
-            {/* ACC Reference Program (§5.2, §6, Case 24) */}
-            <div className="sm:col-span-2 p-3 rounded-md bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800">
-              <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+            {/* Franchise Referral Program (§5.2, §6) */}
+            <div className="sm:col-span-2 p-3.5 rounded-lg bg-indigo-50/70 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800 space-y-2">
+              <label className="flex items-start gap-2.5 text-xs font-semibold cursor-pointer text-indigo-950 dark:text-indigo-200">
                 <input
                   type="checkbox"
                   disabled={!isEditingReg || isEligible}
-                  checked={isAccReferred}
+                  checked={isAccReferred || incomingReferrals.length > 0}
                   onChange={(e) => setIsAccReferred(e.target.checked)}
-                  className="rounded text-purple-600 h-4 w-4"
+                  className="rounded text-indigo-600 h-4 w-4 mt-0.5"
                 />
-                Did you join Avanthi through the ACC Reference Program?
+                <span>
+                  Did a franchise refer you to join this team?
+                </span>
               </label>
-              {isAccReferred && (
-                <div className="mt-2 pl-6 space-y-2">
-                  <label className="block text-[11px] font-semibold text-purple-900 dark:text-purple-300">
-                    Select Referring Franchise:
-                  </label>
-                  <select
-                    disabled={!isEditingReg || isEligible}
-                    value={referredFranchise}
-                    onChange={(e) => setReferredFranchise(e.target.value)}
-                    className="w-full rounded-md border px-2.5 py-1.5 text-xs bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed"
-                  >
-                    <option value="">-- Choose Referring Team --</option>
-                    <option value="Titans">Titans</option>
-                    <option value="Dominators">Dominators</option>
-                    <option value="Super Kings">Super Kings</option>
-                    <option value="Challengers">Challengers</option>
-                    <option value="Warriors">Warriors</option>
-                    <option value="Royal Challengers">Royal Challengers</option>
-                    <option value="Strikers">Strikers</option>
-                    <option value="Daredevils">Daredevils</option>
-                    <option value="Rising Stars">Rising Stars</option>
-                    <option value="Blasters">Blasters</option>
-                    <option value="Champions">Champions</option>
-                  </select>
+
+              {(isAccReferred || incomingReferrals.length > 0) && (
+                <div className="pl-6 space-y-3 pt-1">
+                  {incomingReferrals.length > 0 ? (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-indigo-900 dark:text-indigo-300">
+                        Incoming Franchise Referral Claims:
+                      </p>
+                      <div className="space-y-2">
+                        {incomingReferrals.map((ref) => {
+                          const isAccepted = ref.notes?.includes('ACCEPTED_BY_PLAYER') || ref.status === 'approved';
+                          return (
+                            <div
+                              key={ref.referralId}
+                              className={`flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-md border text-xs ${
+                                isAccepted
+                                  ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200'
+                                  : 'border-indigo-200 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200'
+                              }`}
+                            >
+                              <label className="flex items-center gap-2 cursor-pointer font-medium">
+                                {!isAccepted && (
+                                  <input
+                                    type="radio"
+                                    name="selected_referral"
+                                    value={ref.referralId}
+                                    checked={selectedReferralId === ref.referralId}
+                                    onChange={() => setSelectedReferralId(ref.referralId)}
+                                    className="text-indigo-600 h-3.5 w-3.5"
+                                  />
+                                )}
+                                <span className="font-bold">{ref.franchiseName}</span>
+                                {ref.notes && (
+                                  <span className="text-[11px] text-gray-500 dark:text-gray-400">
+                                    ({ref.notes})
+                                  </span>
+                                )}
+                              </label>
+
+                              {isAccepted ? (
+                                <span className="inline-flex items-center gap-1 font-bold text-[11px] text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/60 px-2 py-0.5 rounded">
+                                  <span>✓</span> {ref.status === 'approved' ? 'Squad Member' : 'Accepted by You'}
+                                </span>
+                              ) : (
+                                selectedReferralId === ref.referralId && (
+                                  <button
+                                    type="button"
+                                    disabled={isAcceptingReferral || isPending}
+                                    onClick={() => handleAcceptReferral(ref.referralId)}
+                                    className="inline-flex items-center gap-1 rounded bg-indigo-600 px-3 py-1 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 cursor-pointer shadow-sm"
+                                  >
+                                    <span>✓</span>
+                                    <span>{isAcceptingReferral ? 'Confirming...' : 'ACCEPT & CONTINUE'}</span>
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-indigo-800 dark:text-indigo-300">
+                        Select the franchise that referred you. If the franchise representative has already submitted a referral, it will be automatically matched to your roll number.
+                      </p>
+                      <select
+                        disabled={!isEditingReg || isEligible}
+                        value={referredFranchise}
+                        onChange={(e) => setReferredFranchise(e.target.value)}
+                        className="w-full rounded-md border px-2.5 py-1.5 text-xs bg-white dark:bg-gray-800 dark:border-gray-700 disabled:opacity-85 disabled:cursor-not-allowed"
+                      >
+                        <option value="">-- Choose Referring Team --</option>
+                        <option value="Titans">Titans</option>
+                        <option value="Dominators">Dominators</option>
+                        <option value="Super Kings">Super Kings</option>
+                        <option value="Challengers">Challengers</option>
+                        <option value="Warriors">Warriors</option>
+                        <option value="Royal Challengers">Royal Challengers</option>
+                        <option value="Strikers">Strikers</option>
+                        <option value="Daredevils">Daredevils</option>
+                        <option value="Rising Stars">Rising Stars</option>
+                        <option value="Blasters">Blasters</option>
+                        <option value="Champions">Champions</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

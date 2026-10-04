@@ -362,7 +362,7 @@ function validationNextBidTarget(
  * Automatically advances to the next eligible lot based on active buckets and DEFAULT_BUCKET_ORDER.
  * Returns true if a lot was advanced, false if no pending lots remain in the selected buckets.
  */
-async function autoAdvanceToNextLot(
+export async function autoAdvanceToNextLot(
   adminClient: any,
   seasonId: string,
   actorUserId: string
@@ -1649,6 +1649,146 @@ export async function startAuctionAction(
     };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to start auction session.' };
+  }
+}
+
+/**
+ * Starts the next bucket group when the current bucket group is concluded.
+ * Locks previously completed buckets in `season_config.auction_completed_buckets`,
+ * updates `season_config.auction_active_buckets`, and automatically draws the first
+ * eligible player of the new group to the auction floor.
+ * Guarded by requireAdmin().
+ */
+export async function startNextBucketGroupAction(
+  selectedBuckets: string[]
+): Promise<
+  AuctionActionResult<{
+    status: 'live';
+    activeBuckets: string[];
+    completedBuckets: string[];
+    activeLotId?: string | null;
+    activeLot?: AuctionLotWithDetails | null;
+  }>
+> {
+  try {
+    const adminContext = await requireAdmin();
+    const activeSeason = adminContext.activeSeason;
+
+    if (!activeSeason) {
+      return { success: false, error: 'No active season found to continue auction.' };
+    }
+
+    if (!selectedBuckets || selectedBuckets.length === 0) {
+      return { success: false, error: 'Please select at least one bucket to continue the auction.' };
+    }
+
+    const adminClient = createAdminClient();
+    const now = new Date().toISOString();
+
+    // 1. Fetch current active buckets and completed buckets
+    const [activeBucketsRes, completedBucketsRes] = await Promise.all([
+      adminClient
+        .from('season_config')
+        .select('value')
+        .eq('season_id', activeSeason.id)
+        .eq('key', 'auction_active_buckets')
+        .maybeSingle(),
+      adminClient
+        .from('season_config')
+        .select('value')
+        .eq('season_id', activeSeason.id)
+        .eq('key', 'auction_completed_buckets')
+        .maybeSingle(),
+    ]);
+
+    let previousActive: string[] = [];
+    if (activeBucketsRes.data?.value) {
+      try {
+        const parsed = JSON.parse(activeBucketsRes.data.value);
+        if (Array.isArray(parsed)) previousActive = parsed;
+      } catch {}
+    }
+
+    let existingCompleted: string[] = [];
+    if (completedBucketsRes.data?.value) {
+      try {
+        const parsed = JSON.parse(completedBucketsRes.data.value);
+        if (Array.isArray(parsed)) existingCompleted = parsed;
+      } catch {}
+    }
+
+    // Merge previousActive into completedBuckets, excluding any newly selected buckets
+    const newlyCompleted = Array.from(new Set([...existingCompleted, ...previousActive]))
+      .filter((b) => !selectedBuckets.includes(b));
+
+    const sortedNewBuckets = DEFAULT_BUCKET_ORDER.filter((b) => selectedBuckets.includes(b));
+
+    // 2. Persist new completed buckets and new active buckets
+    await Promise.all([
+      adminClient.from('season_config').upsert(
+        {
+          season_id: activeSeason.id,
+          key: 'auction_completed_buckets',
+          value: JSON.stringify(newlyCompleted),
+          value_type: 'json',
+          description: 'Completed auction buckets from previous rounds/groups',
+          updated_at: now,
+        },
+        { onConflict: 'season_id,key' }
+      ),
+      adminClient.from('season_config').upsert(
+        {
+          season_id: activeSeason.id,
+          key: 'auction_active_buckets',
+          value: JSON.stringify(sortedNewBuckets),
+          value_type: 'json',
+          description: 'Active auction buckets currently open for drawing lots',
+          updated_at: now,
+        },
+        { onConflict: 'season_id,key' }
+      ),
+    ]);
+
+    // 3. Ensure session status is live
+    await adminClient.from('season_config').upsert(
+      {
+        season_id: activeSeason.id,
+        key: 'auction_session_status',
+        value: 'live',
+        value_type: 'text',
+        description: 'Current operational state of the live auction session',
+        updated_at: now,
+      },
+      { onConflict: 'season_id,key' }
+    );
+
+    // 4. Automatically advance to the first eligible player in the newly selected bucket group
+    const advanceResult = await autoAdvanceToNextLot(
+      adminClient,
+      activeSeason.id,
+      adminContext.user.id
+    );
+
+    revalidatePath('/admin/auction');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+
+    await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_STARTED');
+
+    return {
+      success: true,
+      data: {
+        status: 'live',
+        activeBuckets: sortedNewBuckets,
+        completedBuckets: newlyCompleted,
+        activeLotId: advanceResult.nextLotId,
+        activeLot: advanceResult.nextLot ?? null,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to start next bucket group.' };
   }
 }
 

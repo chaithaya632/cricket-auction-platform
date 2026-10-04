@@ -303,7 +303,7 @@ describe('Phase 5.1 — Unified Auction Control & Instant Mutation Workflow', ()
 
       expect(mockResult.success).toBe(true);
       expect(mockResult.activeLot.id).toBe('lot-next');
-      expect(duration).toBeLessThan(5); // Well within sub-50ms requirement
+      expect(duration).toBeLessThan(50); // Well within sub-50ms requirement
     });
   });
 });

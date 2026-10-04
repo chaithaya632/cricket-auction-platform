@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { requirePlayer } from '@/lib/permissions/guards';
 import { createClient } from '@/lib/supabase/server';
 import { getPlayerFullData } from '@/lib/players/queries';
+import { getPlayerIncomingReferrals } from '@/lib/referrals/queries';
 import { PlayerPortalForm } from '@/components/player/player-portal-form';
 import { DashboardShell } from '@/components/acc/dashboard-shell';
 import { PageHeader } from '@/components/acc/page-header';
@@ -22,6 +23,11 @@ export default async function PlayerRegistrationPage() {
       : Promise.resolve({ player: null, registration: null, skillProfile: null }),
     getSessionUser('player'),
   ]);
+
+  const incomingReferrals = fullData.registration?.id
+    ? await getPlayerIncomingReferrals(supabase, fullData.registration.id)
+    : [];
+
   if (fullData.player) {
     sessionUser.name = fullData.player.full_name;
     sessionUser.sub = fullData.player.roll_number;
@@ -36,7 +42,11 @@ export default async function PlayerRegistrationPage() {
         description="Submit your academic details, cricket skill profile, and CricHeroes verification."
       />
       <div className="max-w-4xl">
-        <PlayerPortalForm initialData={fullData} activeSeasonName={seasonName} />
+        <PlayerPortalForm
+          initialData={fullData}
+          activeSeasonName={seasonName}
+          incomingReferrals={incomingReferrals}
+        />
       </div>
     </DashboardShell>
   );
