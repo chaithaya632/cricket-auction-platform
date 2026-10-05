@@ -13,6 +13,7 @@ import type {
   GuestDrawCandidate,
 } from './types';
 import { DEFAULT_BUCKET_ORDER } from './types';
+import { assignStableBucketNumbers, formatBucketPlayerNumber } from './bucket-numbering';
 import type { LotStatus, AuctionEventType } from '@/lib/constants';
 import { detectBucketScarcity, type BucketScarcityReport, type FranchiseBucketNeed } from '@/domain/scarcity';
 import { calculateMaxPermissibleBid, type MandatoryBucketDeficit } from '@/domain/franchises/max-bid';
@@ -119,11 +120,26 @@ export const getActiveLot = cache(async (
     }
   }
 
+  // Compute bucket_player_number for active lot
+  let bucketPlayerNumber: string | undefined = undefined;
+  if (lot) {
+    const { count: priorInBucket } = await supabase
+      .from('auction_lots')
+      .select('id', { count: 'exact', head: true })
+      .eq('season_id', lot.season_id)
+      .eq('bucket', lot.bucket)
+      .lte('draw_number', lot.draw_number);
+
+    const bucketSeq = Math.max(1, priorInBucket || 1);
+    bucketPlayerNumber = formatBucketPlayerNumber(lot.bucket, bucketSeq);
+  }
+
   return {
     id: lot.id,
     season_id: lot.season_id,
     registration_id: lot.registration_id,
     bucket: lot.bucket,
+    bucket_player_number: bucketPlayerNumber,
     draw_number: lot.draw_number,
     base_price: lot.base_price,
     round: lot.round,
@@ -218,6 +234,23 @@ export const getAuctionLotsByStatus = cache(async (
     }
   }
 
+  // Fetch all lots for the season to assign stable bucket numbers
+  let allLotsForSeason: any[] | null = null;
+  try {
+    const q1 = supabase
+      .from('auction_lots')
+      .select('id, bucket, draw_number')
+      .eq('season_id', seasonId);
+    if (typeof (q1 as any)?.order === 'function') {
+      const res = await (q1 as any).order('draw_number', { ascending: true });
+      allLotsForSeason = res?.data || null;
+    }
+  } catch {
+    allLotsForSeason = null;
+  }
+
+  const stableBucketMap = assignStableBucketNumbers(lots, allLotsForSeason || undefined);
+
   return lots.map((lot) => {
     const playerView = playerMap.get(lot.registration_id);
     const bidderFranchise = lot.highest_bidder_franchise_id
@@ -229,6 +262,7 @@ export const getAuctionLotsByStatus = cache(async (
       season_id: lot.season_id,
       registration_id: lot.registration_id,
       bucket: lot.bucket,
+      bucket_player_number: stableBucketMap.get(lot.id) || formatBucketPlayerNumber(lot.bucket, lot.draw_number),
       draw_number: lot.draw_number,
       base_price: lot.base_price,
       round: lot.round,
@@ -1041,15 +1075,36 @@ export const getAuctionQueueByBuckets = cache(async (
     return [];
   }
 
-  // Deterministic sorting: bucket priority first, then draw_number ASC
+  // Deterministic sorting: active bucket priority first, then draw_number ASC
   const sortedLots = [...lots].sort((a, b) => {
-    const bucketOrderA = DEFAULT_BUCKET_ORDER.indexOf(a.bucket as any);
-    const bucketOrderB = DEFAULT_BUCKET_ORDER.indexOf(b.bucket as any);
+    const bucketOrderA = activeBuckets.indexOf(a.bucket);
+    const bucketOrderB = activeBuckets.indexOf(b.bucket);
     const rankA = bucketOrderA === -1 ? 999 : bucketOrderA;
     const rankB = bucketOrderB === -1 ? 999 : bucketOrderB;
     if (rankA !== rankB) return rankA - rankB;
     return a.draw_number - b.draw_number;
   }).slice(0, limit);
+
+  // Fetch all lots in active buckets for stable numbering
+  let allLotsForBuckets: any[] | null = null;
+  try {
+    const q1 = supabase
+      .from('auction_lots')
+      .select('id, bucket, draw_number')
+      .eq('season_id', seasonId);
+
+    if (typeof (q1 as any)?.in === 'function') {
+      const q2 = (q1 as any).in('bucket', activeBuckets);
+      if (typeof q2?.order === 'function') {
+        const res = await q2.order('draw_number', { ascending: true });
+        allLotsForBuckets = res?.data || null;
+      }
+    }
+  } catch {
+    allLotsForBuckets = null;
+  }
+
+  const stableBucketMap = assignStableBucketNumbers(sortedLots, allLotsForBuckets || undefined);
 
   const registrationIds = sortedLots.map((l) => l.registration_id);
   const { data: playersView } = await supabase
@@ -1071,6 +1126,7 @@ export const getAuctionQueueByBuckets = cache(async (
       season_id: lot.season_id,
       registration_id: lot.registration_id,
       bucket: lot.bucket,
+      bucket_player_number: stableBucketMap.get(lot.id) || formatBucketPlayerNumber(lot.bucket, lot.draw_number),
       draw_number: lot.draw_number,
       base_price: lot.base_price,
       round: lot.round,
@@ -1134,9 +1190,11 @@ export const getGuestDrawCandidates = cache(async (
     const p = playerMap.get(lot.registration_id);
     const cardNumber = idx + 1;
     const cardLabel = cardNumber < 10 ? `0${cardNumber}` : `${cardNumber}`;
+    const bucketPlayerNumber = formatBucketPlayerNumber(lot.bucket, cardNumber);
     return {
       cardNumber,
       cardLabel,
+      bucketPlayerNumber,
       lotId: lot.id,
       drawNumber: lot.draw_number,
       playerName: p?.full_name || 'Player',

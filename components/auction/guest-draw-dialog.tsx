@@ -253,7 +253,7 @@ export function GuestDrawDialog({
                   >
                     {/* Top card indicator */}
                     <div className="w-full flex items-center justify-between text-[10px] font-mono text-zinc-500">
-                      <span>{selectedBucket}</span>
+                      <span className="font-bold text-amber-400/90">{card.bucketPlayerNumber || `${selectedBucket}${card.cardNumber}`}</span>
                       {isDrawn && <span className="text-red-400 font-bold">DRAWN</span>}
                     </div>
 
@@ -264,13 +264,16 @@ export function GuestDrawDialog({
                           {card.playerName}
                         </span>
                         <span className="block text-[10px] font-mono text-zinc-400 mt-1">
-                          #{card.cardLabel}
+                          #{card.cardLabel} ({card.bucketPlayerNumber || `${selectedBucket}${card.cardNumber}`})
                         </span>
                       </div>
                     ) : (
                       <div className="my-auto flex flex-col items-center justify-center">
                         <span className="font-mono text-2xl sm:text-3xl font-black text-amber-400 group-hover:scale-110 transition-transform">
                           {card.cardLabel}
+                        </span>
+                        <span className="text-[11px] font-mono font-bold text-zinc-400 mt-0.5">
+                          {card.bucketPlayerNumber || `${selectedBucket}${card.cardNumber}`}
                         </span>
                       </div>
                     )}

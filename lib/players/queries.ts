@@ -4,6 +4,7 @@ import type { DbPlayer, DbPlayerSeasonRegistration, DbPlayerSkillProfile } from 
 import type { Player, PlayerType, PlayerStatus, Bucket } from '@/lib/acc/types';
 import type { PlayerFullData, PlayerCareerStats } from './types';
 import { evaluatePlayerEligibility } from '@/domain/players/eligibility';
+import { assignStableBucketNumbers, formatBucketPlayerNumber } from '@/lib/auction/bucket-numbering';
 
 /**
  * Safely parses structured career statistics from player_skill_profiles.experience_description.
@@ -451,7 +452,12 @@ export const getAdminPlayersList = cache(async (
       }
     }
 
-    return [...pendingPlayers, ...parsedDbPlayers];
+    const allPlayers = [...pendingPlayers, ...parsedDbPlayers];
+    const bucketNumberMap = assignStableBucketNumbers(allPlayers);
+    return allPlayers.map((p) => ({
+      ...p,
+      bucketNumber: bucketNumberMap.get(p.id) || formatBucketPlayerNumber(p.bucket, 1),
+    }));
   } catch {
     return [];
   }

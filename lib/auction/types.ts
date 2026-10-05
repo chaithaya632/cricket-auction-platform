@@ -45,6 +45,7 @@ export interface AuctionLotWithDetails {
   season_id: string;
   registration_id: string;
   bucket: string;
+  bucket_player_number?: string;
   draw_number: number;
   base_price: number;
   round: number;
@@ -145,6 +146,7 @@ export type AuctionBucket = (typeof DEFAULT_BUCKET_ORDER)[number];
 export interface GuestDrawCandidate {
   cardNumber: number;
   cardLabel: string;
+  bucketPlayerNumber?: string;
   lotId: string;
   drawNumber: number;
   playerName: string;

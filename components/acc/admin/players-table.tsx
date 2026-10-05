@@ -4,7 +4,7 @@
 // ACC Auction Portal — Admin Players Table with Review & Eligibility Workflow
 // =============================================================================
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, Fragment } from "react"
 import { useRouter } from "next/navigation"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
@@ -28,7 +28,12 @@ import { CategoryBadge } from "@/components/acc/category-badge"
 import { PlayerStatusBadge } from "@/components/acc/status-badges"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { formatCredits, BUCKET_ORDER, STATUS_CONFIG } from "@/lib/acc/config"
-import type { Player, PlayerStatus } from "@/lib/acc/types"
+import type { Player, PlayerStatus, Bucket } from "@/lib/acc/types"
+import {
+  assignStableBucketNumbers,
+  formatBucketPlayerNumber,
+  getBucketTierDescription,
+} from "@/lib/auction/bucket-numbering"
 import { Search, Users, Trash2, ShieldCheck, CheckCircle2, AlertTriangle, Eye, ShieldAlert, RotateCcw, Loader2, ArrowRightLeft, UserPlus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -177,9 +182,18 @@ export function PlayersTable({ players }: { players: Player[] }) {
     setGroupFilter("all")
   }
 
+  // Derive stable bucket numbers for all players in the master list before filtering
+  const playersWithBucketNumbers = useMemo(() => {
+    const bucketNumberMap = assignStableBucketNumbers(players)
+    return players.map((p) => ({
+      ...p,
+      bucketNumber: p.bucketNumber || bucketNumberMap.get(p.id) || formatBucketPlayerNumber(p.bucket, 1),
+    }))
+  }, [players])
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return players.filter((p) => {
+    return playersWithBucketNumbers.filter((p) => {
       // 1. Bucket / Category filter
       if (bucket !== "all" && p.bucket !== bucket) return false
 
@@ -216,18 +230,19 @@ export function PlayersTable({ players }: { players: Player[] }) {
         }
       }
 
-      // 8. Text Search query
+      // 8. Text Search query (name, rollNumber, or bucket unique number like B11)
       if (
         q &&
         !p.fullName.toLowerCase().includes(q) &&
-        !p.rollNumber.toLowerCase().includes(q)
+        !p.rollNumber.toLowerCase().includes(q) &&
+        !(p.bucketNumber && p.bucketNumber.toLowerCase().includes(q))
       ) {
         return false
       }
       return true
     })
   }, [
-    players,
+    playersWithBucketNumbers,
     query,
     bucket,
     status,
@@ -237,6 +252,29 @@ export function PlayersTable({ players }: { players: Player[] }) {
     branchFilter,
     groupFilter,
   ])
+
+  // Group filtered players bucket-wise in deterministic order
+  const groupedPlayersByBucket = useMemo(() => {
+    const groups = new Map<Bucket, typeof filtered>()
+    for (const b of BUCKET_ORDER) {
+      groups.set(b, [])
+    }
+    for (const p of filtered) {
+      const b = (p.bucket || "B1") as Bucket
+      if (!groups.has(b)) {
+        groups.set(b, [])
+      }
+      groups.get(b)!.push(p)
+    }
+    return groups
+  }, [filtered])
+
+  const displayedBuckets = useMemo(() => {
+    if (bucket !== "all") {
+      return [bucket as Bucket]
+    }
+    return BUCKET_ORDER
+  }, [bucket])
 
   return (
     <div className="flex flex-col gap-4">
@@ -378,21 +416,59 @@ export function PlayersTable({ players }: { players: Player[] }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((p) => {
-              const isPaid = p.paymentStatus === "paid"
-              const isEligible = p.isAuctionEligible ?? false
-              const isBlocked = p.isActive === false
-              const cricheroesStatus = p.cricheroesStatus || "unverified"
-
+            {displayedBuckets.map((bucketKey) => {
+              const bucketPlayers = groupedPlayersByBucket.get(bucketKey) || []
+              if (bucketPlayers.length === 0 && bucket === "all") {
+                return null
+              }
               return (
-                <TableRow key={p.id} className={isBlocked ? "opacity-60 bg-muted/20" : undefined}>
-                  {/* Player column */}
-                  <TableCell>
-                    <div className="flex items-center gap-3">
-                      <Avatar className="size-10 rounded-md border">
-                        <AvatarImage src={p.photoUrl || "/placeholder.svg"} alt={p.fullName} />
-                        <AvatarFallback className="rounded-md text-xs">{initials(p.fullName)}</AvatarFallback>
-                      </Avatar>
+                <Fragment key={`bucket-group-${bucketKey}`}>
+                  <TableRow className="bg-muted/70 hover:bg-muted/70 border-t-2 border-primary/20 select-none">
+                    <TableCell colSpan={7} className="py-2.5 px-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <CategoryBadge bucket={bucketKey} />
+                          <span className="font-extrabold text-sm tracking-wide text-foreground">
+                            Bucket {bucketKey}
+                          </span>
+                          <span className="text-xs text-muted-foreground font-mono font-medium">
+                            ({bucketPlayers.length} {bucketPlayers.length === 1 ? "player" : "players"})
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-muted-foreground font-medium hidden sm:inline">
+                          {getBucketTierDescription(bucketKey)}
+                        </span>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  {bucketPlayers.length === 0 ? (
+                    <TableRow key={`bucket-empty-${bucketKey}`}>
+                      <TableCell colSpan={7} className="text-center py-6 text-xs text-muted-foreground italic">
+                        No players found in Bucket {bucketKey} matching current filters.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    bucketPlayers.map((p) => {
+                      const isPaid = p.paymentStatus === "paid"
+                      const isEligible = p.isAuctionEligible ?? false
+                      const isBlocked = p.isActive === false
+                      const cricheroesStatus = p.cricheroesStatus || "unverified"
+
+                      return (
+                        <TableRow key={p.id} className={isBlocked ? "opacity-60 bg-muted/20" : undefined}>
+                          {/* Player column */}
+                          <TableCell>
+                            <div className="flex items-center gap-3">
+                              <span
+                                className="font-mono font-black text-xs px-2 py-1 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0 select-none"
+                                title={`Auction Number: ${p.bucketNumber}`}
+                              >
+                                {p.bucketNumber}
+                              </span>
+                              <Avatar className="size-10 rounded-md border">
+                                <AvatarImage src={p.photoUrl || "/placeholder.svg"} alt={p.fullName} />
+                                <AvatarFallback className="rounded-md text-xs">{initials(p.fullName)}</AvatarFallback>
+                              </Avatar>
                       <div className="flex flex-col min-w-0">
                         <div className="flex items-center gap-1.5">
                           <span className="font-semibold text-sm truncate leading-tight">{p.fullName}</span>
@@ -581,8 +657,12 @@ export function PlayersTable({ players }: { players: Player[] }) {
                   </TableCell>
                 </TableRow>
               )
-            })}
-          </TableBody>
+            })
+          )}
+        </Fragment>
+      )
+    })}
+  </TableBody>
         </Table>
 
         {filtered.length === 0 && (

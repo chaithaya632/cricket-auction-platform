@@ -28,6 +28,7 @@ import { executeAuctionMutationFlow } from './transaction';
 import { broadcastAuctionUpdate } from './realtime';
 import { writeAuditLog } from '@/lib/audit/logger';
 import { DEFAULT_BUCKET_ORDER } from './types';
+import { parseBucketPlayerNumber } from './bucket-numbering';
 import type {
   AuctionActionResult,
   AuctionLotWithDetails,
@@ -94,6 +95,30 @@ export async function selectLotAction(
         success: false,
         error: 'Cannot select lot: auction session has ended.',
       };
+    }
+
+    // Validate that lot belongs to currently active buckets if configured
+    const { data: bucketConfig } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', lot.season_id)
+      .eq('key', 'auction_active_buckets')
+      .maybeSingle();
+
+    if (bucketConfig?.value) {
+      try {
+        const activeBuckets = JSON.parse(bucketConfig.value);
+        if (Array.isArray(activeBuckets) && activeBuckets.length > 0) {
+          if (!activeBuckets.includes(lot.bucket)) {
+            return {
+              success: false,
+              error: `Cannot select lot: Bucket '${lot.bucket}' is not in the active bucket selection (${activeBuckets.join(', ')}).`,
+            };
+          }
+        }
+      } catch {
+        // Fallback on JSON parse error
+      }
     }
 
     // 3. Ensure no other lot is currently in progress
@@ -410,7 +435,7 @@ export async function autoAdvanceToNextLot(
             (DEFAULT_BUCKET_ORDER as readonly string[]).includes(b as any)
           );
           if (valid.length > 0) {
-            activeBuckets = DEFAULT_BUCKET_ORDER.filter((b) => valid.includes(b));
+            activeBuckets = valid;
           }
         }
       } catch {
@@ -433,10 +458,10 @@ export async function autoAdvanceToNextLot(
       return { advanced: false, nextLotId: null, nextLot: null };
     }
 
-    // 5. Deterministic sorting: bucket priority (DEFAULT_BUCKET_ORDER) first, then draw_number ASC
+    // 5. Deterministic sorting: active bucket priority first, then draw_number ASC
     const nextLot = [...pendingLots].sort((a, b) => {
-      const rankA = DEFAULT_BUCKET_ORDER.indexOf(a.bucket);
-      const rankB = DEFAULT_BUCKET_ORDER.indexOf(b.bucket);
+      const rankA = activeBuckets.indexOf(a.bucket);
+      const rankB = activeBuckets.indexOf(b.bucket);
       const orderA = rankA === -1 ? 999 : rankA;
       const orderB = rankB === -1 ? 999 : rankB;
       if (orderA !== orderB) return orderA - orderB;
@@ -763,7 +788,9 @@ export async function updateActiveBucketsAction(
       };
     }
 
-    const normalizedBuckets = DEFAULT_BUCKET_ORDER.filter((b) => buckets.includes(b));
+    const normalizedBuckets = buckets.filter(
+      (b, idx, arr) => (DEFAULT_BUCKET_ORDER as readonly string[]).includes(b as any) && arr.indexOf(b) === idx
+    );
     const now = new Date().toISOString();
 
     const { error: upsertErr } = await adminClient.from('season_config').upsert(
@@ -1012,6 +1039,49 @@ export async function callGuestDrawNumberAction(
       typeof lotIdOrDrawNumber === 'string' &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lotIdOrDrawNumber);
 
+    let targetLotId: string | null = null;
+    let targetDrawNumber: number | null = null;
+
+    if (isUuid) {
+      targetLotId = lotIdOrDrawNumber as string;
+    } else {
+      const parsedBucketNum =
+        typeof lotIdOrDrawNumber === 'string' ? parseBucketPlayerNumber(lotIdOrDrawNumber) : null;
+
+      if (parsedBucketNum) {
+        // e.g. "B31"
+        const targetBucket = parsedBucketNum.bucket;
+        const targetSeq = parsedBucketNum.sequenceNumber;
+        const { data: bucketLots } = await adminClient
+          .from('auction_lots')
+          .select('id, draw_number')
+          .eq('season_id', targetSeasonId)
+          .eq('bucket', targetBucket)
+          .order('draw_number', { ascending: true });
+
+        if (bucketLots && bucketLots[targetSeq - 1]) {
+          targetLotId = bucketLots[targetSeq - 1].id;
+        }
+      } else {
+        const numericVal = Number(lotIdOrDrawNumber);
+        if (!isNaN(numericVal)) {
+          // Check if numericVal corresponds to card index within the bucket (1..N)
+          const { data: bucketLots } = await adminClient
+            .from('auction_lots')
+            .select('id, draw_number')
+            .eq('season_id', targetSeasonId)
+            .eq('bucket', bucket)
+            .order('draw_number', { ascending: true });
+
+          if (bucketLots && numericVal >= 1 && numericVal <= bucketLots.length) {
+            targetLotId = bucketLots[numericVal - 1].id;
+          } else {
+            targetDrawNumber = numericVal;
+          }
+        }
+      }
+    }
+
     let lotQuery = adminClient
       .from('auction_lots')
       .select(`
@@ -1022,13 +1092,14 @@ export async function callGuestDrawNumberAction(
           )
         )
       `)
-      .eq('season_id', targetSeasonId)
-      .eq('bucket', bucket);
+      .eq('season_id', targetSeasonId);
 
-    if (isUuid) {
-      lotQuery = lotQuery.eq('id', lotIdOrDrawNumber);
+    if (targetLotId) {
+      lotQuery = lotQuery.eq('id', targetLotId);
+    } else if (targetDrawNumber !== null) {
+      lotQuery = lotQuery.eq('draw_number', targetDrawNumber).eq('bucket', bucket);
     } else {
-      lotQuery = lotQuery.eq('draw_number', Number(lotIdOrDrawNumber));
+      return { success: false, error: 'Selected Guest Draw lot was not found.' };
     }
 
     const { data: lots, error: fetchErr } = await lotQuery;
@@ -1721,7 +1792,9 @@ export async function startNextBucketGroupAction(
     const newlyCompleted = Array.from(new Set([...existingCompleted, ...previousActive]))
       .filter((b) => !selectedBuckets.includes(b));
 
-    const sortedNewBuckets = DEFAULT_BUCKET_ORDER.filter((b) => selectedBuckets.includes(b));
+    const sortedNewBuckets = selectedBuckets.filter(
+      (b, idx, arr) => (DEFAULT_BUCKET_ORDER as readonly string[]).includes(b as any) && arr.indexOf(b) === idx
+    );
 
     // 2. Persist new completed buckets and new active buckets
     await Promise.all([
@@ -3466,9 +3539,30 @@ export async function drawNextAutoLotAction(
     }
 
     // Determine target bucket sequence
-    const bucketsToSearch = activeBucket
-      ? [activeBucket]
-      : [...BUCKET_DRAW_SEQUENCE];
+    let bucketsToSearch = activeBucket ? [activeBucket] : [];
+    if (bucketsToSearch.length === 0) {
+      const { data: bucketConfig } = await adminClient
+        .from('season_config')
+        .select('value')
+        .eq('season_id', activeSeason.id)
+        .eq('key', 'auction_active_buckets')
+        .maybeSingle();
+
+      if (bucketConfig?.value) {
+        try {
+          const parsed = JSON.parse(bucketConfig.value);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            bucketsToSearch = parsed.filter((b: string) =>
+              (DEFAULT_BUCKET_ORDER as readonly string[]).includes(b as any)
+            );
+          }
+        } catch {}
+      }
+
+      if (bucketsToSearch.length === 0) {
+        bucketsToSearch = [...BUCKET_DRAW_SEQUENCE];
+      }
+    }
 
     let candidateLots: any[] = [];
     let selectedBucket = '';
@@ -3499,7 +3593,10 @@ export async function drawNextAutoLotAction(
     }
 
     if (candidateLots.length === 0) {
-      return { success: false, error: 'No pending lots remain in the auction draw pool.' };
+      return {
+        success: false,
+        error: 'Current bucket group complete. Select remaining buckets to continue.',
+      };
     }
 
     // Pick random lot within the selected bucket

@@ -239,6 +239,8 @@ export function OperatorControls({
     activeBuckets.length > 0 &&
     activeBucketsPendingTotal === 0;
 
+  const activeUpcomingLots = upcomingLots.filter((lot) => activeBuckets.includes(lot.bucket));
+
   const handleToggleRemainingBucket = (bucket: string) => {
     setSelectedRemainingBuckets((prev) =>
       prev.includes(bucket) ? prev.filter((item) => item !== bucket) : [...prev, bucket]
@@ -1150,11 +1152,11 @@ export function OperatorControls({
       )}
 
       {/* Secondary Manual Fallback: Only visible when floor has no active lot */}
-      {!activeLot && upcomingLots.length > 0 && (
+      {!activeLot && activeUpcomingLots.length > 0 && (
         <div className="pt-2">
           <button
             type="button"
-            onClick={() => upcomingLots[0] && handleSelectLot(upcomingLots[0].id)}
+            onClick={() => activeUpcomingLots[0] && handleSelectLot(activeUpcomingLots[0].id)}
             disabled={isPending || !isFloorActive}
             className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-zinc-900/50 hover:bg-zinc-900 text-amber-500 border border-dashed border-amber-500/50 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             title="Manual override: call next player when floor is empty"
@@ -1813,18 +1815,20 @@ export function OperatorControls({
           </h3>
         </div>
         <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-          {upcomingLots.length === 0 ? (
+          {activeUpcomingLots.length === 0 ? (
             <div className="text-center py-4 text-xs text-zinc-500">
-              No pending lots remaining in the active queue.
+              {isBucketGroupComplete
+                ? 'Current bucket group complete. Select remaining buckets above.'
+                : 'No pending lots remaining in the active queue.'}
             </div>
           ) : (
-            upcomingLots.slice(0, 8).map((lot) => (
+            activeUpcomingLots.slice(0, 8).map((lot) => (
               <div
                 key={lot.id}
                 className="rounded-xl bg-zinc-950/70 border border-zinc-800/80 p-3 flex items-center gap-3"
               >
                 <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-mono font-bold text-zinc-300">
-                  #{lot.draw_number}
+                  {lot.bucket_player_number ? `${lot.bucket_player_number} (#${lot.draw_number})` : `#${lot.draw_number}`}
                 </span>
                 <span className="rounded bg-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-400">
                   {lot.bucket}

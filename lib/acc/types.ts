@@ -57,6 +57,7 @@ export interface Player {
   yearOfStudy: number
   isLateral: boolean
   bucket: Bucket
+  bucketNumber?: string
   playerType: PlayerType
   basePrice: number
   status: PlayerStatus
