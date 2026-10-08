@@ -1016,7 +1016,8 @@ export async function drawRandomLotFromBucketsAction(): Promise<
  */
 export async function callGuestDrawNumberAction(
   lotIdOrDrawNumber: string | number,
-  bucket: string
+  bucket: string,
+  seasonId?: string
 ): Promise<AuctionActionResult<{
   lotId: string;
   drawNumber: number;
@@ -1027,7 +1028,9 @@ export async function callGuestDrawNumberAction(
   try {
     const adminContext = await requireAdmin();
     const targetSeasonId =
-      adminContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
+      seasonId ||
+      adminContext.activeSeason?.id ||
+      '00000000-0000-0000-0000-000000000001';
     const adminClient = createAdminClient();
 
     // 1. Session check
@@ -1245,13 +1248,25 @@ export async function callGuestDrawNumberAction(
  * Privileged floor mutations remain strictly guarded by requireAdmin() in callGuestDrawNumberAction.
  */
 export async function getGuestDrawSnapshotAction(
-  bucket: string
+  bucket: string,
+  seasonId?: string
 ): Promise<AuctionActionResult<GuestDrawCandidate[]>> {
   try {
     const adminClient = createAdminClient();
-    const activeSeason = await getActiveSeason(adminClient);
-    const targetSeasonId =
-      activeSeason?.id || '00000000-0000-0000-0000-000000000001';
+    let targetSeasonId: string = seasonId || '';
+    if (!targetSeasonId) {
+      const activeSeason = await getActiveSeason(adminClient);
+      targetSeasonId = activeSeason?.id || '';
+    }
+    if (!targetSeasonId) {
+      const { data: latestSeason } = await adminClient
+        .from('seasons')
+        .select('id')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      targetSeasonId = latestSeason?.id || '00000000-0000-0000-0000-000000000001';
+    }
 
     const candidates = await getGuestDrawCandidates(adminClient, targetSeasonId, bucket);
     return { success: true, data: candidates };
@@ -2534,15 +2549,19 @@ export async function endAuctionAction(
       .update({ status: 'completed', updated_at: now })
       .eq('id', activeSeason.id);
 
-    // 5. Insert event in auction_events
-    await adminClient.from('auction_events').insert({
-      season_id: activeSeason.id,
-      auction_lot_id: activeLot?.id || '00000000-0000-0000-0000-000000000000',
-      event_type: 'SESSION_RESET',
-      actor_user_id: adminContext.user.id,
+    // 5. Authoritatively record session completion in audit_logs
+    await writeAuditLog({
+      seasonId: activeSeason.id,
+      actorUserId: adminContext.user.id,
+      action: 'AUCTION_ENDED',
+      entityType: 'season',
+      entityId: activeSeason.id,
       reason: 'Auction session completed by operator',
-      payload: { ended_at: now, active_lot_resolved: Boolean(activeLot) },
-      created_at: now,
+      metadata: {
+        ended_at: now,
+        active_lot_resolved: Boolean(activeLot),
+        active_lot_id: activeLot?.id ?? null,
+      },
     });
 
     revalidatePath('/admin/auction');
@@ -2555,7 +2574,9 @@ export async function endAuctionAction(
     revalidatePath('/franchise');
     revalidatePath('/player');
 
-    await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_ENDED');
+    await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_ENDED', {
+      sessionStatus: 'completed',
+    });
 
     const sessionState: AuctionSessionState = {
       status: 'completed',

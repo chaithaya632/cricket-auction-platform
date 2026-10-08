@@ -6,12 +6,17 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, fireEvent } from '@testing-library/react';
+import { render, screen, act, fireEvent, within } from '@testing-library/react';
 import { AuctionTimer } from '@/components/auction/auction-timer';
+import { GuestDrawDialog } from '@/components/auction/guest-draw-dialog';
+import * as auctionActions from '@/lib/auction/actions';
 import {
   startAuctionAction,
   pauseAuctionAction,
   resumeAuctionAction,
+  endAuctionAction,
+  getGuestDrawSnapshotAction,
+  callGuestDrawNumberAction,
 } from '@/lib/auction/actions';
 import type { AuctionSessionState, AuctionLotWithDetails } from '@/lib/auction/types';
 
@@ -32,6 +37,12 @@ vi.mock('next/cache', () => ({
 const mockBroadcastAuctionUpdate = vi.fn().mockResolvedValue(true);
 vi.mock('@/lib/auction/realtime', () => ({
   broadcastAuctionUpdate: (...args: any[]) => mockBroadcastAuctionUpdate(...args),
+}));
+
+// Mock audit logger
+const mockWriteAuditLog = vi.fn().mockResolvedValue({ id: 'audit-1' });
+vi.mock('@/lib/audit/logger', () => ({
+  writeAuditLog: (...args: any[]) => mockWriteAuditLog(...args),
 }));
 
 // Mock admin auth context
@@ -207,6 +218,64 @@ describe('Phase 5.2 — Live Console Instant UI & State Machine Verification', (
       expect(screen.getByText('5s')).toBeDefined();
       expect(screen.queryByText('TIME UP')).toBeNull();
       expect(onExtend).toHaveBeenCalledWith(10);
+    });
+
+    it('resumes from pause smoothly without jumping to a stale elapsed value', () => {
+      const initialStartedAt = new Date(Date.now() - 10000).toISOString(); // 10s elapsed of 30s = 20s remaining
+      const onRemainingChange = vi.fn();
+
+      const { rerender } = render(
+        <AuctionTimer
+          startedAt={initialStartedAt}
+          durationSeconds={30}
+          isActive={true}
+          isPaused={false}
+          onRemainingChange={onRemainingChange}
+        />
+      );
+
+      expect(screen.getByText('20s')).toBeDefined();
+
+      // Operator pauses at 20s
+      rerender(
+        <AuctionTimer
+          startedAt={initialStartedAt}
+          durationSeconds={30}
+          isActive={true}
+          isPaused={true}
+          pausedRemainingSeconds={20}
+          onRemainingChange={onRemainingChange}
+        />
+      );
+
+      expect(screen.getByText('PAUSED (20s)')).toBeDefined();
+
+      // Pause lasts for 4 seconds in real time
+      act(() => {
+        vi.advanceTimersByTime(4000);
+      });
+
+      // Operator clicks Resume before server action roundtrip returns the new started_at
+      // Note: startedAt prop is STILL initialStartedAt!
+      rerender(
+        <AuctionTimer
+          startedAt={initialStartedAt}
+          durationSeconds={30}
+          isActive={true}
+          isPaused={false}
+          onRemainingChange={onRemainingChange}
+        />
+      );
+
+      // MUST NOT jump to 16s! Must anchor at 20s and count down smoothly
+      expect(screen.getByText('20s')).toBeDefined();
+      expect(screen.queryByText('16s')).toBeNull();
+
+      // Advance by 1 second -> smoothly ticks down to 19s
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(screen.getByText('19s')).toBeDefined();
     });
 
     it('cleans up interval timer on unmount', () => {
@@ -589,6 +658,87 @@ describe('Phase 5.2 — Live Console Instant UI & State Machine Verification', (
         })
       );
     });
+
+    it('ends auction session cleanly without constraint violation and records in audit logs', async () => {
+      let seasonConfigUpdated = false;
+      let seasonStatusUpdated = false;
+      let auctionEventInserted = false;
+
+      mockAdminClient = {
+        from: (table: string) => {
+          if (table === 'auction_lots') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    maybeSingle: async () => ({
+                      data: null, // No active lot in progress
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === 'season_config') {
+            return {
+              upsert: async (payload: any) => {
+                if (payload.key === 'auction_session_status' && payload.value === 'completed') {
+                  seasonConfigUpdated = true;
+                }
+                return { error: null };
+              },
+            };
+          }
+          if (table === 'seasons') {
+            return {
+              update: (payload: any) => ({
+                eq: async () => {
+                  if (payload.status === 'completed') {
+                    seasonStatusUpdated = true;
+                  }
+                  return { error: null };
+                },
+              }),
+            };
+          }
+          if (table === 'auction_events') {
+            return {
+              insert: async () => {
+                auctionEventInserted = true;
+                return { error: null };
+              },
+            };
+          }
+          throw new Error(`Unexpected table: ${table}`);
+        },
+      };
+
+      const result = await endAuctionAction();
+
+      expect(result.success).toBe(true);
+      expect(result.data?.status).toBe('completed');
+      expect(seasonConfigUpdated).toBe(true);
+      expect(seasonStatusUpdated).toBe(true);
+      // Invariant: auction_events must NOT have illegal SESSION_RESET event inserted
+      expect(auctionEventInserted).toBe(false);
+      // Invariant: session completion must be authoritatively recorded in audit_logs
+      expect(mockWriteAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'AUCTION_ENDED',
+          entityType: 'season',
+          entityId: 'season-001',
+        })
+      );
+      // Invariant: broadcast AUCTION_ENDED with completed session status
+      expect(mockBroadcastAuctionUpdate).toHaveBeenCalledWith(
+        'season-001',
+        'AUCTION_ENDED',
+        expect.objectContaining({
+          sessionStatus: 'completed',
+        })
+      );
+    });
   });
 
   // ===========================================================================
@@ -673,6 +823,174 @@ describe('Phase 5.2 — Live Console Instant UI & State Machine Verification', (
       }
 
       expect(currentLot?.status).toBe('in_progress');
+    });
+  });
+
+  // ===========================================================================
+  // 5. GuestDrawDialog — Instant 3D Flip & Selection Invariants
+  // ===========================================================================
+  describe('5. GuestDrawDialog — Instant 3D Flip & Reveal Hold Invariants', () => {
+    it('flips immediately upon card click and reveals candidate details (<250ms / 0ms)', async () => {
+      const candidates = [
+        {
+          cardNumber: 1,
+          cardLabel: '01',
+          bucketPlayerNumber: 'B3-01',
+          lotId: 'lot-g-1',
+          drawNumber: 1,
+          playerName: 'Guest Player One',
+          rollNumber: '2026-CS-01',
+          bucket: 'B3',
+          basePrice: 50,
+          photoUrl: null,
+          drawn: false,
+        },
+        {
+          cardNumber: 2,
+          cardLabel: '02',
+          bucketPlayerNumber: 'B3-02',
+          lotId: 'lot-g-2',
+          drawNumber: 2,
+          playerName: 'Guest Player Two',
+          rollNumber: '2026-CS-02',
+          bucket: 'B3',
+          basePrice: 50,
+          photoUrl: null,
+          drawn: false,
+        },
+      ];
+
+      vi.spyOn(auctionActions, 'getGuestDrawSnapshotAction').mockResolvedValue({
+        success: true,
+        data: candidates,
+      });
+
+      const callDrawSpy = vi.spyOn(auctionActions, 'callGuestDrawNumberAction').mockResolvedValue({
+        success: true,
+        data: {
+          lotId: 'lot-g-1',
+          drawNumber: 1,
+          playerName: 'Guest Player One',
+          activeLot: null,
+          sessionState: undefined,
+        },
+      });
+
+      const onPlayerDrawn = vi.fn();
+      const onClose = vi.fn();
+
+      render(
+        <GuestDrawDialog
+          isOpen={true}
+          onClose={onClose}
+          seasonId="season-001"
+          activeBuckets={['B3']}
+          initialBucket="B3"
+          onPlayerDrawn={onPlayerDrawn}
+        />
+      );
+
+      // Wait for snapshot candidates to load into UI
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Find the card container
+      const card = screen.getByTestId('guest-draw-card-1');
+      expect(card).toBeDefined();
+
+      // Before click: card shows label 01 and CLICK TO DRAW
+      expect(screen.getByText('01')).toBeDefined();
+      expect(screen.getAllByText('CLICK TO DRAW').length).toBe(2);
+
+      // Click card 1
+      const button = screen.getAllByRole('button', { name: /CLICK TO DRAW/i })[0];
+      act(() => {
+        fireEvent.click(button);
+      });
+
+      // Instant flip: player details must be immediately visible (<0ms) on flipped card
+      expect(within(card).getByText('Guest Player One')).toBeDefined();
+      expect(within(card).getByText('REVEALED')).toBeDefined();
+      expect(within(card).getByText('2026-CS-01')).toBeDefined();
+      expect(within(card).getByText(/Base:/i)).toBeDefined();
+      expect(within(card).getByText('Moving to floor...')).toBeDefined();
+      expect(card.innerHTML).toContain('rotateY(180deg)');
+
+      // Verify other card (card 2) is disabled and not flipped during reveal
+      const card2 = screen.getByTestId('guest-draw-card-2');
+      const otherButton = within(card2).getByRole('button', { name: /CLICK TO DRAW/i });
+      expect((otherButton as HTMLButtonElement).disabled).toBe(true);
+      expect(card2.innerHTML).toContain('rotateY(0deg)');
+
+      // Fast-forward reveal hold (2000ms) + close timeout (600ms)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+        await vi.advanceTimersByTimeAsync(600);
+      });
+
+      expect(callDrawSpy).toHaveBeenCalledWith('lot-g-1', 'B3', 'season-001');
+      expect(onPlayerDrawn).toHaveBeenCalledWith('lot-g-1', 'Guest Player One', null, undefined);
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it('rolls back 3D flip when server action fails', async () => {
+      const candidates = [
+        {
+          cardNumber: 1,
+          cardLabel: '01',
+          bucketPlayerNumber: 'B3-01',
+          lotId: 'lot-g-1',
+          drawNumber: 1,
+          playerName: 'Guest Player One',
+          rollNumber: '2026-CS-01',
+          bucket: 'B3',
+          basePrice: 50,
+          photoUrl: null,
+          drawn: false,
+        },
+      ];
+
+      vi.spyOn(auctionActions, 'getGuestDrawSnapshotAction').mockResolvedValue({
+        success: true,
+        data: candidates,
+      });
+
+      vi.spyOn(auctionActions, 'callGuestDrawNumberAction').mockResolvedValue({
+        success: false,
+        error: 'Active bidding is already in progress',
+      });
+
+      render(
+        <GuestDrawDialog
+          isOpen={true}
+          onClose={vi.fn()}
+          seasonId="season-001"
+          activeBuckets={['B3']}
+          initialBucket="B3"
+        />
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      const button = screen.getByRole('button', { name: /CLICK TO DRAW/i });
+      act(() => {
+        fireEvent.click(button);
+      });
+
+      // Instant flip initially shows revealed face
+      expect(screen.getByText('Guest Player One')).toBeDefined();
+
+      // Fast forward 2000ms hold: server action failure returns
+      await act(async () => {
+        vi.advanceTimersByTime(2100);
+        await Promise.resolve();
+      });
+
+      // Error message is displayed and card is no longer in flipped state
+      expect(screen.getByText('Active bidding is already in progress')).toBeDefined();
     });
   });
 });

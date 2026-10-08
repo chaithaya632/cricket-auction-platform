@@ -83,6 +83,13 @@ export function AuctionTimer({
   onRemainingChangeRef.current = onRemainingChange;
 
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
+  const lastPausedRemainingRef = React.useRef<number | null>(null);
+  const resumeAnchorRef = React.useRef<{
+    resumedAt: number;
+    remainingAtResume: number;
+    startedAtWhenResumed: string | null;
+  } | null>(null);
+  const wasPausedRef = React.useRef<boolean>(isPaused);
 
   useEffect(() => {
     setEffectiveStartedAt(startedAt);
@@ -100,6 +107,8 @@ export function AuctionTimer({
       } else if (payload.type === 'BID_PLACED') {
         if (payload.startedAt) setEffectiveStartedAt(payload.startedAt);
         if (payload.durationSeconds) setEffectiveDuration(payload.durationSeconds);
+      } else if (payload.type === 'RESUME') {
+        if (payload.startedAt) setEffectiveStartedAt(payload.startedAt);
       }
     });
   }, [lotId]);
@@ -131,8 +140,29 @@ export function AuctionTimer({
         pausedRemainingSeconds !== null && pausedRemainingSeconds !== undefined
           ? Math.max(0, pausedRemainingSeconds)
           : remaining;
+      lastPausedRemainingRef.current = frozen;
+      resumeAnchorRef.current = null;
+      wasPausedRef.current = true;
       setRemaining(frozen);
       return;
+    }
+
+    // Transition from paused -> live: establish resume anchor to eliminate clock jitter
+    if (wasPausedRef.current && !isPaused) {
+      wasPausedRef.current = false;
+      const baseRemaining =
+        lastPausedRemainingRef.current !== null
+          ? lastPausedRemainingRef.current
+          : pausedRemainingSeconds !== null && pausedRemainingSeconds !== undefined
+          ? pausedRemainingSeconds
+          : remaining;
+      resumeAnchorRef.current = {
+        resumedAt: Date.now(),
+        remainingAtResume: baseRemaining,
+        startedAtWhenResumed: effectiveStartedAt,
+      };
+    } else {
+      wasPausedRef.current = false;
     }
 
     if (!effectiveStartedAt || !isActive) {
@@ -141,6 +171,18 @@ export function AuctionTimer({
     }
 
     const computeLiveRemaining = () => {
+      // If we have an active resume anchor and effectiveStartedAt hasn't changed yet,
+      // count down smoothly from the anchor to eliminate the 20 -> 16 -> 20 jump.
+      if (resumeAnchorRef.current) {
+        if (effectiveStartedAt !== resumeAnchorRef.current.startedAtWhenResumed) {
+          // Parent/server caught up with the updated started_at timestamp
+          resumeAnchorRef.current = null;
+        } else {
+          const elapsedSec = (Date.now() - resumeAnchorRef.current.resumedAt) / 1000;
+          return Math.max(0, Math.ceil(resumeAnchorRef.current.remainingAtResume - elapsedSec));
+        }
+      }
+
       const deadline = new Date(effectiveStartedAt).getTime() + effectiveDuration * 1000;
       return Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
     };

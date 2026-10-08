@@ -369,6 +369,7 @@ export function OperatorControls({
 
   const handleStartAuction = () => {
     const previousState = sessionState;
+    const nowIso = new Date().toISOString();
 
     // OPTIMISTIC UPDATE: Immediate transition to LIVE (<250ms / 0ms)
     // Preserves activeLot if already on floor (from Guest Draw before start)
@@ -379,10 +380,16 @@ export function OperatorControls({
       isPaused: false,
       isNotStarted: false,
       isCompleted: false,
-      startedAt: new Date().toISOString(),
+      startedAt: nowIso,
       activeLotId: activeLot?.id || null,
     };
     onSessionStateChange?.(optimisticState);
+    if (activeLot) {
+      onActiveLotChange?.({
+        ...activeLot,
+        started_at: nowIso,
+      });
+    }
 
     void runOperatorAction(
       'start',
@@ -472,15 +479,33 @@ export function OperatorControls({
   const handleResumeAuction = () => {
     const previousState = sessionState;
 
+    // Calculate synthetic started_at optimistically so active lot clock has zero jitter
+    const currentRemaining =
+      sessionState.pausedRemainingSeconds ?? (getCurrentRemaining ? getCurrentRemaining() : 20);
+    const timerDuration = activeLot?.highest_bidder_franchise_id ? 20 : 30;
+    const remainingToRestore =
+      currentRemaining !== null && currentRemaining !== undefined
+        ? Math.min(timerDuration, Math.max(1, currentRemaining))
+        : timerDuration;
+    const elapsedSeconds = timerDuration - remainingToRestore;
+    const syntheticStartedAt = new Date(Date.now() - elapsedSeconds * 1000).toISOString();
+
     // OPTIMISTIC UPDATE: Resume live session immediately (<250ms / 0ms)
     const optimisticState: AuctionSessionState = {
       ...sessionState,
       status: 'live',
       isPaused: false,
+      startedAt: syntheticStartedAt,
       pausedRemainingSeconds: null,
       pausedAt: null,
     };
     onSessionStateChange?.(optimisticState);
+    if (activeLot) {
+      onActiveLotChange?.({
+        ...activeLot,
+        started_at: syntheticStartedAt,
+      });
+    }
 
     void runOperatorAction(
       'resume',
@@ -488,6 +513,9 @@ export function OperatorControls({
       (res) => {
         if (!res.success) {
           onSessionStateChange?.(previousState);
+          if (activeLot) {
+            onActiveLotChange?.(activeLot);
+          }
           setErrorMsg(sanitizeActionError(res.error, 'Failed to resume auction.'));
         } else {
           if (res.data?.sessionState) {
@@ -534,11 +562,30 @@ export function OperatorControls({
   };
 
   const handleEndAuction = () => {
+    const prevSessionState = sessionState;
+    const prevActiveLot = activeLot;
+
+    // OPTIMISTIC UPDATE: Immediate session completion visual feedback
+    const optimisticState: AuctionSessionState = {
+      ...sessionState,
+      status: 'completed',
+      isLive: false,
+      isPaused: false,
+      isNotStarted: false,
+      isCompleted: true,
+      activeLotId: null,
+    };
+    onSessionStateChange?.(optimisticState);
+    onActiveLotChange?.(null);
+    setShowEndModal(false);
+
     void runOperatorAction(
       'end-auction',
       () => endAuctionAction({ resolveActiveLotMode: endLotMode }),
       (res) => {
         if (!res.success) {
+          onSessionStateChange?.(prevSessionState);
+          onActiveLotChange?.(prevActiveLot);
           setErrorMsg(sanitizeActionError(res.error, 'Failed to end auction.'));
         } else {
           if (res.data?.sessionState) {
@@ -546,7 +593,6 @@ export function OperatorControls({
           }
           onActiveLotChange?.(null);
           setSuccessMsg('Auction session has officially ENDED and status is COMPLETED.');
-          setShowEndModal(false);
         }
       }
     );

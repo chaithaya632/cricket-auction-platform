@@ -26,6 +26,7 @@ import type { BucketScarcityReport } from '@/domain/scarcity';
 import {
   subscribeAuctionDelta,
   runWithLocalActionTracking,
+  isLocalActionEchoWindowActive,
 } from '@/components/auction/auction-realtime-sync';
 import {
   extendTimerAction,
@@ -72,17 +73,23 @@ export function AuctionOperatorFloor({
   const [sessionState, setSessionState] = useState<AuctionSessionState>(initialSessionState);
   const [upcomingLots, setUpcomingLots] = useState<AuctionLotWithDetails[]>(initialUpcomingLots);
 
-  // Synchronize with background RSC refreshes when new server data arrives
+  // Synchronize with background RSC refreshes when new server data arrives (except during local action window)
   useEffect(() => {
-    setActiveLot(initialActiveLot);
+    if (!isLocalActionEchoWindowActive()) {
+      setActiveLot(initialActiveLot);
+    }
   }, [initialActiveLot]);
 
   useEffect(() => {
-    setSessionState(initialSessionState);
+    if (!isLocalActionEchoWindowActive()) {
+      setSessionState(initialSessionState);
+    }
   }, [initialSessionState]);
 
   useEffect(() => {
-    setUpcomingLots(initialUpcomingLots);
+    if (!isLocalActionEchoWindowActive()) {
+      setUpcomingLots(initialUpcomingLots);
+    }
   }, [initialUpcomingLots]);
 
   // Synchronize with Realtime deltas across browsers and spectator consoles

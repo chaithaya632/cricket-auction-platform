@@ -6,9 +6,11 @@
 // Features:
 // - Fixed snapshot ordering (draw_number ASC) for stable card numbering (01, 02...).
 // - Cards do NOT shift numbers when players are drawn.
-// - Persisted in sessionStorage across tab interactions during the session.
+// - Zero permanent player consumption (no stale sessionStorage caching).
+// - Instant 3D card flip animation (<250ms / 0ms) revealing player details.
+// - 2-second visual reveal hold before transferring player to the floor.
 // - Server independently validates lotId, bucket, and status === 'pending'.
-// - 3D card flip animation when guest number is picked.
+// - Seamless pre-start and in-progress live auction support.
 // =============================================================================
 
 import React, { useState, useEffect } from 'react';
@@ -52,7 +54,7 @@ export function GuestDrawDialog({
   const [candidates, setCandidates] = useState<GuestDrawCandidate[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
-  const [revealedLotId, setRevealedLotId] = useState<string | null>(null);
+  const [revealingLotId, setRevealingLotId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -65,40 +67,17 @@ export function GuestDrawDialog({
     }
   }, [isOpen, initialBucket]);
 
-  const getStorageKey = (b: string) => `acc_guest_draw_snapshot_${seasonId}_${b}`;
-
   const loadSnapshot = async (bucket: string) => {
     setIsLoading(true);
     setErrorMessage(null);
     setSuccessMessage(null);
-    setRevealedLotId(null);
-
-    // Try loading from sessionStorage first for snapshot stability (§15, §16)
-    if (typeof window !== 'undefined') {
-      try {
-        const cached = sessionStorage.getItem(getStorageKey(bucket));
-        if (cached) {
-          const parsed = JSON.parse(cached) as GuestDrawCandidate[];
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setCandidates(parsed);
-            setIsLoading(false);
-            return;
-          }
-        }
-      } catch {
-        // Fallback to server query
-      }
-    }
+    setRevealingLotId(null);
 
     try {
-      const res = await getGuestDrawSnapshotAction(bucket);
+      // Authoritatively fetch fresh candidates directly from database
+      const res = await getGuestDrawSnapshotAction(bucket, seasonId);
       if (res.success && res.data) {
         setCandidates(res.data);
-        if (typeof window !== 'undefined') {
-          try {
-            sessionStorage.setItem(getStorageKey(bucket), JSON.stringify(res.data));
-          } catch {}
-        }
       } else {
         setErrorMessage(res.error || 'Failed to load guest draw cards.');
       }
@@ -115,53 +94,57 @@ export function GuestDrawDialog({
   };
 
   const handleCardClick = async (candidate: GuestDrawCandidate) => {
-    if (candidate.drawn || isDrawing) return;
+    if (candidate.drawn || isDrawing || revealingLotId) return;
 
     setErrorMessage(null);
     setSuccessMessage(null);
     setIsDrawing(true);
-    setRevealedLotId(candidate.lotId);
+
+    // 1. INSTANT 3D FLIP: synchronous state update triggers rotateY(180deg) immediately (<0ms)
+    setRevealingLotId(candidate.lotId);
 
     try {
-      const res = await runWithLocalActionTracking(() =>
-        callGuestDrawNumberAction(candidate.lotId, candidate.bucket)
+      // 2. Start server action concurrently with minimum 2-second visual reveal hold
+      const actionPromise = runWithLocalActionTracking(() =>
+        callGuestDrawNumberAction(candidate.lotId, candidate.bucket, seasonId)
       );
+      const holdPromise = new Promise((resolve) => setTimeout(resolve, 2000));
+
+      const [res] = await Promise.all([actionPromise, holdPromise]);
 
       if (!res.success) {
         setErrorMessage(res.error || 'Failed to select player from card.');
-        setRevealedLotId(null);
-      } else {
-        // Mark as drawn in snapshot
-        const updated = candidates.map((c) =>
-          c.lotId === candidate.lotId ? { ...c, drawn: true } : c
-        );
-        setCandidates(updated);
-        if (typeof window !== 'undefined') {
-          try {
-            sessionStorage.setItem(getStorageKey(selectedBucket), JSON.stringify(updated));
-          } catch {}
-        }
-
-        setSuccessMessage(
-          `Card ${candidate.cardLabel}: ${candidate.playerName} brought to floor!`
-        );
-        if (onPlayerDrawn) {
-          onPlayerDrawn(
-            candidate.lotId,
-            candidate.playerName,
-            res.data?.activeLot,
-            res.data?.sessionState
-          );
-        }
-
-        // Auto close after brief reveal
-        setTimeout(() => {
-          onClose();
-        }, 1200);
+        // Revert 3D flip on error so card flips back
+        setRevealingLotId(null);
+        setIsDrawing(false);
+        return;
       }
+
+      // Mark as drawn in local state for this active dialog instance
+      setCandidates((prev) =>
+        prev.map((c) => (c.lotId === candidate.lotId ? { ...c, drawn: true } : c))
+      );
+
+      setSuccessMessage(
+        `Card #${candidate.cardLabel}: ${candidate.playerName} brought to floor!`
+      );
+
+      if (onPlayerDrawn) {
+        onPlayerDrawn(
+          candidate.lotId,
+          candidate.playerName,
+          res.data?.activeLot,
+          res.data?.sessionState
+        );
+      }
+
+      // Brief delay so operator sees floor confirmation, then close
+      setTimeout(() => {
+        onClose();
+      }, 600);
     } catch (err: any) {
       setErrorMessage(err?.message || 'Error executing guest draw.');
-      setRevealedLotId(null);
+      setRevealingLotId(null);
     } finally {
       setIsDrawing(false);
     }
@@ -249,57 +232,97 @@ export function GuestDrawDialog({
           ) : (
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3 sm:gap-4 pb-4">
               {candidates.map((card) => {
-                const isRevealed = revealedLotId === card.lotId;
+                const isFlipped = revealingLotId === card.lotId;
                 const isDrawn = card.drawn;
 
                 return (
-                  <button
+                  <div
                     key={card.lotId}
-                    type="button"
-                    onClick={() => handleCardClick(card)}
-                    disabled={isDrawn || isDrawing}
-                    className={`group relative aspect-[3/4] rounded-2xl p-2.5 flex flex-col items-center justify-between border transition-all duration-300 select-none cursor-pointer ${
-                      isDrawn
-                        ? 'bg-zinc-950/40 border-zinc-800/40 text-zinc-600 opacity-40 cursor-not-allowed'
-                        : isRevealed
-                        ? 'bg-amber-500/20 border-amber-400 shadow-xl shadow-amber-500/30 scale-105'
-                        : 'bg-gradient-to-b from-zinc-800 to-zinc-900 border-zinc-700/80 hover:border-amber-400 hover:shadow-lg hover:shadow-amber-500/10 hover:-translate-y-1 active:scale-95'
-                    }`}
+                    className="relative aspect-[3/4] [perspective:1000px] select-none"
+                    data-testid={`guest-draw-card-${card.cardNumber}`}
                   >
-                    {/* Top card indicator */}
-                    <div className="w-full flex items-center justify-between text-[10px] font-mono text-zinc-500">
-                      <span className="font-bold text-amber-400/90">{card.bucketPlayerNumber || `${selectedBucket}${card.cardNumber}`}</span>
-                      {isDrawn && <span className="text-red-400 font-bold">DRAWN</span>}
-                    </div>
+                    <div
+                      className={`w-full h-full relative transition-transform duration-500 [transform-style:preserve-3d] ${
+                        isFlipped ? '[transform:rotateY(180deg)]' : '[transform:rotateY(0deg)]'
+                      }`}
+                    >
+                      {/* FRONT FACE (Numbered Card) */}
+                      <button
+                        type="button"
+                        onClick={() => handleCardClick(card)}
+                        disabled={isDrawn || isDrawing || Boolean(revealingLotId)}
+                        className={`absolute inset-0 [backface-visibility:hidden] rounded-2xl p-2.5 flex flex-col items-center justify-between border transition-all duration-200 select-none ${
+                          isDrawn
+                            ? 'bg-zinc-950/40 border-zinc-800/40 text-zinc-600 opacity-40 cursor-not-allowed'
+                            : 'bg-gradient-to-b from-zinc-800 to-zinc-900 border-zinc-700/80 hover:border-amber-400 hover:shadow-lg hover:shadow-amber-500/20 hover:-translate-y-1 active:scale-95 cursor-pointer'
+                        }`}
+                      >
+                        {/* Top card indicator */}
+                        <div className="w-full flex items-center justify-between text-[10px] font-mono text-zinc-500">
+                          <span className="font-bold text-amber-400/90">
+                            {card.bucketPlayerNumber || `${selectedBucket}${card.cardNumber}`}
+                          </span>
+                          {isDrawn && <span className="text-red-400 font-bold">DRAWN</span>}
+                        </div>
 
-                    {/* Center Card Number / Player Name if revealed */}
-                    {isRevealed || isDrawn ? (
-                      <div className="text-center my-auto px-1">
-                        <span className="block text-[11px] font-extrabold text-amber-300 leading-tight truncate max-w-[80px]">
-                          {card.playerName}
-                        </span>
-                        <span className="block text-[10px] font-mono text-zinc-400 mt-1">
-                          #{card.cardLabel} ({card.bucketPlayerNumber || `${selectedBucket}${card.cardNumber}`})
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="my-auto flex flex-col items-center justify-center">
-                        <span className="font-mono text-2xl sm:text-3xl font-black text-amber-400 group-hover:scale-110 transition-transform">
-                          {card.cardLabel}
-                        </span>
-                        <span className="text-[11px] font-mono font-bold text-zinc-400 mt-0.5">
-                          {card.bucketPlayerNumber || `${selectedBucket}${card.cardNumber}`}
-                        </span>
-                      </div>
-                    )}
+                        {/* Center Card Number */}
+                        <div className="my-auto flex flex-col items-center justify-center">
+                          <span className="font-mono text-2xl sm:text-3xl font-black text-amber-400 group-hover:scale-110 transition-transform">
+                            {card.cardLabel}
+                          </span>
+                          <span className="text-[11px] font-mono font-bold text-zinc-400 mt-0.5">
+                            {card.bucketPlayerNumber || `${selectedBucket}${card.cardNumber}`}
+                          </span>
+                        </div>
 
-                    {/* Bottom Status */}
-                    <div className="w-full text-center">
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">
-                        {isDrawn ? 'COMPLETED' : 'CLICK TO DRAW'}
-                      </span>
+                        {/* Bottom Status */}
+                        <div className="w-full text-center">
+                          <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                            {isDrawn ? 'COMPLETED' : 'CLICK TO DRAW'}
+                          </span>
+                        </div>
+                      </button>
+
+                      {/* BACK FACE (Revealed Player Face) */}
+                      <div
+                        className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl p-2.5 flex flex-col items-center justify-between border-2 border-amber-400 bg-gradient-to-b from-amber-950 via-zinc-900 to-black shadow-xl shadow-amber-500/30 overflow-hidden"
+                      >
+                        {/* Top Header */}
+                        <div className="w-full flex items-center justify-between text-[10px] font-mono">
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-300 font-bold border border-amber-500/40 text-[9px]">
+                            #{card.cardLabel} • {card.bucket}
+                          </span>
+                          <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider animate-pulse">
+                            REVEALED
+                          </span>
+                        </div>
+
+                        {/* Center: Player Information */}
+                        <div className="my-auto text-center px-1 w-full space-y-1">
+                          <span className="block text-xs sm:text-sm font-black text-amber-300 leading-tight truncate">
+                            {card.playerName}
+                          </span>
+                          {card.rollNumber && (
+                            <span className="block text-[10px] font-mono text-zinc-400">
+                              {card.rollNumber}
+                            </span>
+                          )}
+                          <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold font-mono text-[10px] border border-emerald-500/30 mt-0.5">
+                            <span>Base:</span>
+                            <span>₹{card.basePrice.toLocaleString('en-IN')}</span>
+                          </div>
+                        </div>
+
+                        {/* Bottom Status: Transitioning */}
+                        <div className="w-full text-center py-0.5">
+                          <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-400 flex items-center justify-center gap-1">
+                            <Loader2 className="size-2.5 animate-spin text-amber-400" />
+                            <span>Moving to floor...</span>
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
