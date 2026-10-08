@@ -179,6 +179,7 @@ export function OperatorControls({
   );
   const [isAudioOn, setIsAudioOn] = useState<boolean>(true);
   const [showGuestDrawModal, setShowGuestDrawModal] = useState<boolean>(false);
+  const [showStartModeModal, setShowStartModeModal] = useState<boolean>(false);
 
   useEffect(() => {
     setIsAudioOn(getAudioEnabled());
@@ -991,7 +992,13 @@ export function OperatorControls({
           <div className="flex flex-wrap items-center justify-center gap-4">
             <button
               type="button"
-              onClick={handleStartAuction}
+              onClick={() => {
+                if (activeLot) {
+                  handleStartAuction();
+                } else {
+                  setShowStartModeModal(true);
+                }
+              }}
               disabled={isActionPending('start') || activeBuckets.length === 0}
               className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-xl font-black text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-950/50 transition-all duration-150 cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -2234,6 +2241,75 @@ export function OperatorControls({
       </div>
 
 
+      {/* Start Auction Mode Dialog (§2, §3, §4, §5) */}
+      {showStartModeModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="start-auction-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150 select-none"
+        >
+          <div className="relative w-full max-w-md rounded-3xl border border-emerald-500/30 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black p-6 sm:p-8 shadow-2xl space-y-6 text-center">
+            <div className="flex flex-col items-center">
+              <span className="flex size-14 items-center justify-center rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 mb-3 shadow-inner">
+                <Play className="size-7 fill-emerald-400 text-emerald-400 ml-1" />
+              </span>
+              <h2 id="start-auction-title" className="text-xl sm:text-2xl font-black text-white tracking-tight uppercase">
+                START AUCTION
+              </h2>
+              <p className="text-xs text-zinc-400 mt-1 max-w-xs">
+                Choose how to bring the first player to the floor.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowStartModeModal(false);
+                  handleStartAuction();
+                }}
+                disabled={activeBuckets.length === 0 || isFloorMutationPending || isStateMutationPending}
+                className="w-full py-4 px-5 rounded-2xl font-black text-sm bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white shadow-xl shadow-emerald-950/50 transition-all flex flex-col items-center justify-center gap-1 cursor-pointer border border-emerald-400/30"
+              >
+                <span className="tracking-wide text-sm font-black">START FROM BUCKETS</span>
+                <span className="text-[11px] font-normal text-emerald-100 opacity-90">
+                  Sequential progression from selected buckets ({activeBuckets.join(', ')})
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowStartModeModal(false);
+                  setShowGuestDrawModal(true);
+                }}
+                disabled={activeBuckets.length === 0 || isFloorMutationPending || isStateMutationPending}
+                className="w-full py-4 px-5 rounded-2xl font-black text-sm bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 active:scale-95 text-white shadow-xl shadow-amber-950/50 transition-all flex flex-col items-center justify-center gap-1 cursor-pointer border border-amber-400/30"
+              >
+                <span className="flex items-center gap-2 tracking-wide text-sm font-black">
+                  <Sparkles className="size-4" />
+                  <span>START FROM GUEST DRAW</span>
+                </span>
+                <span className="text-[11px] font-normal text-amber-100 opacity-90">
+                  Guest verbally picks number card before moving to floor
+                </span>
+              </button>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setShowStartModeModal(false)}
+                className="px-5 py-2 text-xs font-bold text-zinc-400 hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Guest Draw Dialog */}
       {seasonId && (
         <GuestDrawDialog
@@ -2242,6 +2318,7 @@ export function OperatorControls({
           seasonId={seasonId}
           activeBuckets={activeBuckets}
           initialBucket={activeBuckets[0] || 'B3'}
+          hasActiveFloorPlayer={activeLot?.status === 'in_progress'}
           onPlayerDrawn={(_lotId, playerName, drawnActiveLot, drawnSessionState) => {
             setShowGuestDrawModal(false);
             if (drawnActiveLot !== undefined && onActiveLotChange) {

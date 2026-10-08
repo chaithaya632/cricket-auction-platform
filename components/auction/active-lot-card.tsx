@@ -12,6 +12,7 @@ import {
   runWithLocalActionTracking,
   subscribeAuctionDelta,
 } from '@/components/auction/auction-realtime-sync';
+import { playBidGavelChime } from '@/lib/auction/audio';
 
 interface ActiveLotCardProps {
   lot: AuctionLotWithDetails | null;
@@ -63,6 +64,7 @@ export function ActiveLotCard({
         }
       } else if (payload.type === 'SALE') {
         setLotStatus('sold');
+        playBidGavelChime(lot.id, payload.currentPrice ?? currentPrice);
       } else if (payload.type === 'UNSOLD') {
         setLotStatus('unsold');
       }
@@ -131,7 +133,13 @@ export function ActiveLotCard({
 
   return (
     <div
-      className={`rounded-2xl border border-zinc-800 bg-gradient-to-b from-zinc-900/90 to-zinc-950 p-6 md:p-8 shadow-2xl relative overflow-hidden ${
+      className={`rounded-2xl border transition-all duration-300 bg-gradient-to-b from-zinc-900/90 to-zinc-950 p-6 md:p-8 shadow-2xl relative overflow-hidden ${
+        lotStatus === 'sold'
+          ? 'border-amber-400/80 shadow-2xl shadow-amber-500/25 ring-2 ring-amber-400/40 scale-[1.01]'
+          : lotStatus === 'unsold'
+          ? 'border-red-500/60 shadow-red-500/20'
+          : 'border-zinc-800'
+      } ${
         isProjector ? 'p-10' : ''
       }`}
     >
@@ -251,32 +259,35 @@ export function ActiveLotCard({
         {/* Pricing & Highest Bidder Column */}
         <div className="md:col-span-8 flex flex-col justify-center space-y-4">
           {lotStatus === 'sold' ? (
-            <div className="rounded-2xl bg-gradient-to-br from-amber-500/15 via-zinc-950 to-emerald-950/30 border-2 border-amber-500/60 p-6 md:p-8 shadow-2xl relative overflow-hidden">
+            <div className="rounded-2xl bg-gradient-to-br from-amber-500/20 via-zinc-950 to-emerald-950/40 border-2 border-amber-400 p-6 md:p-8 shadow-2xl relative overflow-hidden animate-in zoom-in-95 duration-300">
+              {/* Background celebration burst */}
+              <div className="absolute -top-12 -right-12 size-40 bg-amber-400/20 rounded-full blur-2xl pointer-events-none animate-pulse" />
+
               <div className="flex items-center justify-between gap-4">
-                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/20 px-4 py-1.5 text-sm font-black uppercase tracking-widest text-emerald-400 border border-emerald-500/50 shadow-sm animate-pulse">
-                  🔨 SOLD
+                <span className="inline-flex items-center gap-2 rounded-full bg-amber-500/25 px-4 py-1.5 text-sm sm:text-base font-black uppercase tracking-widest text-amber-300 border border-amber-400/60 shadow-lg shadow-amber-500/20 animate-bounce">
+                  🔨 SOLD!
                 </span>
-                <span className="font-mono text-xs text-zinc-400 uppercase tracking-wider font-semibold">
-                  Hammer Price
+                <span className="font-mono text-xs text-amber-200/80 uppercase tracking-wider font-bold">
+                  Official Hammer Price
                 </span>
               </div>
 
               <div
-                className={`font-mono font-black text-emerald-400 tracking-tight mt-3 ${
+                className={`font-mono font-black text-emerald-400 tracking-tight mt-3 drop-shadow-md ${
                   isProjector ? 'text-7xl' : 'text-6xl'
                 }`}
               >
                 ₹{currentPrice !== null ? currentPrice : lot.base_price}
               </div>
 
-              <div className="mt-6 pt-5 border-t border-zinc-800">
-                <span className="text-xs font-extrabold uppercase tracking-widest text-amber-400 block mb-3">
-                  SOLD TO
+              <div className="mt-6 pt-5 border-t border-zinc-800/80">
+                <span className="text-xs font-black uppercase tracking-widest text-amber-400 block mb-3">
+                  ACQUIRED BY
                 </span>
                 {highestBidder ? (
-                  <div className="flex items-center gap-4 p-4 rounded-xl bg-zinc-900/90 border border-amber-500/30 shadow-inner">
+                  <div className="flex items-center gap-4 p-4 rounded-xl bg-zinc-900/90 border-2 border-amber-400/40 shadow-inner">
                     <div
-                      className="size-14 rounded-xl flex items-center justify-center font-black text-xl text-zinc-950 shadow-md shrink-0"
+                      className="size-14 rounded-xl flex items-center justify-center font-black text-xl text-zinc-950 shadow-md shrink-0 border border-white/20"
                       style={{
                         backgroundColor: highestBidder.primary_color || '#eab308',
                       }}
@@ -288,7 +299,7 @@ export function ActiveLotCard({
                         {highestBidder.name}
                       </h3>
                       <p className="text-xs text-emerald-400 font-mono font-semibold mt-1">
-                        Winning Franchise · Acquired for ₹{currentPrice !== null ? currentPrice : lot.base_price}
+                        Winning Franchise · Final Sale Confirmed at ₹{currentPrice !== null ? currentPrice : lot.base_price}
                       </p>
                     </div>
                   </div>
@@ -300,10 +311,16 @@ export function ActiveLotCard({
               </div>
             </div>
           ) : lotStatus === 'unsold' ? (
-            <div className="rounded-2xl bg-zinc-950 border-2 border-red-500/40 p-6 md:p-8 shadow-xl">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/20 px-3.5 py-1 text-xs font-black uppercase tracking-widest text-red-400 border border-red-500/40">
-                UNSOLD
-              </span>
+            <div className="rounded-2xl bg-zinc-950/90 border-2 border-red-500/50 p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-between gap-4">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/20 px-4 py-1.5 text-sm font-black uppercase tracking-widest text-red-400 border border-red-500/50 shadow-sm">
+                  UNSOLD
+                </span>
+                <span className="font-mono text-xs text-zinc-400 uppercase tracking-wider font-semibold">
+                  Passed at Opening Price
+                </span>
+              </div>
+
               <div
                 className={`font-mono font-black text-zinc-400 tracking-tight mt-3 ${
                   isProjector ? 'text-6xl' : 'text-5xl'
@@ -311,8 +328,8 @@ export function ActiveLotCard({
               >
                 ₹{lot.base_price}
               </div>
-              <p className="text-xs text-zinc-400 mt-3">
-                Passed without bids at opening base price. Available for re-auction or returning to lot queue.
+              <p className="text-xs text-zinc-400 mt-3 leading-relaxed">
+                Passed without bids at opening base price. Retains eligibility for future Round 2 re-auction or returning to lot queue.
               </p>
 
               {isAdmin && (

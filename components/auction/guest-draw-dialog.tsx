@@ -32,6 +32,7 @@ interface GuestDrawDialogProps {
   seasonId: string;
   activeBuckets: string[];
   initialBucket?: string;
+  hasActiveFloorPlayer?: boolean;
   onPlayerDrawn?: (
     lotId: string,
     playerName: string,
@@ -46,6 +47,7 @@ export function GuestDrawDialog({
   seasonId,
   activeBuckets,
   initialBucket,
+  hasActiveFloorPlayer = false,
   onPlayerDrawn,
 }: GuestDrawDialogProps) {
   const [selectedBucket, setSelectedBucket] = useState<string>(
@@ -55,6 +57,7 @@ export function GuestDrawDialog({
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
   const [revealingLotId, setRevealingLotId] = useState<string | null>(null);
+  const [revealedCandidate, setRevealedCandidate] = useState<GuestDrawCandidate | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -94,14 +97,15 @@ export function GuestDrawDialog({
   };
 
   const handleCardClick = async (candidate: GuestDrawCandidate) => {
-    if (candidate.drawn || isDrawing || revealingLotId) return;
+    if (candidate.drawn || isDrawing || revealingLotId || hasActiveFloorPlayer) return;
 
     setErrorMessage(null);
     setSuccessMessage(null);
     setIsDrawing(true);
 
-    // 1. INSTANT 3D FLIP: synchronous state update triggers rotateY(180deg) immediately (<0ms)
+    // 1. INSTANT 3D FLIP & REVEAL: synchronous state update (<0ms)
     setRevealingLotId(candidate.lotId);
+    setRevealedCandidate(candidate);
 
     try {
       // 2. Start server action concurrently with minimum 2-second visual reveal hold
@@ -116,6 +120,7 @@ export function GuestDrawDialog({
         setErrorMessage(res.error || 'Failed to select player from card.');
         // Revert 3D flip on error so card flips back
         setRevealingLotId(null);
+        setRevealedCandidate(null);
         setIsDrawing(false);
         return;
       }
@@ -140,11 +145,13 @@ export function GuestDrawDialog({
 
       // Brief delay so operator sees floor confirmation, then close
       setTimeout(() => {
+        setRevealedCandidate(null);
         onClose();
       }, 600);
     } catch (err: any) {
       setErrorMessage(err?.message || 'Error executing guest draw.');
       setRevealingLotId(null);
+      setRevealedCandidate(null);
     } finally {
       setIsDrawing(false);
     }
@@ -218,6 +225,29 @@ export function GuestDrawDialog({
           </div>
         )}
 
+        {hasActiveFloorPlayer && (
+          <div className="mt-3 p-3 rounded-xl bg-amber-950/70 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center gap-2">
+            <span>⚠️</span>
+            <span>A player is currently active on the auction floor. Complete (SOLD) or pass (UNSOLD) the lot before selecting a new player via Guest Draw.</span>
+          </div>
+        )}
+
+        {/* Reveal Status Banner during 2-second hold */}
+        {revealedCandidate && (
+          <div className="mt-3 p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center justify-between gap-3 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2">
+              <Sparkles className="size-4 text-amber-400 shrink-0" />
+              <span>
+                Revealing Card #{revealedCandidate.cardLabel} ({revealedCandidate.bucketPlayerNumber || revealedCandidate.bucket}) · Holding ~2-second presentation before moving to floor...
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0 text-amber-400 font-mono text-[11px]">
+              <Loader2 className="size-3.5 animate-spin" />
+              <span>Moving to floor...</span>
+            </div>
+          </div>
+        )}
+
         {/* Cards Grid */}
         <div className="mt-6 flex-1 overflow-y-auto pr-1">
           {isLoading ? (
@@ -250,7 +280,7 @@ export function GuestDrawDialog({
                       <button
                         type="button"
                         onClick={() => handleCardClick(card)}
-                        disabled={isDrawn || isDrawing || Boolean(revealingLotId)}
+                        disabled={isDrawn || isDrawing || Boolean(revealingLotId) || hasActiveFloorPlayer}
                         className={`absolute inset-0 [backface-visibility:hidden] rounded-2xl p-2.5 flex flex-col items-center justify-between border transition-all duration-200 select-none ${
                           isDrawn
                             ? 'bg-zinc-950/40 border-zinc-800/40 text-zinc-600 opacity-40 cursor-not-allowed'

@@ -528,11 +528,18 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
       />
     );
 
-    // 1. Admin clicks START AUCTION -> Server Action commits and revalidatePath delivers liveSession prop
+    // 1. Admin clicks START AUCTION -> opens start mode dialog -> selects START FROM BUCKETS -> commits
     const startBtn = getByText('START AUCTION').closest('button')!;
     await act(async () => {
       fireEvent.click(startBtn);
     });
+
+    const startFromBucketsBtn = queryByText('START FROM BUCKETS')?.closest('button');
+    if (startFromBucketsBtn) {
+      await act(async () => {
+        fireEvent.click(startFromBucketsBtn);
+      });
+    }
 
     expect(mockStartAuctionAction).toHaveBeenCalledTimes(1);
     expect(mockRouterRefresh).toHaveBeenCalledTimes(0);

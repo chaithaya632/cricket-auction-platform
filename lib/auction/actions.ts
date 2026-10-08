@@ -1045,7 +1045,7 @@ export async function callGuestDrawNumberAction(
       return { success: false, error: 'Cannot select lot: auction session has ended.' };
     }
 
-    // 2. Ensure no active in_progress lot with active bids
+    // 2. Ensure no active in_progress lot on the floor
     const { data: activeLot } = await adminClient
       .from('auction_lots')
       .select('id, highest_bidder_franchise_id, current_price')
@@ -1054,21 +1054,11 @@ export async function callGuestDrawNumberAction(
       .maybeSingle();
 
     if (activeLot) {
-      if (activeLot.highest_bidder_franchise_id !== null || activeLot.current_price !== null) {
-        return {
-          success: false,
-          error: 'Cannot draw: active bidding is currently in progress. Complete (SOLD) or pass (UNSOLD) the lot first.',
-        };
-      }
-      // Unbid lot on the floor: revert to pending safely
-      await adminClient
-        .from('auction_lots')
-        .update({
-          status: 'pending',
-          started_at: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', activeLot.id);
+      return {
+        success: false,
+        error:
+          'Cannot draw: a player is already active on the auction floor. Complete (SOLD) or pass (UNSOLD) the lot before drawing another player.',
+      };
     }
 
     // 3. Fetch targeted lot and independently validate
@@ -1200,6 +1190,45 @@ export async function callGuestDrawNumberAction(
       .delete()
       .eq('season_id', targetSeasonId)
       .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
+
+    // 5. Automatically activate the auction session if called before auction start
+    const isSessionLive = sessionConfig?.value === 'live';
+    if (!isSessionLive) {
+      await adminClient
+        .from('seasons')
+        .update({ status: 'auction', updated_at: now })
+        .eq('id', targetSeasonId);
+
+      await adminClient.from('season_config').upsert(
+        {
+          season_id: targetSeasonId,
+          key: 'auction_session_status',
+          value: 'live',
+          value_type: 'text',
+          description: 'Current operational state of the live auction session (live, paused, completed)',
+          updated_at: now,
+        },
+        { onConflict: 'season_id,key' }
+      );
+
+      await adminClient.from('season_config').upsert(
+        {
+          season_id: targetSeasonId,
+          key: 'auction_started_at',
+          value: now,
+          value_type: 'text',
+          description: 'Timestamp when auction session was officially started',
+          updated_at: now,
+        },
+        { onConflict: 'season_id,key' }
+      );
+
+      await broadcastAuctionUpdate(targetSeasonId, 'AUCTION_STARTED', {
+        lotId: lot.id,
+        startedAt: now,
+        sessionStatus: 'live',
+      });
+    }
 
     revalidatePath('/admin/queue');
     revalidatePath('/live');
