@@ -1166,42 +1166,53 @@ export const getGuestDrawCandidates = cache(async (
 ): Promise<GuestDrawCandidate[]> => {
   const { data: lots, error } = await supabase
     .from('auction_lots')
-    .select('id, draw_number, bucket, base_price, registration_id, status')
+    .select(`
+      id, draw_number, bucket, base_price, registration_id, status,
+      player_season_registrations (
+        id, programme, academic_year, branch,
+        players (
+          id, full_name, photo_url, roll_number
+        ),
+        player_skill_profiles (
+          derived_player_type, batting_style, bowling_style
+        )
+      )
+    `)
     .eq('season_id', seasonId)
     .eq('bucket', bucket)
     .order('draw_number', { ascending: true });
 
   if (error || !lots) return [];
 
-  const registrationIds = lots.map((l) => l.registration_id);
-  const { data: playersView } = await supabase
-    .from('public_players_view')
-    .select('registration_id, player_id, full_name, photo_url, roll_number')
-    .in('registration_id', registrationIds);
+  return lots.map((lot: any, idx) => {
+    const reg: any = Array.isArray(lot.player_season_registrations)
+      ? lot.player_season_registrations[0]
+      : lot.player_season_registrations;
+    const player: any = Array.isArray(reg?.players)
+      ? reg.players[0]
+      : reg?.players;
+    const skills: any = Array.isArray(reg?.player_skill_profiles)
+      ? reg.player_skill_profiles[0]
+      : reg?.player_skill_profiles;
 
-  const playerMap = new Map<string, any>();
-  if (playersView) {
-    for (const p of playersView) {
-      playerMap.set(p.registration_id, p);
-    }
-  }
-
-  return lots.map((lot, idx) => {
-    const p = playerMap.get(lot.registration_id);
     const cardNumber = idx + 1;
     const cardLabel = cardNumber < 10 ? `0${cardNumber}` : `${cardNumber}`;
     const bucketPlayerNumber = formatBucketPlayerNumber(lot.bucket, cardNumber);
+
     return {
       cardNumber,
       cardLabel,
       bucketPlayerNumber,
       lotId: lot.id,
       drawNumber: lot.draw_number,
-      playerName: p?.full_name || 'Player',
-      rollNumber: p?.roll_number || '',
+      playerName: player?.full_name || 'Player',
+      rollNumber: player?.roll_number || '',
       bucket: lot.bucket,
       basePrice: lot.base_price,
-      photoUrl: p?.photo_url || null,
+      photoUrl: player?.photo_url || null,
+      category: skills?.derived_player_type || null,
+      battingStyle: skills?.batting_style || null,
+      bowlingStyle: skills?.bowling_style || null,
       drawn: lot.status !== 'pending',
     };
   });

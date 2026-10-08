@@ -1230,6 +1230,8 @@ export async function callGuestDrawNumberAction(
       });
     }
 
+    revalidatePath('/admin');
+    revalidatePath('/admin/auction');
     revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');

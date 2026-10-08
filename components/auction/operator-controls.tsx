@@ -992,13 +992,7 @@ export function OperatorControls({
           <div className="flex flex-wrap items-center justify-center gap-4">
             <button
               type="button"
-              onClick={() => {
-                if (activeLot) {
-                  handleStartAuction();
-                } else {
-                  setShowStartModeModal(true);
-                }
-              }}
+              onClick={() => setShowStartModeModal(true)}
               disabled={isActionPending('start') || activeBuckets.length === 0}
               className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-xl font-black text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-950/50 transition-all duration-150 cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -1010,7 +1004,7 @@ export function OperatorControls({
               ) : (
                 <>
                   <Play className="size-4" />
-                  <span>{activeLot ? 'START AUCTION (WITH FLOOR PLAYER)' : 'START AUCTION'}</span>
+                  <span>START AUCTION</span>
                 </>
               )}
             </button>
@@ -2289,7 +2283,7 @@ export function OperatorControls({
               >
                 <span className="flex items-center gap-2 tracking-wide text-sm font-black">
                   <Sparkles className="size-4" />
-                  <span>START FROM GUEST DRAW</span>
+                  <span>GUEST DRAW</span>
                 </span>
                 <span className="text-[11px] font-normal text-amber-100 opacity-90">
                   Guest verbally picks number card before moving to floor
@@ -2301,9 +2295,9 @@ export function OperatorControls({
               <button
                 type="button"
                 onClick={() => setShowStartModeModal(false)}
-                className="px-5 py-2 text-xs font-bold text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                className="px-5 py-2 text-xs font-bold text-zinc-400 hover:text-white transition-colors cursor-pointer uppercase tracking-wider"
               >
-                Cancel
+                CANCEL
               </button>
             </div>
           </div>

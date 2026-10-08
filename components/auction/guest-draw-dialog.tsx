@@ -228,7 +228,7 @@ export function GuestDrawDialog({
         {hasActiveFloorPlayer && (
           <div className="mt-3 p-3 rounded-xl bg-amber-950/70 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center gap-2">
             <span>⚠️</span>
-            <span>A player is currently active on the auction floor. Complete (SOLD) or pass (UNSOLD) the lot before selecting a new player via Guest Draw.</span>
+            <span>Cannot draw: a player is already active on the auction floor.</span>
           </div>
         )}
 
@@ -238,7 +238,7 @@ export function GuestDrawDialog({
             <div className="flex items-center gap-2">
               <Sparkles className="size-4 text-amber-400 shrink-0" />
               <span>
-                Revealing Card #{revealedCandidate.cardLabel} ({revealedCandidate.bucketPlayerNumber || revealedCandidate.bucket}) · Holding ~2-second presentation before moving to floor...
+                Revealing {revealedCandidate.bucketPlayerNumber || `#${revealedCandidate.cardLabel}`} · Holding ~2-second presentation before moving to floor...
               </span>
             </div>
             <div className="flex items-center gap-1.5 shrink-0 text-amber-400 font-mono text-[11px]">
@@ -264,6 +264,7 @@ export function GuestDrawDialog({
               {candidates.map((card) => {
                 const isFlipped = revealingLotId === card.lotId;
                 const isDrawn = card.drawn;
+                const displayPlayerNumber = card.bucketPlayerNumber || `${selectedBucket}${card.cardNumber}`;
 
                 return (
                   <div
@@ -276,7 +277,7 @@ export function GuestDrawDialog({
                         isFlipped ? '[transform:rotateY(180deg)]' : '[transform:rotateY(0deg)]'
                       }`}
                     >
-                      {/* FRONT FACE (Numbered Card) */}
+                      {/* FRONT FACE (Numbered Card with Deterministic Bucket Number) */}
                       <button
                         type="button"
                         onClick={() => handleCardClick(card)}
@@ -289,19 +290,17 @@ export function GuestDrawDialog({
                       >
                         {/* Top card indicator */}
                         <div className="w-full flex items-center justify-between text-[10px] font-mono text-zinc-500">
-                          <span className="font-bold text-amber-400/90">
-                            {card.bucketPlayerNumber || `${selectedBucket}${card.cardNumber}`}
-                          </span>
+                          <span className="font-bold text-amber-400/80">{displayPlayerNumber}</span>
                           {isDrawn && <span className="text-red-400 font-bold">DRAWN</span>}
                         </div>
 
-                        {/* Center Card Number */}
+                        {/* Center Card Number: Prominent number and bucket player code */}
                         <div className="my-auto flex flex-col items-center justify-center">
                           <span className="font-mono text-2xl sm:text-3xl font-black text-amber-400 group-hover:scale-110 transition-transform">
                             {card.cardLabel}
                           </span>
-                          <span className="text-[11px] font-mono font-bold text-zinc-400 mt-0.5">
-                            {card.bucketPlayerNumber || `${selectedBucket}${card.cardNumber}`}
+                          <span className="text-[11px] font-mono font-bold text-zinc-300 mt-0.5">
+                            {displayPlayerNumber}
                           </span>
                         </div>
 
@@ -313,31 +312,56 @@ export function GuestDrawDialog({
                         </div>
                       </button>
 
-                      {/* BACK FACE (Revealed Player Face) */}
+                      {/* BACK FACE (Revealed Player Face with photo, category, base price) */}
                       <div
-                        className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl p-2.5 flex flex-col items-center justify-between border-2 border-amber-400 bg-gradient-to-b from-amber-950 via-zinc-900 to-black shadow-xl shadow-amber-500/30 overflow-hidden"
+                        className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)] rounded-2xl p-2 sm:p-2.5 flex flex-col items-center justify-between border-2 border-amber-400 bg-gradient-to-b from-amber-950 via-zinc-900 to-black shadow-xl shadow-amber-500/30 overflow-hidden"
                       >
-                        {/* Top Header */}
+                        {/* Top Header: Unique Auction Number & Bucket */}
                         <div className="w-full flex items-center justify-between text-[10px] font-mono">
                           <span className="px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-300 font-bold border border-amber-500/40 text-[9px]">
-                            #{card.cardLabel} • {card.bucket}
+                            {displayPlayerNumber}
                           </span>
                           <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider animate-pulse">
                             REVEALED
                           </span>
                         </div>
 
-                        {/* Center: Player Information */}
-                        <div className="my-auto text-center px-1 w-full space-y-1">
-                          <span className="block text-xs sm:text-sm font-black text-amber-300 leading-tight truncate">
+                        {/* Player Photo (or avatar fallback) */}
+                        {card.photoUrl ? (
+                          <div className="relative size-10 sm:size-12 rounded-full overflow-hidden border-2 border-amber-400/80 my-0.5 shadow-md shrink-0">
+                            <img
+                              src={card.photoUrl}
+                              alt={card.playerName}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLElement).style.display = 'none';
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <div className="size-9 sm:size-10 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-300 font-bold text-xs shrink-0 my-0.5">
+                            {card.playerName.charAt(0)}
+                          </div>
+                        )}
+
+                        {/* Center: Full Player Details */}
+                        <div className="text-center px-1 w-full space-y-0.5">
+                          <span className="block text-xs font-black text-amber-200 leading-tight truncate">
                             {card.playerName}
                           </span>
-                          {card.rollNumber && (
-                            <span className="block text-[10px] font-mono text-zinc-400">
-                              {card.rollNumber}
-                            </span>
-                          )}
-                          <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold font-mono text-[10px] border border-emerald-500/30 mt-0.5">
+                          <div className="flex items-center justify-center gap-1 flex-wrap">
+                            {card.rollNumber && (
+                              <span className="text-[9px] font-mono text-zinc-400">
+                                {card.rollNumber}
+                              </span>
+                            )}
+                            {card.category && (
+                              <span className="text-[8px] font-extrabold uppercase px-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                {card.category}
+                              </span>
+                            )}
+                          </div>
+                          <div className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 font-bold font-mono text-[9px] border border-emerald-500/30">
                             <span>Base:</span>
                             <span>₹{card.basePrice.toLocaleString('en-IN')}</span>
                           </div>

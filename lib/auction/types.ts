@@ -154,6 +154,9 @@ export interface GuestDrawCandidate {
   bucket: string;
   basePrice: number;
   photoUrl: string | null;
+  category?: string | null;
+  battingStyle?: string | null;
+  bowlingStyle?: string | null;
   drawn: boolean;
 }
 

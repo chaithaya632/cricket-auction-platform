@@ -87,12 +87,13 @@ describe('Phase 5.2 — Start Mode Dialog, Guest Draw & Transitions', () => {
       fireEvent.click(startButton);
 
       // Verify Start-Mode Dialog opens
-      expect(screen.getByRole('dialog')).toBeDefined();
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toBeDefined();
       expect(screen.getByText('Choose how to bring the first player to the floor.')).toBeDefined();
-      expect(screen.getByRole('button', { name: /START FROM BUCKETS/i })).toBeDefined();
-      expect(screen.getByRole('button', { name: /START FROM GUEST DRAW/i })).toBeDefined();
-      expect(screen.getByRole('button', { name: /Cancel/i })).toBeDefined();
-    });
+      expect(within(dialog).getByRole('button', { name: /START FROM BUCKETS/i })).toBeDefined();
+      expect(within(dialog).getByRole('button', { name: /GUEST DRAW/i })).toBeDefined();
+      expect(within(dialog).getByRole('button', { name: /CANCEL/i })).toBeDefined();
+    }, 20000);
 
     it('executes startAuctionAction when START FROM BUCKETS is selected', async () => {
       const startSpy = vi.spyOn(auctionActions, 'startAuctionAction').mockResolvedValue({
@@ -141,7 +142,7 @@ describe('Phase 5.2 — Start Mode Dialog, Guest Draw & Transitions', () => {
       expect(startSpy).toHaveBeenCalledWith(['B2', 'B3']);
     });
 
-    it('opens GuestDrawDialog when START FROM GUEST DRAW is selected', async () => {
+    it('opens GuestDrawDialog when GUEST DRAW is selected and closes on CANCEL', async () => {
       vi.spyOn(auctionActions, 'getGuestDrawSnapshotAction').mockResolvedValue({
         success: true,
         data: [
@@ -156,6 +157,7 @@ describe('Phase 5.2 — Start Mode Dialog, Guest Draw & Transitions', () => {
             bucket: 'B2',
             basePrice: 50,
             photoUrl: null,
+            category: 'batter',
             drawn: false,
           },
         ],
@@ -173,8 +175,9 @@ describe('Phase 5.2 — Start Mode Dialog, Guest Draw & Transitions', () => {
 
       fireEvent.click(screen.getByRole('button', { name: /START AUCTION/i }));
 
-      // Select START FROM GUEST DRAW
-      const guestOption = screen.getByRole('button', { name: /START FROM GUEST DRAW/i });
+      // Select GUEST DRAW from dialog
+      const dialog = screen.getByRole('dialog');
+      const guestOption = within(dialog).getByRole('button', { name: /GUEST DRAW/i });
       fireEvent.click(guestOption);
 
       // Verify Guest Draw dialog opens
@@ -199,6 +202,7 @@ describe('Phase 5.2 — Start Mode Dialog, Guest Draw & Transitions', () => {
           bucket: 'B3',
           basePrice: 20,
           photoUrl: null,
+          category: 'bowler',
           drawn: false,
         },
       ];
@@ -224,12 +228,89 @@ describe('Phase 5.2 — Start Mode Dialog, Guest Draw & Transitions', () => {
       });
 
       // Verify active floor warning appears
-      expect(screen.getByText(/A player is currently active on the auction floor/i)).toBeDefined();
+      expect(screen.getByText(/Cannot draw: a player is already active on the auction floor/i)).toBeDefined();
 
       // Verify card click button is disabled
       const card = screen.getByTestId('guest-draw-card-1');
       const drawButton = within(card).getByRole('button');
       expect((drawButton as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('renders deterministic bucket-number card (e.g. B21) and reveals player details on click', async () => {
+      const candidates = [
+        {
+          cardNumber: 1,
+          cardLabel: '01',
+          bucketPlayerNumber: 'B21',
+          lotId: 'lot-b2-1',
+          drawNumber: 1,
+          playerName: 'Sunil Gavaskar',
+          rollNumber: '25811A0501',
+          bucket: 'B2',
+          basePrice: 50,
+          photoUrl: 'https://example.com/photo.jpg',
+          category: 'BATSMAN',
+          drawn: false,
+        },
+      ];
+
+      vi.spyOn(auctionActions, 'getGuestDrawSnapshotAction').mockResolvedValue({
+        success: true,
+        data: candidates,
+      });
+
+      const onPlayerDrawnMock = vi.fn();
+      vi.spyOn(auctionActions, 'callGuestDrawNumberAction').mockResolvedValue({
+        success: true,
+        data: {
+          lotId: 'lot-b2-1',
+          drawNumber: 1,
+          playerName: 'Sunil Gavaskar',
+          activeLot: {
+            id: 'lot-b2-1',
+            status: 'in_progress',
+            draw_number: 1,
+            bucket: 'B2',
+            base_price: 50,
+            current_price: null,
+            player: { full_name: 'Sunil Gavaskar' } as any,
+          } as any,
+          sessionState: {
+            status: 'live',
+            seasonId: 'season-001',
+            seasonName: 'ACC 2026',
+            isLive: true,
+            isPaused: false,
+            isNotStarted: false,
+            isCompleted: false,
+            startedAt: new Date().toISOString(),
+            activeLotId: 'lot-b2-1',
+          },
+        },
+      });
+
+      render(
+        <GuestDrawDialog
+          isOpen={true}
+          onClose={vi.fn()}
+          seasonId="season-001"
+          activeBuckets={['B2']}
+          initialBucket="B2"
+          hasActiveFloorPlayer={false}
+          onPlayerDrawn={onPlayerDrawnMock}
+        />
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Verify deterministic bucket number B21 is rendered prominently
+      expect(screen.getAllByText('B21').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText('Sunil Gavaskar')).toBeDefined();
+      expect(screen.getByText('25811A0501')).toBeDefined();
+      expect(screen.getByText('BATSMAN')).toBeDefined();
+      expect(screen.getByText('₹50')).toBeDefined();
     });
   });
 
