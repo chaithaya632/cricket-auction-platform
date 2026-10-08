@@ -96,6 +96,7 @@ interface OperatorControlsProps {
   initialActiveBuckets?: string[];
   completedBuckets?: string[];
   bucketStats?: Record<string, { pending: number; total: number; inProgress: boolean }>;
+  getCurrentRemaining?: () => number;
   onActiveLotChange?: (lot: AuctionLotWithDetails | null) => void;
   onSessionStateChange?: (state: AuctionSessionState) => void;
 }
@@ -115,12 +116,16 @@ export function OperatorControls({
   initialActiveBuckets,
   completedBuckets = [],
   bucketStats,
+  getCurrentRemaining,
   onActiveLotChange,
   onSessionStateChange,
 }: OperatorControlsProps) {
   const router = useRouter();
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const isPending = Boolean(pendingAction);
+  const isActionPending = (tag: string) => pendingAction === tag;
+  const isStateMutationPending = ['start', 'restart', 'pause', 'resume', 'end-auction', 'recovery'].includes(pendingAction ?? '');
+  const isFloorMutationPending = ['sold', 'unsold', 'skip', 'select-lot', 'random', 'undo'].includes(pendingAction ?? '');
   const [activeQueueTab, setActiveQueueTab] = useState<'upcoming' | 'unsold' | 'sold'>('unsold');
   const [showAdvancedControls, setShowAdvancedControls] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -363,11 +368,28 @@ export function OperatorControls({
   }, [lastSoldLotId, soldLots]);
 
   const handleStartAuction = () => {
+    const previousState = sessionState;
+
+    // OPTIMISTIC UPDATE: Immediate transition to LIVE (<250ms / 0ms)
+    // Preserves activeLot if already on floor (from Guest Draw before start)
+    const optimisticState: AuctionSessionState = {
+      ...sessionState,
+      status: 'live',
+      isLive: true,
+      isPaused: false,
+      isNotStarted: false,
+      isCompleted: false,
+      startedAt: new Date().toISOString(),
+      activeLotId: activeLot?.id || null,
+    };
+    onSessionStateChange?.(optimisticState);
+
     void runOperatorAction(
       'start',
       () => startAuctionAction(activeBuckets),
       (res) => {
         if (!res.success) {
+          onSessionStateChange?.(previousState);
           setErrorMsg(sanitizeActionError(res.error, 'Failed to start auction.'));
         } else {
           if (res.data?.sessionState) {
@@ -383,11 +405,25 @@ export function OperatorControls({
   };
 
   const handleStartAuctionAgain = () => {
+    const previousState = sessionState;
+    const optimisticState: AuctionSessionState = {
+      ...sessionState,
+      status: 'live',
+      isLive: true,
+      isPaused: false,
+      isNotStarted: false,
+      isCompleted: false,
+      startedAt: new Date().toISOString(),
+      activeLotId: activeLot?.id || null,
+    };
+    onSessionStateChange?.(optimisticState);
+
     void runOperatorAction(
       'restart',
       () => startAuctionAgainAction(),
       (res) => {
         if (!res.success) {
+          onSessionStateChange?.(previousState);
           setErrorMsg(sanitizeActionError(res.error, 'Failed to restart auction session.'));
         } else {
           if (res.data?.sessionState) {
@@ -403,11 +439,25 @@ export function OperatorControls({
   };
 
   const handlePauseAuction = () => {
+    const currentSeconds = getCurrentRemaining ? getCurrentRemaining() : 20;
+    const previousState = sessionState;
+
+    // OPTIMISTIC UPDATE: Freeze visible timer immediately (<250ms / 0ms) at exact displayed value
+    const optimisticState: AuctionSessionState = {
+      ...sessionState,
+      status: 'paused',
+      isPaused: true,
+      pausedRemainingSeconds: currentSeconds,
+      pausedAt: new Date().toISOString(),
+    };
+    onSessionStateChange?.(optimisticState);
+
     void runOperatorAction(
       'pause',
-      () => pauseAuctionAction(),
+      () => pauseAuctionAction(seasonId, currentSeconds),
       (res) => {
         if (!res.success) {
+          onSessionStateChange?.(previousState);
           setErrorMsg(sanitizeActionError(res.error, 'Failed to pause auction.'));
         } else {
           if (res.data?.sessionState) {
@@ -420,15 +470,34 @@ export function OperatorControls({
   };
 
   const handleResumeAuction = () => {
+    const previousState = sessionState;
+
+    // OPTIMISTIC UPDATE: Resume live session immediately (<250ms / 0ms)
+    const optimisticState: AuctionSessionState = {
+      ...sessionState,
+      status: 'live',
+      isPaused: false,
+      pausedRemainingSeconds: null,
+      pausedAt: null,
+    };
+    onSessionStateChange?.(optimisticState);
+
     void runOperatorAction(
       'resume',
       () => resumeAuctionAction(),
       (res) => {
         if (!res.success) {
+          onSessionStateChange?.(previousState);
           setErrorMsg(sanitizeActionError(res.error, 'Failed to resume auction.'));
         } else {
           if (res.data?.sessionState) {
             onSessionStateChange?.(res.data.sessionState);
+            if (activeLot && res.data.sessionState.startedAt) {
+              onActiveLotChange?.({
+                ...activeLot,
+                started_at: res.data.sessionState.startedAt,
+              });
+            }
           }
           setSuccessMsg('Auction session RESUMED and LIVE.');
         }
@@ -505,11 +574,20 @@ export function OperatorControls({
 
   const handleConfirmSale = () => {
     if (!activeLot) return;
+    const prevActiveLot = activeLot;
+
+    // OPTIMISTIC UPDATE: Immediate visual sale status (<250ms / 0ms)
+    onActiveLotChange?.({
+      ...activeLot,
+      status: 'sold',
+    });
+
     void runOperatorAction(
       'sold',
       () => confirmSaleAction(activeLot.id),
       (res) => {
         if (!res.success) {
+          onActiveLotChange?.(prevActiveLot);
           setErrorMsg(sanitizeActionError(res.error, 'Failed to confirm sale.'));
         } else {
           if (res.data?.activeLot !== undefined) {
@@ -526,11 +604,20 @@ export function OperatorControls({
 
   const handleMarkUnsold = () => {
     if (!activeLot) return;
+    const prevActiveLot = activeLot;
+
+    // OPTIMISTIC UPDATE: Immediate visual unsold status (<250ms / 0ms)
+    onActiveLotChange?.({
+      ...activeLot,
+      status: 'unsold',
+    });
+
     void runOperatorAction(
       'unsold',
       () => markUnsoldAction(activeLot.id),
       (res) => {
         if (!res.success) {
+          onActiveLotChange?.(prevActiveLot);
           setErrorMsg(sanitizeActionError(res.error, 'Failed to mark unsold.'));
         } else {
           if (res.data?.activeLot !== undefined) {
@@ -547,11 +634,31 @@ export function OperatorControls({
 
   const handleSkipLot = () => {
     if (!activeLot) return;
+    const prevActiveLot = activeLot;
+    const prevSessionState = sessionState;
+
+    // OPTIMISTIC UPDATE: Advance floor immediately to next eligible upcoming lot in active buckets
+    const nextCandidate = activeUpcomingLots.find((l) => l.id !== activeLot.id) || null;
+    if (nextCandidate) {
+      onActiveLotChange?.({
+        ...nextCandidate,
+        status: 'in_progress',
+        started_at: new Date().toISOString(),
+        current_price: nextCandidate.base_price,
+        highest_bidder_franchise_id: null,
+        highest_bidder: null,
+      });
+    } else {
+      onActiveLotChange?.(null);
+    }
+
     void runOperatorAction(
       'skip',
       () => skipLotAction(activeLot.id, 'Skipped by operator'),
       (res) => {
         if (!res.success) {
+          onActiveLotChange?.(prevActiveLot);
+          onSessionStateChange?.(prevSessionState);
           setErrorMsg(sanitizeActionError(res.error, 'Failed to skip lot.'));
         } else {
           if (res.data?.activeLot !== undefined) {
@@ -747,10 +854,10 @@ export function OperatorControls({
           <button
             type="button"
             onClick={handleStartAuctionAgain}
-            disabled={isPending}
+            disabled={isActionPending('start')}
             className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-950/50 transition-all duration-150 cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isPending ? (
+            {isActionPending('start') ? (
               <>
                 <Loader2 className="size-3.5 animate-spin" />
                 <span>REOPENING FLOOR...</span>
@@ -787,7 +894,7 @@ export function OperatorControls({
               <button
                 type="button"
                 onClick={handleSelectAllBuckets}
-                disabled={isPending || activeBuckets.length === DEFAULT_BUCKET_ORDER.length}
+                disabled={isActionPending('buckets') || activeBuckets.length === DEFAULT_BUCKET_ORDER.length}
                 className="text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer disabled:opacity-40"
               >
                 Select All Buckets
@@ -802,7 +909,7 @@ export function OperatorControls({
                     key={bucket}
                     type="button"
                     onClick={() => handleToggleBucket(bucket)}
-                    disabled={isPending}
+                    disabled={isActionPending('buckets')}
                     className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
                       isSelected
                         ? 'bg-amber-500/20 text-amber-300 border-amber-500 shadow-md shadow-amber-950/40'
@@ -825,24 +932,47 @@ export function OperatorControls({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={handleStartAuction}
-            disabled={isPending || activeBuckets.length === 0}
-            className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-xl font-black text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-950/50 transition-all duration-150 cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isPending ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                <span>STARTING AUCTION...</span>
-              </>
-            ) : (
-              <>
-                <Play className="size-4" />
-                <span>START AUCTION</span>
-              </>
-            )}
-          </button>
+          {/* Floor Player notification if Guest Draw pre-start was used */}
+          {activeLot && (
+            <div className="max-w-md mx-auto p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center justify-center gap-2">
+              <Sparkles className="size-4 shrink-0 text-amber-400" />
+              <span>
+                Player on floor: <strong>#{activeLot.draw_number} {activeLot.player?.full_name}</strong> (Bucket {activeLot.bucket}). Starting auction will begin bidding for this player.
+              </span>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center justify-center gap-4">
+            <button
+              type="button"
+              onClick={handleStartAuction}
+              disabled={isActionPending('start') || activeBuckets.length === 0}
+              className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-xl font-black text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-950/50 transition-all duration-150 cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isActionPending('start') ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  <span>STARTING AUCTION...</span>
+                </>
+              ) : (
+                <>
+                  <Play className="size-4" />
+                  <span>{activeLot ? 'START AUCTION (WITH FLOOR PLAYER)' : 'START AUCTION'}</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowGuestDrawModal(true)}
+              disabled={isActionPending('start')}
+              className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl font-bold text-sm bg-amber-600 hover:bg-amber-500 text-white shadow-xl shadow-amber-950/50 transition-all duration-150 cursor-pointer active:scale-95 disabled:opacity-50"
+              title="Select a player using Guest Draw before starting the auction"
+            >
+              <Sparkles className="size-4" />
+              <span>Guest Draw</span>
+            </button>
+          </div>
         </div>
       ) : (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-5 shadow-xl flex flex-wrap items-center justify-between gap-4">
@@ -881,8 +1011,8 @@ export function OperatorControls({
               <button
                 type="button"
                 onClick={handleResumeAuction}
-                disabled={isPending}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow transition-colors cursor-pointer"
+                disabled={isActionPending('resume')}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow transition-colors cursor-pointer disabled:opacity-50"
               >
                 {pendingAction === 'resume' ? (
                   <>
@@ -900,8 +1030,8 @@ export function OperatorControls({
               <button
                 type="button"
                 onClick={handlePauseAuction}
-                disabled={isPending}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-400 font-bold text-xs border border-zinc-700 shadow transition-colors cursor-pointer"
+                disabled={isActionPending('pause')}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-400 font-bold text-xs border border-zinc-700 shadow transition-colors cursor-pointer disabled:opacity-50"
               >
                 {pendingAction === 'pause' ? (
                   <>
@@ -920,8 +1050,8 @@ export function OperatorControls({
             <button
               type="button"
               onClick={() => setShowEndModal(true)}
-              disabled={isPending}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-950/80 hover:bg-red-900 text-red-300 hover:text-white font-bold text-xs border border-red-800 shadow transition-colors cursor-pointer"
+              disabled={isActionPending('end-auction')}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-950/80 hover:bg-red-900 text-red-300 hover:text-white font-bold text-xs border border-red-800 shadow transition-colors cursor-pointer disabled:opacity-50"
             >
               <Square className="size-3.5 fill-current" />
               <span>END AUCTION</span>
@@ -1042,7 +1172,7 @@ export function OperatorControls({
             <button
               type="button"
               onClick={handleSelectAllBuckets}
-              disabled={isPending || activeBuckets.length === DEFAULT_BUCKET_ORDER.length}
+              disabled={isActionPending('buckets') || activeBuckets.length === DEFAULT_BUCKET_ORDER.length}
               className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               All Buckets
@@ -1060,7 +1190,7 @@ export function OperatorControls({
                 key={bucket}
                 type="button"
                 onClick={() => handleToggleBucket(bucket)}
-                disabled={isPending}
+                disabled={isActionPending('buckets')}
                 className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
                   isSelected
                     ? 'bg-amber-500/20 text-amber-300 border-amber-500 shadow-md shadow-amber-950/40'
@@ -1092,7 +1222,7 @@ export function OperatorControls({
           <button
             type="button"
             onClick={handleDrawRandom}
-            disabled={hasActiveBids || isPending || sessionState.isCompleted || sessionState.isPaused}
+            disabled={hasActiveBids || isActionPending('random') || isFloorMutationPending || isStateMutationPending || sessionState.isCompleted || sessionState.isPaused}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white shadow transition-all cursor-pointer active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
             title={hasActiveBids ? 'Bidding in progress on floor' : 'Draw a random player from the active buckets'}
           >
@@ -1113,7 +1243,7 @@ export function OperatorControls({
           <button
             type="button"
             onClick={() => setShowGuestDrawModal(true)}
-            disabled={isPending}
+            disabled={isActionPending('guest') || isFloorMutationPending || isStateMutationPending || sessionState.isCompleted}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow transition-all cursor-pointer active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
             title="Open guest card reveal dialog (Available by default)"
           >
@@ -1168,7 +1298,7 @@ export function OperatorControls({
                   <button
                     key={bucket}
                     type="button"
-                    disabled={isCompleted || isPending || pendingCount === 0}
+                    disabled={isCompleted || isActionPending('start-buckets') || pendingCount === 0}
                     onClick={() => handleToggleRemainingBucket(bucket)}
                     className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all border ${
                       isCompleted
@@ -1190,11 +1320,11 @@ export function OperatorControls({
             <div className="pt-2">
               <button
                 type="button"
-                disabled={isPending || selectedRemainingBuckets.length === 0}
+                disabled={isActionPending('start-buckets') || selectedRemainingBuckets.length === 0}
                 onClick={handleStartNextBucketGroup}
                 className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-950/50 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {isPending ? (
+                {isActionPending('start-buckets') ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : (
                   <Play className="size-4 fill-white" />
@@ -1212,7 +1342,7 @@ export function OperatorControls({
           <button
             type="button"
             onClick={() => activeUpcomingLots[0] && handleSelectLot(activeUpcomingLots[0].id)}
-            disabled={isPending || !isFloorActive}
+            disabled={isFloorMutationPending || !isFloorActive}
             className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-zinc-900/50 hover:bg-zinc-900 text-amber-500 border border-dashed border-amber-500/50 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             title="Manual override: call next player when floor is empty"
           >
@@ -1253,7 +1383,7 @@ export function OperatorControls({
               <button
                 type="button"
                 onClick={() => handleBringDownUnsoldLot(activeLot.id)}
-                disabled={isPending}
+                disabled={isFloorMutationPending || isStateMutationPending}
                 className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm shadow-md transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed flex items-center gap-2"
               >
                 <span>⬇️</span>
@@ -1262,7 +1392,7 @@ export function OperatorControls({
               <button
                 type="button"
                 onClick={() => handleReAuctionUnsoldLot(activeLot.id)}
-                disabled={isPending}
+                disabled={isFloorMutationPending || isStateMutationPending}
                 className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm shadow-md transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed flex items-center gap-2"
               >
                 <span>🔄</span>
@@ -1277,9 +1407,9 @@ export function OperatorControls({
           <button
             type="button"
             onClick={handleConfirmSale}
-            disabled={!canHammer || isPending}
+            disabled={!canHammer || isFloorMutationPending || isStateMutationPending}
             className={`py-4 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all duration-150 flex flex-col items-center justify-center gap-1 ${
-              canHammer && !isPending
+              canHammer && !isFloorMutationPending && !isStateMutationPending
                 ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg cursor-pointer active:scale-95'
                 : 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-800'
             }`}
@@ -1305,9 +1435,9 @@ export function OperatorControls({
           <button
             type="button"
             onClick={handleMarkUnsold}
-            disabled={!canPass || isPending}
+            disabled={!canPass || isFloorMutationPending || isStateMutationPending}
             className={`py-4 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all duration-150 flex flex-col items-center justify-center gap-1 ${
-              canPass && !isPending
+              canPass && !isFloorMutationPending && !isStateMutationPending
                 ? 'bg-amber-600/80 hover:bg-amber-600 text-white shadow-lg cursor-pointer active:scale-95'
                 : 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-800'
             }`}
@@ -1333,9 +1463,9 @@ export function OperatorControls({
           <button
             type="button"
             onClick={handleSkipLot}
-            disabled={!canPass || isPending}
+            disabled={!canPass || isFloorMutationPending || isStateMutationPending}
             className={`py-4 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all duration-150 flex flex-col items-center justify-center gap-1 ${
-              canPass && !isPending
+              canPass && !isFloorMutationPending && !isStateMutationPending
                 ? 'bg-purple-900/80 hover:bg-purple-800 text-purple-200 border border-purple-700 shadow-lg cursor-pointer active:scale-95'
                 : 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-800'
             }`}
@@ -1363,9 +1493,9 @@ export function OperatorControls({
           <button
             type="button"
             onClick={() => setShowUndoModal(true)}
-            disabled={(!lastSoldLotId && soldLots.length === 0) || isPending || !isFloorActive}
+            disabled={(!lastSoldLotId && soldLots.length === 0) || isFloorMutationPending || !isFloorActive}
             className={`w-full py-2 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all duration-150 flex items-center justify-center gap-2 ${
-              (lastSoldLotId || soldLots.length > 0) && !isPending && isFloorActive
+              (lastSoldLotId || soldLots.length > 0) && !isFloorMutationPending && isFloorActive
                 ? 'bg-transparent hover:bg-amber-500/10 text-amber-500 border border-amber-500/50 cursor-pointer active:scale-95'
                 : 'bg-transparent text-zinc-600 cursor-not-allowed border border-zinc-800'
             }`}
@@ -2002,7 +2132,7 @@ export function OperatorControls({
                     <button
                       type="button"
                       onClick={() => handleBringDownUnsoldLot(lot.id)}
-                      disabled={isPending || !isFloorActive}
+                      disabled={isFloorMutationPending || !isFloorActive}
                       className="px-3 py-1.5 rounded-lg bg-amber-600/80 hover:bg-amber-500 text-white text-[10px] font-bold shadow disabled:opacity-50 transition-all cursor-pointer"
                     >
                       Queue
@@ -2010,7 +2140,7 @@ export function OperatorControls({
                     <button
                       type="button"
                       onClick={() => handleReAuctionUnsoldLot(lot.id)}
-                      disabled={isPending || !isFloorActive}
+                      disabled={isFloorMutationPending || !isFloorActive}
                       className="px-3 py-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-500 text-white text-[10px] font-bold shadow disabled:opacity-50 transition-all cursor-pointer"
                     >
                       Re-Auction

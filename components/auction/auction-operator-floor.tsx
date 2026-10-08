@@ -110,20 +110,38 @@ export function AuctionOperatorFloor({
           });
         }
       } else if (payload.type === 'PAUSE') {
-        setSessionState((prev) => ({ ...prev, isPaused: true }));
+        setSessionState((prev) => ({
+          ...prev,
+          isPaused: true,
+          status: 'paused',
+          pausedRemainingSeconds: payload.remainingSeconds ?? prev.pausedRemainingSeconds,
+        }));
       } else if (payload.type === 'RESUME') {
-        setSessionState((prev) => ({ ...prev, isPaused: false }));
+        setSessionState((prev) => ({
+          ...prev,
+          isPaused: false,
+          status: 'live',
+          pausedRemainingSeconds: null,
+        }));
+        if (payload.startedAt) {
+          setActiveLot((prev) => (prev ? { ...prev, started_at: payload.startedAt! } : prev));
+        }
       } else if (payload.type === 'AUCTION_ENDED') {
-        setSessionState((prev) => ({ ...prev, isLive: false, isCompleted: true }));
+        setSessionState((prev) => ({ ...prev, isLive: false, isCompleted: true, status: 'completed' }));
         setActiveLot(null);
       } else if (payload.type === 'AUCTION_STARTED' || payload.type === 'AUCTION_RESTARTED') {
         setSessionState((prev) => ({
           ...prev,
+          status: 'live',
           isLive: true,
           isNotStarted: false,
           isCompleted: false,
           isPaused: false,
+          startedAt: payload.startedAt || prev.startedAt,
         }));
+        if (payload.lotId && payload.startedAt) {
+          setActiveLot((prev) => (prev && prev.id === payload.lotId ? { ...prev, started_at: payload.startedAt! } : prev));
+        }
       } else if (payload.type === 'SALE') {
         setActiveLot((prev) => {
           if (!prev || (payload.lotId && prev.id !== payload.lotId)) return prev;
@@ -167,6 +185,8 @@ export function AuctionOperatorFloor({
     ? config.subsequentBidTimerSeconds
     : config.firstBidTimerSeconds;
 
+  const currentRemainingSecondsRef = React.useRef<number>(timerDuration);
+
   return (
     <div className="space-y-6">
       {/* Active Lot Display */}
@@ -185,8 +205,23 @@ export function AuctionOperatorFloor({
             highestBidderId={activeLot.highest_bidder_franchise_id}
             showControls={true}
             size="lg"
+            onRemainingChange={(sec) => {
+              currentRemainingSecondsRef.current = sec;
+            }}
             onExtend={async (seconds) => {
               if (!activeLot) return;
+              const prevStartedAt = activeLot.started_at;
+              currentRemainingSecondsRef.current += seconds;
+
+              // Optimistically update started_at so all visual displays adjust immediately (<250ms)
+              const nowMs = Date.now();
+              const optimisticStartedAt = new Date(
+                nowMs - (timerDuration - currentRemainingSecondsRef.current) * 1000
+              ).toISOString();
+              setActiveLot((prev) =>
+                prev ? { ...prev, started_at: optimisticStartedAt } : prev
+              );
+
               const res = await runWithLocalActionTracking(() =>
                 extendTimerAction(activeLot.id, seconds)
               );
@@ -194,25 +229,42 @@ export function AuctionOperatorFloor({
                 setActiveLot((prev) =>
                   prev ? { ...prev, started_at: res.data!.startedAt } : prev
                 );
+              } else if (!res.success) {
+                setActiveLot((prev) =>
+                  prev ? { ...prev, started_at: prevStartedAt } : prev
+                );
               }
             }}
             onEndLot={async () => {
               if (!activeLot) return;
+              const prevActiveLot = activeLot;
+              const prevSessionState = sessionState;
+
               if (activeLot.highest_bidder_franchise_id) {
+                // Optimistic sold state immediately
+                setActiveLot((prev) => (prev ? { ...prev, status: 'sold' } : prev));
                 const res = await runWithLocalActionTracking(() =>
                   confirmSaleAction(activeLot.id)
                 );
                 if (res.success) {
                   if (res.data?.activeLot !== undefined) setActiveLot(res.data.activeLot);
                   if (res.data?.sessionState) setSessionState(res.data.sessionState);
+                } else {
+                  setActiveLot(prevActiveLot);
+                  setSessionState(prevSessionState);
                 }
               } else {
+                // Optimistic unsold state immediately
+                setActiveLot((prev) => (prev ? { ...prev, status: 'unsold' } : prev));
                 const res = await runWithLocalActionTracking(() =>
                   markUnsoldAction(activeLot.id)
                 );
                 if (res.success) {
                   if (res.data?.activeLot !== undefined) setActiveLot(res.data.activeLot);
                   if (res.data?.sessionState) setSessionState(res.data.sessionState);
+                } else {
+                  setActiveLot(prevActiveLot);
+                  setSessionState(prevSessionState);
                 }
               }
             }}
@@ -222,7 +274,7 @@ export function AuctionOperatorFloor({
 
       {/* Unified Operator Controls & Queue */}
       <OperatorControls
-        seasonId={seasonId}
+        seasonId={seasonId || sessionState.seasonId}
         activeLot={activeLot}
         upcomingLots={upcomingLots}
         unsoldLots={initialUnsoldLots}
@@ -236,6 +288,7 @@ export function AuctionOperatorFloor({
         initialActiveBuckets={initialActiveBuckets}
         completedBuckets={completedBuckets}
         bucketStats={bucketStats}
+        getCurrentRemaining={() => currentRemainingSecondsRef.current}
         onActiveLotChange={setActiveLot}
         onSessionStateChange={setSessionState}
       />

@@ -1679,14 +1679,47 @@ export async function startAuctionAction(
     revalidatePath('/franchise');
     revalidatePath('/player');
 
-    await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_STARTED');
+    // 4. Check if a lot is ALREADY on the floor (e.g. from Guest Draw called before auction start)
+    const { data: existingFloorLot } = await adminClient
+      .from('auction_lots')
+      .select('id, bucket, draw_number, started_at')
+      .eq('season_id', activeSeason.id)
+      .eq('status', 'in_progress')
+      .maybeSingle();
 
-    // Automatically bring the first eligible unique-number player to the floor
-    const advanceResult = await autoAdvanceToNextLot(
-      adminClient,
-      activeSeason.id,
-      adminContext.user.id
-    );
+    let activeLotId: string | null = null;
+    let activeLot: AuctionLotWithDetails | null = null;
+
+    if (existingFloorLot) {
+      // PRESERVE THE EXISTING PLAYER ON THE FLOOR!
+      // Do NOT replace the player, and do NOT auto-advance to a second player.
+      // Reset started_at to now so the auction countdown starts freshly.
+      await adminClient
+        .from('auction_lots')
+        .update({
+          started_at: now,
+          updated_at: now,
+        })
+        .eq('id', existingFloorLot.id);
+
+      activeLotId = existingFloorLot.id;
+      activeLot = await getActiveLot(adminClient, activeSeason.id);
+    } else {
+      // Automatically bring the first eligible unique-number player to the floor
+      const advanceResult = await autoAdvanceToNextLot(
+        adminClient,
+        activeSeason.id,
+        adminContext.user.id
+      );
+      activeLotId = advanceResult.nextLotId;
+      activeLot = advanceResult.nextLot ?? null;
+    }
+
+    await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_STARTED', {
+      lotId: activeLotId,
+      startedAt: now,
+      sessionStatus: 'live',
+    });
 
     const sessionState: AuctionSessionState = {
       status: 'live',
@@ -1697,15 +1730,15 @@ export async function startAuctionAction(
       isNotStarted: false,
       isCompleted: false,
       startedAt: now,
-      activeLotId: advanceResult.nextLotId,
+      activeLotId,
     };
 
     return {
       success: true,
       data: {
         status: 'live',
-        activeLotId: advanceResult.nextLotId,
-        activeLot: advanceResult.nextLot ?? null,
+        activeLotId,
+        activeLot,
         sessionState,
       },
     };
@@ -1999,7 +2032,10 @@ export async function startAuctionAgainAction(): Promise<
  * Records a PAUSE event if an active lot is in progress.
  * Guarded by requireAdmin().
  */
-export async function pauseAuctionAction(): Promise<
+export async function pauseAuctionAction(
+  seasonId?: string,
+  clientRemainingSeconds?: number
+): Promise<
   AuctionActionResult<{
     status: 'paused';
     remainingSeconds?: number;
@@ -2061,7 +2097,10 @@ export async function pauseAuctionAction(): Promise<
       : firstBidSeconds;
 
     let remainingSeconds: number = timerDuration;
-    if (activeLot?.started_at) {
+    if (clientRemainingSeconds !== undefined && Number.isFinite(clientRemainingSeconds)) {
+      // Operator saw exact displayed value when clicking pause; validate within bounds
+      remainingSeconds = Math.max(0, Math.min(timerDuration, Math.round(clientRemainingSeconds)));
+    } else if (activeLot?.started_at) {
       const elapsedMs = Date.now() - new Date(activeLot.started_at).getTime();
       const elapsedSec = Math.max(0, Math.floor(elapsedMs / 1000));
       remainingSeconds = Math.max(0, timerDuration - elapsedSec);
@@ -2135,7 +2174,10 @@ export async function pauseAuctionAction(): Promise<
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
 
-    await broadcastAuctionUpdate(activeSeason.id, 'PAUSE');
+    await broadcastAuctionUpdate(activeSeason.id, 'PAUSE', {
+      remainingSeconds,
+      sessionStatus: 'paused',
+    });
 
     const sessionState: AuctionSessionState = {
       status: 'paused',
@@ -2317,7 +2359,10 @@ export async function resumeAuctionAction(): Promise<
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
 
-    await broadcastAuctionUpdate(activeSeason.id, 'RESUME');
+    await broadcastAuctionUpdate(activeSeason.id, 'RESUME', {
+      startedAt: activeLot ? restoredStartedAt : null,
+      sessionStatus: 'live',
+    });
 
     const sessionState: AuctionSessionState = {
       status: 'live',
@@ -2333,7 +2378,13 @@ export async function resumeAuctionAction(): Promise<
       pausedAt: null,
     };
 
-    return { success: true, data: { status: 'live', sessionState } };
+    return {
+      success: true,
+      data: {
+        status: 'live',
+        sessionState,
+      },
+    };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to resume auction session.' };
   }

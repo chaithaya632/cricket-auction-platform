@@ -32,6 +32,7 @@ interface AuctionTimerProps {
   isPaused?: boolean;
   pausedRemainingSeconds?: number | null;
   onExpire?: () => void;
+  onRemainingChange?: (remaining: number) => void;
   size?: 'sm' | 'md' | 'lg';
   lotId?: string | null;
   highestBidderId?: string | null;
@@ -62,6 +63,7 @@ export function AuctionTimer({
   isPaused = false,
   pausedRemainingSeconds,
   onExpire,
+  onRemainingChange,
   size = 'md',
   lotId = null,
   highestBidderId = null,
@@ -73,6 +75,14 @@ export function AuctionTimer({
   const [effectiveDuration, setEffectiveDuration] = useState<number>(durationSeconds);
   const [isExtending, setIsExtending] = useState(false);
   const [timerFeedback, setTimerFeedback] = useState<string | null>(null);
+
+  const onExpireRef = React.useRef(onExpire);
+  onExpireRef.current = onExpire;
+
+  const onRemainingChangeRef = React.useRef(onRemainingChange);
+  onRemainingChangeRef.current = onRemainingChange;
+
+  const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     setEffectiveStartedAt(startedAt);
@@ -102,14 +112,25 @@ export function AuctionTimer({
     })
   );
 
+  // Sync remaining change to callback
   useEffect(() => {
+    onRemainingChangeRef.current?.(remaining);
+  }, [remaining]);
+
+  // Exactly ONE interval management loop
+  useEffect(() => {
+    // Clear any previous interval immediately
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+
     if (isPaused) {
+      // Freeze timer immediately at the exact displayed value (or pausedRemainingSeconds if provided)
       const frozen =
         pausedRemainingSeconds !== null && pausedRemainingSeconds !== undefined
           ? Math.max(0, pausedRemainingSeconds)
-          : effectiveStartedAt
-          ? Math.max(0, Math.ceil((new Date(effectiveStartedAt).getTime() + effectiveDuration * 1000 - Date.now()) / 1000))
-          : effectiveDuration;
+          : remaining;
       setRemaining(frozen);
       return;
     }
@@ -127,41 +148,50 @@ export function AuctionTimer({
     const initialLeft = computeLiveRemaining();
     setRemaining(initialLeft);
     if (initialLeft <= 0) {
-      if (onExpire) {
-        onExpire();
-      }
+      onExpireRef.current?.();
       return;
     }
 
-    const interval = setInterval(() => {
+    intervalRef.current = setInterval(() => {
       const left = computeLiveRemaining();
       setRemaining(left);
 
       if (left <= 0) {
-        clearInterval(interval);
-        if (onExpire) {
-          onExpire();
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
         }
+        onExpireRef.current?.();
       }
     }, 200);
 
-    return () => clearInterval(interval);
-  }, [effectiveStartedAt, effectiveDuration, isActive, isPaused, pausedRemainingSeconds, onExpire]);
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [effectiveStartedAt, effectiveDuration, isActive, isPaused, pausedRemainingSeconds]);
 
   const handleExtend = async (seconds: 10 | 20 | 30) => {
+    // 1. Instant optimistic update in visible UI
+    setRemaining((prev) => prev + seconds);
+    setEffectiveDuration((prev) => prev + seconds);
+    setTimerFeedback(`+${seconds}s added`);
+
+    // 2. Delegate to parent handler if available
     if (onExtend) {
       onExtend(seconds);
       return;
     }
+
+    // 3. Otherwise invoke server action directly
     if (!lotId || isExtending) return;
     setIsExtending(true);
-    setTimerFeedback(null);
     try {
       const res = await runWithLocalActionTracking(() => extendTimerAction(lotId, seconds));
       if (!res.success) {
         setTimerFeedback(res.error || 'Failed to extend timer');
-      } else {
-        setTimerFeedback(`+${seconds}s added`);
       }
     } catch (err: any) {
       setTimerFeedback(err?.message || 'Error extending timer');
