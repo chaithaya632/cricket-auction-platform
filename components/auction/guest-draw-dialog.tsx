@@ -17,7 +17,11 @@ import {
   callGuestDrawNumberAction,
 } from '@/lib/auction/actions';
 import { runWithLocalActionTracking } from '@/components/auction/auction-realtime-sync';
-import type { GuestDrawCandidate } from '@/lib/auction/types';
+import type {
+  GuestDrawCandidate,
+  AuctionLotWithDetails,
+  AuctionSessionState,
+} from '@/lib/auction/types';
 import { X, Sparkles, Loader2, CheckCircle2 } from 'lucide-react';
 
 interface GuestDrawDialogProps {
@@ -26,7 +30,12 @@ interface GuestDrawDialogProps {
   seasonId: string;
   activeBuckets: string[];
   initialBucket?: string;
-  onPlayerDrawn?: (lotId: string, playerName: string) => void;
+  onPlayerDrawn?: (
+    lotId: string,
+    playerName: string,
+    activeLot?: AuctionLotWithDetails | null,
+    sessionState?: AuctionSessionState
+  ) => void;
 }
 
 export function GuestDrawDialog({
@@ -137,7 +146,12 @@ export function GuestDrawDialog({
           `Card ${candidate.cardLabel}: ${candidate.playerName} brought to floor!`
         );
         if (onPlayerDrawn) {
-          onPlayerDrawn(candidate.lotId, candidate.playerName);
+          onPlayerDrawn(
+            candidate.lotId,
+            candidate.playerName,
+            res.data?.activeLot,
+            res.data?.sessionState
+          );
         }
 
         // Auto close after brief reveal
@@ -170,12 +184,13 @@ export function GuestDrawDialog({
             <div>
               <h2 className="text-xl sm:text-2xl font-black text-zinc-100 tracking-tight flex items-center gap-2">
                 <span>Guest Draw</span>
-                <span className="text-xs font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                  Fixed Cards
+                <span className="text-xs font-mono font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
+                  <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Guest Mode Ready
                 </span>
               </h2>
               <p className="text-xs text-zinc-400 mt-0.5">
-                The guest chooses any card number verbally. Click that exact card to bring the player to the floor.
+                Guest Mode is active by default. The guest verbally selects any available numbered card for the active bucket; authorized operator clicks the card to reveal and bring the player to the floor.
               </p>
             </div>
           </div>
@@ -306,5 +321,50 @@ export function GuestDrawDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Convenient trigger button to open Guest Draw anywhere (e.g. public /live, projector).
+ * Guest Mode is unlocked and available by default.
+ */
+export function GuestDrawTrigger({
+  seasonId,
+  activeBuckets,
+  initialBucket,
+  className,
+}: {
+  seasonId: string;
+  activeBuckets: string[];
+  initialBucket?: string;
+  className?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setIsOpen(true)}
+        className={
+          className ||
+          'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600/90 hover:bg-amber-500 text-white font-semibold text-xs shadow transition-all cursor-pointer active:scale-95'
+        }
+        title="Open Guest Draw (Available by default)"
+      >
+        <Sparkles className="size-3.5" />
+        <span>Guest Draw</span>
+      </button>
+
+      {isOpen && (
+        <GuestDrawDialog
+          isOpen={isOpen}
+          onClose={() => setIsOpen(false)}
+          seasonId={seasonId}
+          activeBuckets={activeBuckets}
+          initialBucket={initialBucket}
+        />
+      )}
+    </>
   );
 }

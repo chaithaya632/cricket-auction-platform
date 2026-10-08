@@ -21,19 +21,25 @@ import {
 } from '@/lib/auction/actions';
 import { runWithLocalActionTracking } from '@/components/auction/auction-realtime-sync';
 import type { AuctionLotWithDetails, AuctionSessionState } from '@/lib/auction/types';
-import { Play, Pause, Gavel, XCircle, Clock, Loader2 } from 'lucide-react';
+import { Play, Pause, Gavel, XCircle, Clock, Loader2, Sparkles } from 'lucide-react';
+import { GuestDrawDialog } from '@/components/auction/guest-draw-dialog';
 
 interface ProjectorControlDockProps {
   activeLot: AuctionLotWithDetails | null;
   sessionState: AuctionSessionState;
+  seasonId?: string;
+  activeBuckets?: string[];
 }
 
 export function ProjectorControlDock({
   activeLot,
   sessionState,
+  seasonId,
+  activeBuckets,
 }: ProjectorControlDockProps) {
   const [isPending, setIsPending] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+  const [showGuestDraw, setShowGuestDraw] = useState(false);
 
   const runDockAction = async (actionFn: () => Promise<{ success: boolean; error?: string }>, successText: string) => {
     if (isPending) return;
@@ -166,7 +172,33 @@ export function ProjectorControlDock({
             +30s
           </button>
         </div>
+
+        <div className="h-6 w-px bg-zinc-800 mx-1" />
+
+        {/* Guest Draw */}
+        {seasonId && (
+          <button
+            type="button"
+            onClick={() => setShowGuestDraw(true)}
+            disabled={isPending}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 active:scale-95 text-white font-bold text-xs shadow-md transition-all cursor-pointer disabled:opacity-40"
+            title="Open Guest Draw"
+          >
+            <Sparkles className="size-4" />
+            <span className="hidden sm:inline">Guest Draw</span>
+          </button>
+        )}
       </div>
+
+      {/* Guest Draw Dialog for Projector Operator */}
+      {showGuestDraw && seasonId && (
+        <GuestDrawDialog
+          isOpen={showGuestDraw}
+          onClose={() => setShowGuestDraw(false)}
+          seasonId={seasonId}
+          activeBuckets={activeBuckets && activeBuckets.length > 0 ? activeBuckets : ['B3']}
+        />
+      )}
     </div>
   );
 }

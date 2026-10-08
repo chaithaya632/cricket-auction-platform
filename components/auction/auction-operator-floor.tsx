@@ -23,7 +23,15 @@ import type {
   AuctionConfigDTO,
 } from '@/lib/auction/types';
 import type { BucketScarcityReport } from '@/domain/scarcity';
-import { subscribeAuctionDelta } from '@/components/auction/auction-realtime-sync';
+import {
+  subscribeAuctionDelta,
+  runWithLocalActionTracking,
+} from '@/components/auction/auction-realtime-sync';
+import {
+  extendTimerAction,
+  confirmSaleAction,
+  markUnsoldAction,
+} from '@/lib/auction/actions';
 
 export interface AuctionOperatorFloorProps {
   seasonId?: string;
@@ -126,6 +134,31 @@ export function AuctionOperatorFloor({
           if (!prev || (payload.lotId && prev.id !== payload.lotId)) return prev;
           return { ...prev, status: 'unsold' };
         });
+      } else if (payload.type === 'PLAYER_SELECTED') {
+        if (payload.lotId) {
+          setUpcomingLots((prev) => {
+            const found = prev.find((l) => l.id === payload.lotId);
+            if (found) {
+              setActiveLot({
+                ...found,
+                status: 'in_progress',
+                started_at: new Date().toISOString(),
+                current_price: found.base_price,
+                highest_bidder_franchise_id: null,
+                highest_bidder: null,
+              });
+              return prev.filter((l) => l.id !== payload.lotId);
+            }
+            return prev;
+          });
+        }
+      } else if (payload.type === 'TIMER_EXTENDED') {
+        if (payload.lotId && payload.startedAt) {
+          setActiveLot((prev) => {
+            if (!prev || prev.id !== payload.lotId) return prev;
+            return { ...prev, started_at: payload.startedAt! };
+          });
+        }
       }
     });
   }, [activeLot?.id]);
@@ -148,8 +181,41 @@ export function AuctionOperatorFloor({
             isActive={activeLot.status === 'in_progress' && sessionState.isLive}
             isPaused={sessionState.isPaused}
             pausedRemainingSeconds={sessionState.pausedRemainingSeconds}
+            lotId={activeLot.id}
+            highestBidderId={activeLot.highest_bidder_franchise_id}
             showControls={true}
             size="lg"
+            onExtend={async (seconds) => {
+              if (!activeLot) return;
+              const res = await runWithLocalActionTracking(() =>
+                extendTimerAction(activeLot.id, seconds)
+              );
+              if (res.success && res.data?.startedAt) {
+                setActiveLot((prev) =>
+                  prev ? { ...prev, started_at: res.data!.startedAt } : prev
+                );
+              }
+            }}
+            onEndLot={async () => {
+              if (!activeLot) return;
+              if (activeLot.highest_bidder_franchise_id) {
+                const res = await runWithLocalActionTracking(() =>
+                  confirmSaleAction(activeLot.id)
+                );
+                if (res.success) {
+                  if (res.data?.activeLot !== undefined) setActiveLot(res.data.activeLot);
+                  if (res.data?.sessionState) setSessionState(res.data.sessionState);
+                }
+              } else {
+                const res = await runWithLocalActionTracking(() =>
+                  markUnsoldAction(activeLot.id)
+                );
+                if (res.success) {
+                  if (res.data?.activeLot !== undefined) setActiveLot(res.data.activeLot);
+                  if (res.data?.sessionState) setSessionState(res.data.sessionState);
+                }
+              }
+            }}
           />
         </div>
       )}

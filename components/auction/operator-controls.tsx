@@ -119,7 +119,8 @@ export function OperatorControls({
   onSessionStateChange,
 }: OperatorControlsProps) {
   const router = useRouter();
-  const [isPending, setIsPending] = useState(false);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const isPending = Boolean(pendingAction);
   const [activeQueueTab, setActiveQueueTab] = useState<'upcoming' | 'unsold' | 'sold'>('unsold');
   const [showAdvancedControls, setShowAdvancedControls] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -200,6 +201,7 @@ export function OperatorControls({
     }
     setActiveBuckets(next);
     void runOperatorAction(
+      'buckets',
       () => updateActiveBucketsAction(next),
       (res) => {
         if (!res.success) {
@@ -216,6 +218,7 @@ export function OperatorControls({
     const next = [...DEFAULT_BUCKET_ORDER];
     setActiveBuckets(next);
     void runOperatorAction(
+      'buckets',
       () => updateActiveBucketsAction(next),
       (res) => {
         if (!res.success) {
@@ -250,6 +253,7 @@ export function OperatorControls({
   const handleStartNextBucketGroup = () => {
     if (selectedRemainingBuckets.length === 0) return;
     void runOperatorAction(
+      'next-bucket-group',
       () => startNextBucketGroupAction(selectedRemainingBuckets),
       (res) => {
         if (!res.success) {
@@ -267,6 +271,7 @@ export function OperatorControls({
 
   const handleDrawRandom = () => {
     void runOperatorAction(
+      'random',
       () => drawRandomLotFromBucketsAction(),
       (res) => {
         if (!res.success) {
@@ -287,20 +292,21 @@ export function OperatorControls({
   };
 
   const runOperatorAction = async <T extends { success: boolean }>(
+    actionTag: string,
     actionFn: () => Promise<T>,
     onComplete: (res: T) => void
   ) => {
-    if (isPending) return;
+    if (pendingAction) return;
     setErrorMsg(null);
     setSuccessMsg(null);
-    setIsPending(true);
+    setPendingAction(actionTag);
     try {
       const res = await runWithLocalActionTracking(actionFn);
       onComplete(res);
     } catch (err: any) {
       setErrorMsg(sanitizeActionError(err?.message, 'Unexpected error executing operator action.'));
     } finally {
-      setIsPending(false);
+      setPendingAction(null);
     }
   };
 
@@ -326,6 +332,7 @@ export function OperatorControls({
     }
 
     void runOperatorAction(
+      'recovery',
       () =>
         adminAuctionRestartRecoveryAction({
           mode: recoveryMode,
@@ -357,6 +364,7 @@ export function OperatorControls({
 
   const handleStartAuction = () => {
     void runOperatorAction(
+      'start',
       () => startAuctionAction(activeBuckets),
       (res) => {
         if (!res.success) {
@@ -376,6 +384,7 @@ export function OperatorControls({
 
   const handleStartAuctionAgain = () => {
     void runOperatorAction(
+      'restart',
       () => startAuctionAgainAction(),
       (res) => {
         if (!res.success) {
@@ -395,6 +404,7 @@ export function OperatorControls({
 
   const handlePauseAuction = () => {
     void runOperatorAction(
+      'pause',
       () => pauseAuctionAction(),
       (res) => {
         if (!res.success) {
@@ -411,6 +421,7 @@ export function OperatorControls({
 
   const handleResumeAuction = () => {
     void runOperatorAction(
+      'resume',
       () => resumeAuctionAction(),
       (res) => {
         if (!res.success) {
@@ -427,6 +438,7 @@ export function OperatorControls({
 
   const handleBringDownUnsoldLot = (lotId: string) => {
     void runOperatorAction(
+      'bring-down',
       () => bringDownUnsoldLotAction(lotId),
       (res) => {
         if (!res.success) {
@@ -440,6 +452,7 @@ export function OperatorControls({
 
   const handleReAuctionUnsoldLot = (lotId: string) => {
     void runOperatorAction(
+      're-auction',
       () => reAuctionUnsoldLotAction(lotId),
       (res) => {
         if (!res.success) {
@@ -453,6 +466,7 @@ export function OperatorControls({
 
   const handleEndAuction = () => {
     void runOperatorAction(
+      'end-auction',
       () => endAuctionAction({ resolveActiveLotMode: endLotMode }),
       (res) => {
         if (!res.success) {
@@ -471,6 +485,7 @@ export function OperatorControls({
 
   const handleSelectLot = (lotId: string) => {
     void runOperatorAction(
+      'select-lot',
       () => selectLotAction(lotId),
       (res) => {
         if (!res.success) {
@@ -491,6 +506,7 @@ export function OperatorControls({
   const handleConfirmSale = () => {
     if (!activeLot) return;
     void runOperatorAction(
+      'sold',
       () => confirmSaleAction(activeLot.id),
       (res) => {
         if (!res.success) {
@@ -511,6 +527,7 @@ export function OperatorControls({
   const handleMarkUnsold = () => {
     if (!activeLot) return;
     void runOperatorAction(
+      'unsold',
       () => markUnsoldAction(activeLot.id),
       (res) => {
         if (!res.success) {
@@ -531,6 +548,7 @@ export function OperatorControls({
   const handleSkipLot = () => {
     if (!activeLot) return;
     void runOperatorAction(
+      'skip',
       () => skipLotAction(activeLot.id, 'Skipped by operator'),
       (res) => {
         if (!res.success) {
@@ -554,6 +572,7 @@ export function OperatorControls({
     const targetLotId = selectedUndoLotId || lastSoldLotId;
     if (!targetLotId) return;
     void runOperatorAction(
+      'undo',
       () => undoSaleAction(targetLotId, undoMode),
       (res) => {
         if (!res.success) {
@@ -588,6 +607,7 @@ export function OperatorControls({
   const handleProxyBid = () => {
     if (!activeLot || !proxyFranchiseId || !proxyBidAmount) return;
     void runOperatorAction(
+      'proxy-bid',
       () => adminProxyBidAction(activeLot.id, proxyFranchiseId, proxyBidAmount),
       (res) => {
         if (!res.success) {
@@ -602,6 +622,7 @@ export function OperatorControls({
 
   const handleStartRoundTwo = () => {
     void runOperatorAction(
+      'round-two',
       () => adminStartRoundTwoAction(),
       (res) => {
         if (!res.success) {
@@ -619,6 +640,7 @@ export function OperatorControls({
   const handleAutoAllot = () => {
     if (!activeLot) return;
     void runOperatorAction(
+      'auto-allot',
       () => adminAutoAllotLotAction(activeLot.id),
       (res) => {
         if (!res.success) {
@@ -634,6 +656,7 @@ export function OperatorControls({
 
   const handleRelaxBucket = () => {
     void runOperatorAction(
+      'relax-bucket',
       () => adminRelaxBucketMinimumAction(relaxBucket, relaxMinimum, relaxReason),
       (res) => {
         if (!res.success) {
@@ -649,6 +672,11 @@ export function OperatorControls({
   };
 
   const isFloorActive = sessionState.isLive;
+  const hasActiveBids = Boolean(
+    activeLot &&
+    activeLot.status === 'in_progress' &&
+    activeLot.highest_bidder_franchise_id !== null
+  );
   const canHammer =
     isFloorActive &&
     activeLot &&
@@ -856,8 +884,17 @@ export function OperatorControls({
                 disabled={isPending}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow transition-colors cursor-pointer"
               >
-                <Play className="size-3.5" />
-                <span>RESUME AUCTION</span>
+                {pendingAction === 'resume' ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <span>RESUMING...</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="size-3.5" />
+                    <span>RESUME AUCTION</span>
+                  </>
+                )}
               </button>
             ) : (
               <button
@@ -866,8 +903,17 @@ export function OperatorControls({
                 disabled={isPending}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-400 font-bold text-xs border border-zinc-700 shadow transition-colors cursor-pointer"
               >
-                <Pause className="size-3.5" />
-                <span>PAUSE AUCTION</span>
+                {pendingAction === 'pause' ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <span>PAUSING...</span>
+                  </>
+                ) : (
+                  <>
+                    <Pause className="size-3.5" />
+                    <span>PAUSE AUCTION</span>
+                  </>
+                )}
               </button>
             )}
 
@@ -1046,21 +1092,30 @@ export function OperatorControls({
           <button
             type="button"
             onClick={handleDrawRandom}
-            disabled={Boolean(activeLot && activeLot.status === 'in_progress') || isPending || !isFloorActive}
+            disabled={hasActiveBids || isPending || sessionState.isCompleted || sessionState.isPaused}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white shadow transition-all cursor-pointer active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Draw a random player from the active buckets"
+            title={hasActiveBids ? 'Bidding in progress on floor' : 'Draw a random player from the active buckets'}
           >
-            <Shuffle className="size-3.5" />
-            <span>Random Player</span>
+            {pendingAction === 'random' ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <span>DRAWING...</span>
+              </>
+            ) : (
+              <>
+                <Shuffle className="size-3.5" />
+                <span>Random Player</span>
+              </>
+            )}
           </button>
 
           {/* Guest Draw */}
           <button
             type="button"
             onClick={() => setShowGuestDrawModal(true)}
-            disabled={Boolean(activeLot && activeLot.status === 'in_progress') || isPending || !isFloorActive}
+            disabled={isPending}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow transition-all cursor-pointer active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Open guest card reveal dialog"
+            title="Open guest card reveal dialog (Available by default)"
           >
             <Sparkles className="size-3.5" />
             <span>Guest Draw</span>
@@ -1229,11 +1284,21 @@ export function OperatorControls({
                 : 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-800'
             }`}
           >
-            <span className="text-xl">🔨</span>
-            <span>SOLD</span>
-            <span className="text-[10px] font-normal opacity-80">
-              {activeLot?.current_price ? `At ₹${activeLot.current_price}` : 'No bids'}
-            </span>
+            {pendingAction === 'sold' ? (
+              <>
+                <Loader2 className="size-6 animate-spin" />
+                <span>SELLING...</span>
+                <span className="text-[10px] font-normal opacity-80">Recording sale</span>
+              </>
+            ) : (
+              <>
+                <span className="text-xl">🔨</span>
+                <span>SOLD</span>
+                <span className="text-[10px] font-normal opacity-80">
+                  {activeLot?.current_price ? `At ₹${activeLot.current_price}` : 'No bids'}
+                </span>
+              </>
+            )}
           </button>
 
           {/* PASS / UNSOLD */}
@@ -1247,11 +1312,21 @@ export function OperatorControls({
                 : 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-800'
             }`}
           >
-            <span className="text-xl">🛑</span>
-            <span>UNSOLD</span>
-            <span className="text-[10px] font-normal opacity-80">
-              Move lot to unsold
-            </span>
+            {pendingAction === 'unsold' ? (
+              <>
+                <Loader2 className="size-6 animate-spin" />
+                <span>PASSING...</span>
+                <span className="text-[10px] font-normal opacity-80">Marking unsold</span>
+              </>
+            ) : (
+              <>
+                <span className="text-xl">🛑</span>
+                <span>UNSOLD</span>
+                <span className="text-[10px] font-normal opacity-80">
+                  Move lot to unsold
+                </span>
+              </>
+            )}
           </button>
 
           {/* SKIP LOT (§10) */}
@@ -1265,11 +1340,21 @@ export function OperatorControls({
                 : 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-800'
             }`}
           >
-            <span className="text-xl">⏭</span>
-            <span>SKIP</span>
-            <span className="text-[10px] font-normal opacity-80">
-              Recalled at bucket end
-            </span>
+            {pendingAction === 'skip' ? (
+              <>
+                <Loader2 className="size-6 animate-spin" />
+                <span>SKIPPING...</span>
+                <span className="text-[10px] font-normal opacity-80">Advancing lot</span>
+              </>
+            ) : (
+              <>
+                <span className="text-xl">⏭</span>
+                <span>SKIP</span>
+                <span className="text-[10px] font-normal opacity-80">
+                  Recalled at bucket end
+                </span>
+              </>
+            )}
           </button>
         </div>
 
@@ -1981,8 +2066,14 @@ export function OperatorControls({
           seasonId={seasonId}
           activeBuckets={activeBuckets}
           initialBucket={activeBuckets[0] || 'B3'}
-          onPlayerDrawn={(_lotId, playerName) => {
+          onPlayerDrawn={(_lotId, playerName, drawnActiveLot, drawnSessionState) => {
             setShowGuestDrawModal(false);
+            if (drawnActiveLot !== undefined && onActiveLotChange) {
+              onActiveLotChange(drawnActiveLot);
+            }
+            if (drawnSessionState && onSessionStateChange) {
+              onSessionStateChange(drawnSessionState);
+            }
             setSuccessMsg(`Guest Draw: ${playerName} brought to floor!`);
           }}
         />

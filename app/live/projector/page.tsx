@@ -271,6 +271,8 @@ export default async function ProjectorPage() {
         <ProjectorControlDock
           activeLot={activeLot}
           sessionState={sessionState}
+          seasonId={seasonId}
+          activeBuckets={activeBuckets}
         />
       )}
     </div>

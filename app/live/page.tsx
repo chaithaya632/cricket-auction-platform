@@ -15,6 +15,7 @@ import {
   getAuctionSessionState,
   getActiveLotScarcity,
   getAllFranchisesLiveSummary,
+  getActiveBuckets,
 } from '@/lib/auction/queries';
 import { getFranchiseSquadData } from '@/lib/franchises/queries';
 import { ActiveLotCard } from '@/components/auction/active-lot-card';
@@ -25,6 +26,7 @@ import { LiveExitBar } from '@/components/auction/live-exit-bar';
 import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
 import { FranchiseLeaderboardTable } from '@/components/auction/franchise-status-bar';
 import { AuctionSessionIndicator } from '@/components/acc/status-badges';
+import { GuestDrawTrigger } from '@/components/auction/guest-draw-dialog';
 
 export default async function LiveAuctionPage() {
   const { appUser } = await getCurrentUser();
@@ -41,11 +43,12 @@ export default async function LiveAuctionPage() {
 
   // 1. Fetch auction room data & session state using adminClient to ensure public unauthenticated
   // visitors can read live projection data without being blocked by authenticated-only RLS
-  const [activeLot, recentEvents, config, sessionState] = await Promise.all([
+  const [activeLot, recentEvents, config, sessionState, activeBuckets] = await Promise.all([
     getActiveLot(adminClient, seasonId),
     getRecentAuctionEvents(adminClient, seasonId, 20),
     getSeasonAuctionConfig(adminClient, seasonId),
     getAuctionSessionState(adminClient, seasonId),
+    getActiveBuckets(adminClient, seasonId),
   ]);
 
   const [scarcityReport, franchiseSummaries] = await Promise.all([
@@ -130,6 +133,10 @@ export default async function LiveAuctionPage() {
         </div>
 
         <div className="flex items-center gap-3 text-xs">
+          <GuestDrawTrigger
+            seasonId={seasonId}
+            activeBuckets={activeBuckets.length > 0 ? activeBuckets : ['B3']}
+          />
           <Link
             href="/live/projector"
             target="_blank"

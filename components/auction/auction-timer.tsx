@@ -265,55 +265,55 @@ export function AuctionTimer({
               TIME UP
             </span>
           </div>
-
-          {showControls && (
-            <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
-              <button
-                type="button"
-                onClick={() => handleExtend(10)}
-                disabled={isExtending}
-                className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:scale-95 border border-zinc-700 text-xs font-bold text-amber-400 cursor-pointer disabled:opacity-50 transition-all"
-              >
-                +10s
-              </button>
-              <button
-                type="button"
-                onClick={() => handleExtend(20)}
-                disabled={isExtending}
-                className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:scale-95 border border-zinc-700 text-xs font-bold text-amber-400 cursor-pointer disabled:opacity-50 transition-all"
-              >
-                +20s
-              </button>
-              <button
-                type="button"
-                onClick={() => handleExtend(30)}
-                disabled={isExtending}
-                className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:scale-95 border border-zinc-700 text-xs font-bold text-amber-400 cursor-pointer disabled:opacity-50 transition-all"
-              >
-                +30s
-              </button>
-              <button
-                type="button"
-                onClick={handleEndLot}
-                disabled={isExtending}
-                className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 active:scale-95 text-xs font-bold text-white shadow-lg cursor-pointer disabled:opacity-50 transition-all flex items-center gap-1.5"
-              >
-                <span>🔨</span>
-                <span>END LOT</span>
-              </button>
-            </div>
-          )}
-
-          {timerFeedback && (
-            <span className="text-[11px] font-semibold text-zinc-400 mt-1">
-              {timerFeedback}
-            </span>
-          )}
         </div>
       ) : (
         <div className={`font-mono font-bold tracking-tight ${sizeClasses.text} ${colorClass}`}>
           {isPaused ? `PAUSED (${displayRemaining}s)` : isActive ? `${displayRemaining}s` : 'WAITING'}
         </div>
+      )}
+
+      {showControls && isActive && (
+        <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
+          <button
+            type="button"
+            onClick={() => handleExtend(10)}
+            disabled={isExtending}
+            className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:scale-95 border border-zinc-700 text-xs font-bold text-amber-400 cursor-pointer disabled:opacity-50 transition-all"
+          >
+            +10s
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExtend(20)}
+            disabled={isExtending}
+            className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:scale-95 border border-zinc-700 text-xs font-bold text-amber-400 cursor-pointer disabled:opacity-50 transition-all"
+          >
+            +20s
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExtend(30)}
+            disabled={isExtending}
+            className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:scale-95 border border-zinc-700 text-xs font-bold text-amber-400 cursor-pointer disabled:opacity-50 transition-all"
+          >
+            +30s
+          </button>
+          <button
+            type="button"
+            onClick={handleEndLot}
+            disabled={isExtending}
+            className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 active:scale-95 text-xs font-bold text-white shadow-lg cursor-pointer disabled:opacity-50 transition-all flex items-center gap-1.5"
+          >
+            <span>🔨</span>
+            <span>END LOT</span>
+          </button>
+        </div>
+      )}
+
+      {timerFeedback && (
+        <span className="text-[11px] font-semibold text-zinc-400 mt-1">
+          {timerFeedback}
+        </span>
       )}
 
       <div className={`w-full bg-zinc-800 rounded-full overflow-hidden mt-3 ${sizeClasses.height}`}>

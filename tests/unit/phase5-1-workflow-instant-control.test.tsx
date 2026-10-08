@@ -306,4 +306,120 @@ describe('Phase 5.1 — Unified Auction Control & Instant Mutation Workflow', ()
       expect(duration).toBeLessThan(50); // Well within sub-50ms requirement
     });
   });
+
+  // ===========================================================================
+  // 5. Live Console Controls Wiring & Clickability Invariants
+  // ===========================================================================
+  describe('5. Live Console Controls Wiring & Clickability Invariants', () => {
+    const testLot: AuctionLotWithDetails = {
+      id: 'lot-active-test',
+      season_id: 'season-001',
+      registration_id: 'reg-001',
+      bucket: 'B3',
+      round: 1,
+      draw_number: 1,
+      base_price: 200,
+      current_price: 200,
+      status: 'in_progress',
+      highest_bidder_franchise_id: null,
+      started_at: new Date().toISOString(),
+      ended_at: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      player: {
+        id: 'p-1',
+        full_name: 'Rohit Sharma',
+        photo_url: null,
+      },
+      registration: {
+        id: 'reg-001',
+        branch: 'CSE',
+        academic_year: 3,
+        programme: 'btech',
+        cricheroes_profile_url: null,
+      },
+      highest_bidder: null,
+    };
+
+    const testSessionState: AuctionSessionState = {
+      status: 'live',
+      seasonId: 'season-001',
+      seasonName: 'Season 2026',
+      isLive: true,
+      isPaused: false,
+      isCompleted: false,
+      isNotStarted: false,
+      startedAt: new Date().toISOString(),
+      activeLotId: 'lot-active-test',
+      pausedRemainingSeconds: null,
+    };
+
+    const testConfig = {
+      firstBidTimerSeconds: 30,
+      subsequentBidTimerSeconds: 20,
+      minAuctionPurchases: 11,
+      maxSquadSize: 15,
+      minSquadSize: 11,
+      defaultPurse: 10000,
+    };
+
+    it('enables Random Player when an unbid active lot is on the floor and disables it when active bids exist', () => {
+      const { rerender } = render(
+        <AuctionOperatorFloor
+          seasonId="season-001"
+          initialActiveLot={testLot} // testLot has highest_bidder_franchise_id: null
+          initialUpcomingLots={[]}
+          initialSessionState={testSessionState} // isLive: true, isPaused: false
+          config={testConfig}
+        />
+      );
+
+      // Random Player button must NOT be disabled when lot has 0 bids
+      const randomBtn = screen.getByText('Random Player').closest('button')!;
+      expect(randomBtn.disabled).toBe(false);
+
+      // Rerender with active bids placed
+      const lotWithBids: AuctionLotWithDetails = {
+        ...testLot,
+        highest_bidder_franchise_id: 'franchise-123',
+        highest_bidder: {
+          id: 'franchise-123',
+          name: 'Super Kings',
+          short_name: 'SK',
+          primary_color: '#fbbf24',
+          secondary_color: null,
+        },
+      };
+
+      rerender(
+        <AuctionOperatorFloor
+          seasonId="season-001"
+          initialActiveLot={lotWithBids}
+          initialUpcomingLots={[]}
+          initialSessionState={testSessionState}
+          config={testConfig}
+        />
+      );
+
+      // Random Player button must be safely disabled during active bidding war
+      expect(randomBtn.disabled).toBe(true);
+    });
+
+    it('renders timer quick extension buttons (+10s, +20s, +30s) and wire them to activeLot', () => {
+      render(
+        <AuctionOperatorFloor
+          seasonId="season-001"
+          initialActiveLot={testLot}
+          initialUpcomingLots={[]}
+          initialSessionState={testSessionState}
+          config={testConfig}
+        />
+      );
+
+      // Quick extension buttons are rendered
+      expect(screen.getByText('+10s')).toBeDefined();
+      expect(screen.getByText('+20s')).toBeDefined();
+      expect(screen.getByText('+30s')).toBeDefined();
+    });
+  });
 });
