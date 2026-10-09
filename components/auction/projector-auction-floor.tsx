@@ -116,8 +116,18 @@ export function ProjectorAuctionFloor({
           });
         }
       } else if (payload.type === 'PLAYER_SELECTED') {
-        if (payload.activeLot) {
-          setActiveLot(payload.activeLot as AuctionLotWithDetails);
+        const nextLot = payload.activeLot as AuctionLotWithDetails | null;
+        if (
+          activeLot &&
+          (activeLot.status === 'sold' || activeLot.status === 'unsold') &&
+          nextLot &&
+          nextLot.id !== activeLot.id
+        ) {
+          setTimeout(() => {
+            setActiveLot(nextLot);
+          }, 2200);
+        } else if (nextLot) {
+          setActiveLot(nextLot);
         } else if (payload.isEmptyFloor) {
           setActiveLot(null);
         }

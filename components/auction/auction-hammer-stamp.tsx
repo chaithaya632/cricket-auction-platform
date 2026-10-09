@@ -51,6 +51,13 @@ export function AuctionHammerStamp({
   onCompleteRef.current = onAnimationComplete;
 
   useEffect(() => {
+    if (status === 'in_progress' && lotId) {
+      animatedLotEvents.delete(`${lotId}:sold`);
+      animatedLotEvents.delete(`${lotId}:unsold`);
+    }
+  }, [status, lotId]);
+
+  useEffect(() => {
     if (!isTargetStatus || !lotId) {
       setPhase('idle');
       return;

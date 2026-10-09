@@ -29,6 +29,7 @@ vi.mock('@/lib/auction/audio', () => ({
   setAudioEnabled: vi.fn(),
   playBidGavelChime: vi.fn(() => true),
   playGavelChime: vi.fn(() => true),
+  playHammerStrikeSound: vi.fn(() => true),
 }));
 
 // Mock sonner toast

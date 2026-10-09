@@ -29,7 +29,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, waitFor } from '@testing-library/react';
 import {
   notifyAuctionDelta,
   subscribeAuctionDelta,
@@ -62,6 +62,7 @@ vi.mock('@/lib/auction/audio', () => ({
   setAudioEnabled: vi.fn(),
   playBidGavelChime: vi.fn(() => true),
   playGavelChime: vi.fn(() => true),
+  playHammerStrikeSound: vi.fn(() => true),
 }));
 
 // Mock sonner toast
@@ -269,7 +270,7 @@ describe('ACC Auction Portal — Final Realtime Release Acceptance (4 Independen
   // ===========================================================================
   // TEST 2: SOLD and Automatic Next-Player Progression
   // ===========================================================================
-  it('2. SOLD and automatic next-player progression across all 4 independent roles', () => {
+  it('2. SOLD and automatic next-player progression across all 4 independent roles', async () => {
     const lot1 = createMockLot('lot-1', 1, 'A', 'in_progress', 260, 'fran-rcb', 'Royal Challengers Bangalore', 'RCB');
     const lot2 = createMockLot('lot-2', 2, 'A', 'in_progress', 200, null);
 
@@ -338,15 +339,17 @@ describe('ACC Auction Portal — Final Realtime Release Acceptance (4 Independen
       });
     });
 
-    // All 4 screens immediately display Test Player 2
-    expect(screen.getAllByText('Test Player 2').length).toBe(4);
-    expect(screen.queryByText('Test Player 1')).toBeNull();
+    // All 4 screens display Test Player 2 after hammer animation progression
+    await waitFor(() => {
+      expect(screen.getAllByText('Test Player 2').length).toBe(4);
+      expect(screen.queryByText('Test Player 1')).toBeNull();
+    }, { timeout: 4000 });
   });
 
   // ===========================================================================
   // TEST 3: UNSOLD and Automatic Next-Player Progression
   // ===========================================================================
-  it('3. UNSOLD and automatic next-player progression across all 4 independent roles', () => {
+  it('3. UNSOLD and automatic next-player progression across all 4 independent roles', async () => {
     const lot2 = createMockLot('lot-2', 2, 'A', 'in_progress', 200, null);
     const lot3 = createMockLot('lot-3', 3, 'A', 'in_progress', 200, null);
 
@@ -414,8 +417,10 @@ describe('ACC Auction Portal — Final Realtime Release Acceptance (4 Independen
     });
 
     // All 4 screens display Test Player 3 without requiring manual operator intervention
-    expect(screen.getAllByText('Test Player 3').length).toBe(4);
-    expect(screen.queryByText('Test Player 2')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getAllByText('Test Player 3').length).toBe(4);
+      expect(screen.queryByText('Test Player 2')).toBeNull();
+    }, { timeout: 4000 });
   });
 
   // ===========================================================================

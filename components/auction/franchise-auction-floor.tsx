@@ -12,6 +12,7 @@ import React, { useState, useEffect } from 'react';
 import { ActiveLotCard } from '@/components/auction/active-lot-card';
 import { AuctionTimer } from '@/components/auction/auction-timer';
 import { BiddingControl } from '@/components/auction/bidding-control';
+import { GuestDrawRevealOverlay } from '@/components/auction/guest-draw-reveal-overlay';
 import {
   subscribeAuctionDelta,
   isLocalActionEchoWindowActive,
@@ -128,8 +129,18 @@ export function FranchiseAuctionFloor({
           });
         }
       } else if (payload.type === 'PLAYER_SELECTED') {
-        if (payload.activeLot) {
-          setActiveLot(payload.activeLot as AuctionLotWithDetails);
+        const nextLot = payload.activeLot as AuctionLotWithDetails | null;
+        if (
+          activeLot &&
+          (activeLot.status === 'sold' || activeLot.status === 'unsold') &&
+          nextLot &&
+          nextLot.id !== activeLot.id
+        ) {
+          setTimeout(() => {
+            setActiveLot(nextLot);
+          }, 2200);
+        } else if (nextLot) {
+          setActiveLot(nextLot);
         } else if (payload.isEmptyFloor) {
           setActiveLot(null);
         }
@@ -227,6 +238,9 @@ export function FranchiseAuctionFloor({
       {franchiseData && (
         <BiddingControl lot={activeLot} franchise={franchiseData} />
       )}
+
+      {/* Official Guest Draw Reveal Popup Overlay */}
+      <GuestDrawRevealOverlay seasonId={seasonId} currentLot={activeLot} />
     </div>
   );
 }

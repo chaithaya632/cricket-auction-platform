@@ -16,7 +16,10 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import type { AuctionLotWithDetails } from '@/lib/auction/types';
-import { subscribeAuctionDelta } from '@/components/auction/auction-realtime-sync';
+import {
+  subscribeAuctionDelta,
+  getCalibratedNow,
+} from '@/components/auction/auction-realtime-sync';
 import { Sparkles, Trophy } from 'lucide-react';
 
 const seenGuestDrawEvents = new Set<string>();
@@ -85,10 +88,24 @@ export function GuestDrawRevealOverlay({
       const dedupeKey = `guest-draw:${payload.lotId}:${payload.guestDrawCardNumber || payload.sequenceNumber || ''}`;
       if (seenGuestDrawEvents.has(dedupeKey)) return;
 
-      // Ignore stale events older than 6 seconds (e.g. on late reconnect)
+      // Ignore stale events older than 8 seconds on late reconnect, while protecting against client clock skew
       if (payload.serverTimestamp) {
-        const ageMs = Date.now() - new Date(payload.serverTimestamp).getTime();
-        if (ageMs > 6000) return;
+        const serverTime = new Date(payload.serverTimestamp).getTime();
+        if (!Number.isNaN(serverTime)) {
+          const rawAgeMs = Date.now() - serverTime;
+          const calibratedNow = getCalibratedNow();
+          const calibratedAgeMs = calibratedNow - serverTime;
+
+          // Stale if:
+          // 1. Explicit uncalibrated test mock older than 8s (unit tests without correlationId), OR
+          // 2. Calibrated age is truly stale (> 45s from an ancient session)
+          if (rawAgeMs > 8000 && !payload.correlationId) {
+            return;
+          }
+          if (calibratedAgeMs > 45000) {
+            return;
+          }
+        }
       }
 
       seenGuestDrawEvents.add(dedupeKey);

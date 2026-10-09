@@ -4,7 +4,7 @@
 // ACC Auction Portal — Components: Active Lot Card
 // =============================================================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { AuctionLotWithDetails, AuctionLotFranchiseInfo } from '@/lib/auction/types';
 import type { LotStatus } from '@/lib/constants';
 import { bringDownUnsoldLotAction, reAuctionUnsoldLotAction } from '@/lib/auction/actions';
@@ -25,7 +25,7 @@ interface ActiveLotCardProps {
 }
 
 export function ActiveLotCard({
-  lot,
+  lot: incomingLot,
   size = 'normal',
   isAdmin = false,
   onBringDown,
@@ -35,20 +35,57 @@ export function ActiveLotCard({
   const [isPending, setIsPending] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const [currentPrice, setCurrentPrice] = useState<number | null>(lot?.current_price ?? null);
-  const [highestBidder, setHighestBidder] = useState<AuctionLotFranchiseInfo | null>(lot?.highest_bidder ?? null);
-  const [lotStatus, setLotStatus] = useState<LotStatus>(lot?.status ?? 'pending');
+  const [displayedLot, setDisplayedLot] = useState<AuctionLotWithDetails | null>(incomingLot);
+  const isRetainingOutcomeRef = useRef(false);
+  const pendingNextLotRef = useRef<AuctionLotWithDetails | null>(null);
+  const retentionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [currentPrice, setCurrentPrice] = useState<number | null>(incomingLot?.current_price ?? null);
+  const [highestBidder, setHighestBidder] = useState<AuctionLotFranchiseInfo | null>(incomingLot?.highest_bidder ?? null);
+  const [lotStatus, setLotStatus] = useState<LotStatus>(incomingLot?.status ?? 'pending');
+
+  const scheduleTransitionToNextLot = () => {
+    isRetainingOutcomeRef.current = true;
+    if (retentionTimerRef.current) clearTimeout(retentionTimerRef.current);
+    retentionTimerRef.current = setTimeout(() => {
+      isRetainingOutcomeRef.current = false;
+      const next = pendingNextLotRef.current;
+      pendingNextLotRef.current = null;
+      if (next !== null) {
+        setDisplayedLot(next);
+        setCurrentPrice(next?.current_price ?? null);
+        setHighestBidder(next?.highest_bidder ?? null);
+        setLotStatus(next?.status ?? 'pending');
+      }
+    }, 2200);
+  };
 
   useEffect(() => {
-    setCurrentPrice(lot?.current_price ?? null);
-    setHighestBidder(lot?.highest_bidder ?? null);
-    setLotStatus(lot?.status ?? 'pending');
-  }, [lot?.id, lot?.current_price, lot?.highest_bidder, lot?.status]);
+    // If we are currently holding a completed sold/unsold presentation, buffer any different incoming lot
+    if (isRetainingOutcomeRef.current) {
+      if (incomingLot?.id !== displayedLot?.id) {
+        pendingNextLotRef.current = incomingLot;
+      } else if (incomingLot) {
+        setCurrentPrice(incomingLot.current_price ?? null);
+        setHighestBidder(incomingLot.highest_bidder ?? null);
+      }
+      return;
+    }
+
+    setDisplayedLot(incomingLot);
+    setCurrentPrice(incomingLot?.current_price ?? null);
+    setHighestBidder(incomingLot?.highest_bidder ?? null);
+    setLotStatus(incomingLot?.status ?? 'pending');
+
+    if (incomingLot?.status === 'sold' || incomingLot?.status === 'unsold') {
+      scheduleTransitionToNextLot();
+    }
+  }, [incomingLot?.id, incomingLot?.current_price, incomingLot?.highest_bidder, incomingLot?.status]);
 
   useEffect(() => {
-    if (!lot) return;
+    if (!displayedLot) return;
     return subscribeAuctionDelta((payload) => {
-      if (payload.lotId && payload.lotId !== lot.id) return;
+      if (payload.lotId && payload.lotId !== displayedLot.id) return;
 
       if (payload.type === 'BID_PLACED') {
         if (payload.currentPrice !== undefined && payload.currentPrice !== null) {
@@ -65,12 +102,24 @@ export function ActiveLotCard({
         }
       } else if (payload.type === 'SALE') {
         setLotStatus('sold');
-        playBidGavelChime(lot.id, payload.currentPrice ?? currentPrice);
+        scheduleTransitionToNextLot();
+        playBidGavelChime(displayedLot.id, payload.currentPrice ?? currentPrice);
       } else if (payload.type === 'UNSOLD') {
         setLotStatus('unsold');
+        scheduleTransitionToNextLot();
       }
     });
-  }, [lot?.id]);
+  }, [displayedLot?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (retentionTimerRef.current) {
+        clearTimeout(retentionTimerRef.current);
+      }
+    };
+  }, []);
+
+  const lot = displayedLot;
 
   const handleBringDown = async () => {
     if (!lot || isPending || isActionPending) return;

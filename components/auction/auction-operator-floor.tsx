@@ -17,6 +17,7 @@ import {
   type OperatorRecoveryLotItem,
   type OperatorFranchiseOption,
 } from '@/components/auction/operator-controls';
+import { GuestDrawRevealOverlay } from '@/components/auction/guest-draw-reveal-overlay';
 import type {
   AuctionLotWithDetails,
   AuctionSessionState,
@@ -162,7 +163,15 @@ export function AuctionOperatorFloor({
           return { ...prev, status: 'unsold' };
         });
       } else if (payload.type === 'PLAYER_SELECTED') {
-        if (payload.activeLot) {
+        const nextLot = payload.activeLot as AuctionLotWithDetails | null;
+        if (activeLot && (activeLot.status === 'sold' || activeLot.status === 'unsold') && nextLot && nextLot.id !== activeLot.id) {
+          setTimeout(() => {
+            setActiveLot(nextLot);
+            if (payload.lotId) {
+              setUpcomingLots((prev) => prev.filter((l) => l.id !== payload.lotId));
+            }
+          }, 2200);
+        } else if (payload.activeLot) {
           setActiveLot(payload.activeLot as AuctionLotWithDetails);
           if (payload.lotId) {
             setUpcomingLots((prev) => prev.filter((l) => l.id !== payload.lotId));
@@ -270,13 +279,15 @@ export function AuctionOperatorFloor({
                   confirmSaleAction(activeLot.id)
                 );
                 if (res.success) {
-                  if (res.data?.activeLot !== undefined) {
-                    setActiveLot(res.data.activeLot);
-                    if (res.data.activeLot) {
-                      setUpcomingLots((prev) => prev.filter((l) => l.id !== res.data!.activeLot!.id));
+                  setTimeout(() => {
+                    if (res.data?.activeLot !== undefined) {
+                      setActiveLot(res.data.activeLot);
+                      if (res.data.activeLot) {
+                        setUpcomingLots((prev) => prev.filter((l) => l.id !== res.data!.activeLot!.id));
+                      }
                     }
-                  }
-                  if (res.data?.sessionState) setSessionState(res.data.sessionState);
+                    if (res.data?.sessionState) setSessionState(res.data.sessionState);
+                  }, 2200);
                   if (res.data?.message) {
                     toast.info(res.data.message);
                   }
@@ -291,13 +302,15 @@ export function AuctionOperatorFloor({
                   markUnsoldAction(activeLot.id)
                 );
                 if (res.success) {
-                  if (res.data?.activeLot !== undefined) {
-                    setActiveLot(res.data.activeLot);
-                    if (res.data.activeLot) {
-                      setUpcomingLots((prev) => prev.filter((l) => l.id !== res.data!.activeLot!.id));
+                  setTimeout(() => {
+                    if (res.data?.activeLot !== undefined) {
+                      setActiveLot(res.data.activeLot);
+                      if (res.data.activeLot) {
+                        setUpcomingLots((prev) => prev.filter((l) => l.id !== res.data!.activeLot!.id));
+                      }
                     }
-                  }
-                  if (res.data?.sessionState) setSessionState(res.data.sessionState);
+                    if (res.data?.sessionState) setSessionState(res.data.sessionState);
+                  }, 2200);
                   if (res.data?.message) {
                     toast.info(res.data.message);
                   }
@@ -330,6 +343,12 @@ export function AuctionOperatorFloor({
         getCurrentRemaining={() => currentRemainingSecondsRef.current}
         onActiveLotChange={setActiveLot}
         onSessionStateChange={setSessionState}
+      />
+
+      {/* Official Guest Draw Reveal Popup Overlay */}
+      <GuestDrawRevealOverlay
+        seasonId={seasonId || sessionState.seasonId}
+        currentLot={activeLot}
       />
     </div>
   );
