@@ -1396,6 +1396,9 @@ export async function callGuestDrawNumberAction(
       durationSeconds,
       activeLot: activeLotWithDetails,
       sessionStatus: 'live',
+      isGuestDraw: true,
+      guestDrawCardNumber: lot.draw_number,
+      guestDrawBucket: lot.bucket,
     });
 
     revalidatePath('/admin');
@@ -2372,6 +2375,7 @@ export async function pauseAuctionAction(
 
     // Immediate post-commit broadcast for PAUSE
     await broadcastAuctionUpdate(activeSeason.id, 'PAUSE', {
+      lotId: activeLot?.id,
       remainingSeconds,
       sessionStatus: 'paused',
       isPaused: true,
@@ -2568,6 +2572,7 @@ export async function resumeAuctionAction(): Promise<
 
     // Immediate post-commit broadcast for RESUME
     await broadcastAuctionUpdate(activeSeason.id, 'RESUME', {
+      lotId: activeLot?.id,
       startedAt: activeLot ? restoredStartedAt : null,
       sessionStatus: 'live',
       isPaused: false,
@@ -3028,13 +3033,30 @@ export async function adminProxyBidAction(
       return { success: false, error: mutation.error };
     }
 
+    const { data: franchiseRow } = await adminClient
+      .from('franchises')
+      .select('id, name, short_name, color_primary')
+      .eq('id', franchiseId)
+      .maybeSingle();
+
+    await broadcastAuctionUpdate(lot.season_id, 'BID_PLACED', {
+      lotId: lot.id,
+      lotStatus: 'in_progress',
+      currentPrice: nextBid,
+      highestBidderId: franchiseId,
+      highestBidderName: franchiseRow?.name || 'Franchise',
+      highestBidderShortName: franchiseRow?.short_name || '',
+      highestBidderPrimaryColor: (franchiseRow as any)?.color_primary || null,
+      startedAt: now,
+      durationSeconds: 20,
+      sequenceNumber: mutation.data?.event?.sequence_number,
+    });
+
     revalidatePath('/admin/auction');
     revalidatePath('/live');
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
-
-    await broadcastAuctionUpdate(lot.season_id, 'BID_PLACED');
 
     return { success: true, data: { newPrice: nextBid } };
   } catch (err: any) {

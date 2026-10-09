@@ -77,6 +77,32 @@ export function AuctionTimer({
   const [isExtending, setIsExtending] = useState(false);
   const [timerFeedback, setTimerFeedback] = useState<string | null>(null);
 
+  // Internal reactive pause state to freeze/resume immediately on broadcast deltas (<20ms)
+  // without waiting for parent component re-renders or asynchronous RSC payloads.
+  const [internalPaused, setInternalPaused] = useState<boolean>(isPaused);
+  const [internalPausedRemaining, setInternalPausedRemaining] = useState<number | null>(
+    pausedRemainingSeconds ?? null
+  );
+
+  const effectiveIsPaused = internalPaused;
+  const effectivePausedRemaining = internalPausedRemaining;
+
+  const [remaining, setRemaining] = useState<number>(() =>
+    getDeterministicInitialRemaining({
+      durationSeconds: effectiveDuration,
+      isPaused: effectiveIsPaused,
+      pausedRemainingSeconds: effectivePausedRemaining,
+    })
+  );
+
+  const remainingRef = React.useRef(remaining);
+  remainingRef.current = remaining;
+
+  useEffect(() => {
+    setInternalPaused(isPaused);
+    setInternalPausedRemaining(pausedRemainingSeconds ?? null);
+  }, [isPaused, pausedRemainingSeconds]);
+
   const onExpireRef = React.useRef(onExpire);
   onExpireRef.current = onExpire;
 
@@ -90,7 +116,7 @@ export function AuctionTimer({
     remainingAtResume: number;
     startedAtWhenResumed: string | null;
   } | null>(null);
-  const wasPausedRef = React.useRef<boolean>(isPaused);
+  const wasPausedRef = React.useRef<boolean>(effectiveIsPaused);
 
   useEffect(() => {
     setEffectiveStartedAt(startedAt);
@@ -100,27 +126,48 @@ export function AuctionTimer({
   // Subscribe to instantaneous broadcast deltas
   useEffect(() => {
     return subscribeAuctionDelta((payload) => {
-      if (lotId && payload.lotId && payload.lotId !== lotId) return;
+      const isSessionWideEvent =
+        payload.type === 'PAUSE' ||
+        payload.type === 'RESUME' ||
+        payload.type === 'AUCTION_STARTED' ||
+        payload.type === 'AUCTION_ENDED';
+      if (!isSessionWideEvent && lotId && payload.lotId && payload.lotId !== lotId) return;
 
-      if (payload.type === 'TIMER_EXTENDED') {
+      if (payload.type === 'PAUSE') {
+        setInternalPaused(true);
+        const remainingToFreeze =
+          payload.remainingSeconds !== undefined && payload.remainingSeconds !== null
+            ? payload.remainingSeconds
+            : (lastPausedRemainingRef.current ?? remainingRef.current);
+        setInternalPausedRemaining(remainingToFreeze);
+        setRemaining(remainingToFreeze);
+        lastPausedRemainingRef.current = remainingToFreeze;
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+      } else if (payload.type === 'RESUME') {
+        setInternalPaused(false);
+        setInternalPausedRemaining(null);
+        if (payload.startedAt) {
+          setEffectiveStartedAt(payload.startedAt);
+        }
+      } else if (payload.type === 'TIMER_EXTENDED') {
         if (payload.startedAt) setEffectiveStartedAt(payload.startedAt);
         if (payload.durationSeconds) setEffectiveDuration(payload.durationSeconds);
       } else if (payload.type === 'BID_PLACED') {
+        setInternalPaused(false);
+        setInternalPausedRemaining(null);
         if (payload.startedAt) setEffectiveStartedAt(payload.startedAt);
         if (payload.durationSeconds) setEffectiveDuration(payload.durationSeconds);
-      } else if (payload.type === 'RESUME') {
+      } else if (payload.type === 'PLAYER_SELECTED') {
+        setInternalPaused(Boolean(payload.isPaused));
+        setInternalPausedRemaining(payload.pausedRemainingSeconds ?? null);
         if (payload.startedAt) setEffectiveStartedAt(payload.startedAt);
+        if (payload.durationSeconds) setEffectiveDuration(payload.durationSeconds);
       }
     });
   }, [lotId]);
-
-  const [remaining, setRemaining] = useState<number>(() =>
-    getDeterministicInitialRemaining({
-      durationSeconds: effectiveDuration,
-      isPaused,
-      pausedRemainingSeconds,
-    })
-  );
 
   // Sync remaining change to callback
   useEffect(() => {
@@ -135,11 +182,11 @@ export function AuctionTimer({
       intervalRef.current = null;
     }
 
-    if (isPaused) {
+    if (effectiveIsPaused) {
       // Freeze timer immediately at the exact displayed value (or pausedRemainingSeconds if provided)
       const frozen =
-        pausedRemainingSeconds !== null && pausedRemainingSeconds !== undefined
-          ? Math.max(0, pausedRemainingSeconds)
+        effectivePausedRemaining !== null && effectivePausedRemaining !== undefined
+          ? Math.max(0, effectivePausedRemaining)
           : remaining;
       lastPausedRemainingRef.current = frozen;
       resumeAnchorRef.current = null;
@@ -149,13 +196,13 @@ export function AuctionTimer({
     }
 
     // Transition from paused -> live: establish resume anchor to eliminate clock jitter
-    if (wasPausedRef.current && !isPaused) {
+    if (wasPausedRef.current && !effectiveIsPaused) {
       wasPausedRef.current = false;
       const baseRemaining =
         lastPausedRemainingRef.current !== null
           ? lastPausedRemainingRef.current
-          : pausedRemainingSeconds !== null && pausedRemainingSeconds !== undefined
-          ? pausedRemainingSeconds
+          : effectivePausedRemaining !== null && effectivePausedRemaining !== undefined
+          ? effectivePausedRemaining
           : remaining;
       resumeAnchorRef.current = {
         resumedAt: getCalibratedNow(),
@@ -215,7 +262,7 @@ export function AuctionTimer({
         intervalRef.current = null;
       }
     };
-  }, [effectiveStartedAt, effectiveDuration, isActive, isPaused, pausedRemainingSeconds]);
+  }, [effectiveStartedAt, effectiveDuration, isActive, effectiveIsPaused, effectivePausedRemaining]);
 
   const handleExtend = async (seconds: 10 | 20 | 30) => {
     // 1. Instant optimistic update in visible UI
@@ -267,9 +314,9 @@ export function AuctionTimer({
     }
   };
 
-  const displayRemaining = isPaused
-    ? (pausedRemainingSeconds !== null && pausedRemainingSeconds !== undefined
-        ? Math.max(0, pausedRemainingSeconds)
+  const displayRemaining = effectiveIsPaused
+    ? (effectivePausedRemaining !== null && effectivePausedRemaining !== undefined
+        ? Math.max(0, effectivePausedRemaining)
         : remaining)
     : remaining;
 
@@ -278,10 +325,10 @@ export function AuctionTimer({
     Math.min(100, (displayRemaining / effectiveDuration) * 100)
   );
 
-  const isUrgent = !isPaused && displayRemaining <= 5 && displayRemaining > 0;
-  const isTimeUp = !isPaused && displayRemaining === 0 && isActive;
+  const isUrgent = !effectiveIsPaused && displayRemaining <= 5 && displayRemaining > 0;
+  const isTimeUp = !effectiveIsPaused && displayRemaining === 0 && isActive;
 
-  const colorClass = isPaused
+  const colorClass = effectiveIsPaused
     ? 'text-amber-400'
     : isTimeUp
     ? 'text-red-500'
@@ -289,7 +336,7 @@ export function AuctionTimer({
     ? 'text-amber-500 animate-pulse'
     : 'text-emerald-400';
 
-  const barColor = isPaused
+  const barColor = effectiveIsPaused
     ? 'bg-amber-500'
     : isTimeUp
     ? 'bg-red-500'
@@ -321,13 +368,13 @@ export function AuctionTimer({
         <span className="text-xs uppercase tracking-widest text-zinc-400 font-semibold">
           Auction Timer
         </span>
-        {isActive && !isPaused && !isTimeUp && (
+        {isActive && !effectiveIsPaused && !isTimeUp && (
           <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
         )}
         {isTimeUp && (
           <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-ping" />
         )}
-        {isPaused && (
+        {effectiveIsPaused && (
           <span className="inline-block w-2 h-2 rounded-full bg-amber-400" />
         )}
       </div>
@@ -342,7 +389,7 @@ export function AuctionTimer({
         </div>
       ) : (
         <div className={`font-mono font-bold tracking-tight ${sizeClasses.text} ${colorClass}`}>
-          {isPaused ? `PAUSED (${displayRemaining}s)` : isActive ? `${displayRemaining}s` : 'WAITING'}
+          {effectiveIsPaused ? `PAUSED (${displayRemaining}s)` : isActive ? `${displayRemaining}s` : 'WAITING'}
         </div>
       )}
 

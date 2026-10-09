@@ -12,7 +12,7 @@
 //   unavailable/degraded (not SUBSCRIBED), never polling unconditionally.
 // =============================================================================
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import type { AuctionBroadcastPayload } from '@/lib/auction/types';
@@ -336,6 +336,8 @@ export function AuctionRealtimeSync({
   fallbackIntervalMs = 5000,
 }: AuctionRealtimeSyncProps) {
   const router = useRouter();
+  const routerRef = useRef(router);
+  routerRef.current = router;
 
   useEffect(() => {
     if (!seasonId) return;
@@ -343,7 +345,7 @@ export function AuctionRealtimeSync({
     const supabase = createClient();
     const coordinator = createRealtimeRefreshCoordinator({
       onRefresh: () => {
-        router.refresh();
+        routerRef.current.refresh();
       },
     });
 
@@ -373,7 +375,7 @@ export function AuctionRealtimeSync({
           }
         }
       )
-      .subscribe((status) => {
+      .subscribe((status: any) => {
         if (
           status === 'SUBSCRIBED' ||
           status === 'CHANNEL_ERROR' ||
@@ -395,7 +397,7 @@ export function AuctionRealtimeSync({
       coordinator.dispose();
       supabase.removeChannel(channel);
     };
-  }, [seasonId, router, fallbackIntervalMs]);
+  }, [seasonId, fallbackIntervalMs]);
 
   return null;
 }

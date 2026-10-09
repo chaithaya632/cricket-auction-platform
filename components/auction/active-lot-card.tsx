@@ -13,6 +13,7 @@ import {
   subscribeAuctionDelta,
 } from '@/components/auction/auction-realtime-sync';
 import { playBidGavelChime } from '@/lib/auction/audio';
+import { AuctionHammerStamp } from './auction-hammer-stamp';
 
 interface ActiveLotCardProps {
   lot: AuctionLotWithDetails | null;
@@ -145,6 +146,13 @@ export function ActiveLotCard({
     >
       {/* Background ambient glow */}
       <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+
+      {/* Realistic Gavel Hammer Strike & Stamp Overlay */}
+      <AuctionHammerStamp
+        status={lotStatus}
+        lotId={lot.id}
+        size={size}
+      />
 
       {/* Top Header: Lot badges */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 pb-4 mb-6">

@@ -114,6 +114,7 @@ export function AuctionOperatorFloor({
                     secondary_color: null,
                   }
                 : prev.highest_bidder,
+              started_at: payload.startedAt || prev.started_at,
             };
           });
         }

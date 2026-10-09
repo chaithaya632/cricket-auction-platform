@@ -60,6 +60,7 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
               current_price: payload.currentPrice ?? prev.current_price,
               highest_bidder_franchise_id:
                 payload.highestBidderId ?? prev.highest_bidder_franchise_id,
+              started_at: payload.startedAt || prev.started_at,
             };
           });
           setOptimisticBid(null);

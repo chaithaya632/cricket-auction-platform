@@ -186,5 +186,8 @@ export interface AuctionBroadcastPayload {
   isPaused?: boolean;
   pausedRemainingSeconds?: number | null;
   timestamp?: string;
+  isGuestDraw?: boolean;
+  guestDrawCardNumber?: number;
+  guestDrawBucket?: string;
 }
 

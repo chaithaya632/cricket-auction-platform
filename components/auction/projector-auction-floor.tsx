@@ -12,6 +12,7 @@ import React, { useState, useEffect } from 'react';
 import { ActiveLotCard } from '@/components/auction/active-lot-card';
 import { AuctionTimer } from '@/components/auction/auction-timer';
 import { ProjectorGroupSelector } from '@/components/auction/projector-group-selector';
+import { GuestDrawRevealOverlay } from '@/components/auction/guest-draw-reveal-overlay';
 import {
   subscribeAuctionDelta,
   isLocalActionEchoWindowActive,
@@ -110,6 +111,7 @@ export function ProjectorAuctionFloor({
                     secondary_color: null,
                   }
                 : prev.highest_bidder,
+              started_at: payload.startedAt || prev.started_at,
             };
           });
         }
@@ -203,6 +205,9 @@ export function ProjectorAuctionFloor({
 
   return (
     <div className="my-8 max-w-6xl mx-auto w-full space-y-8">
+      {/* Cinematic Guest Draw Reveal Popup (§Feature 1) */}
+      <GuestDrawRevealOverlay seasonId={seasonId} currentLot={activeLot} />
+
       {sessionState.isCompleted ? (
         <div className="rounded-3xl border-2 border-blue-500/30 bg-gradient-to-b from-blue-950/40 via-zinc-950 to-zinc-950 p-12 text-center space-y-4 shadow-2xl max-w-4xl mx-auto">
           <div className="size-16 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/40 flex items-center justify-center mx-auto text-2xl font-bold">
@@ -282,6 +287,8 @@ export function ProjectorAuctionFloor({
                 isActive={activeLot.status === 'in_progress' && sessionState.isLive}
                 isPaused={sessionState.isPaused}
                 pausedRemainingSeconds={sessionState.pausedRemainingSeconds}
+                lotId={activeLot.id}
+                highestBidderId={activeLot.highest_bidder_franchise_id}
                 size="lg"
               />
             </div>

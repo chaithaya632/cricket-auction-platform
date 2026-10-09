@@ -12,6 +12,7 @@ import React, { useState, useEffect } from 'react';
 import { ActiveLotCard } from '@/components/auction/active-lot-card';
 import { AuctionTimer } from '@/components/auction/auction-timer';
 import { BiddingControl } from '@/components/auction/bidding-control';
+import { GuestDrawRevealOverlay } from '@/components/auction/guest-draw-reveal-overlay';
 import {
   subscribeAuctionDelta,
   isLocalActionEchoWindowActive,
@@ -104,6 +105,7 @@ export function LiveAuctionRoomFloor({
                     secondary_color: null,
                   }
                 : prev.highest_bidder,
+              started_at: payload.startedAt || prev.started_at,
             };
           });
         }
@@ -186,6 +188,9 @@ export function LiveAuctionRoomFloor({
 
   return (
     <div className="lg:col-span-8 space-y-6">
+      {/* Cinematic Guest Draw Reveal Popup (§Feature 1) */}
+      <GuestDrawRevealOverlay seasonId={seasonId} currentLot={activeLot} />
+
       {scarcityReport?.isWarningActive && (
         <div className="rounded-2xl border-2 border-amber-500 bg-amber-950/80 px-5 py-3.5 text-center shadow-lg animate-pulse">
           <p className="text-amber-300 font-bold text-sm">

@@ -129,6 +129,71 @@ export function playBidGavelChime(lotId?: string | null, price?: number | null):
 
 export const playGavelChime = playBidGavelChime;
 
+/**
+ * Synthesizes a deep, authoritative wooden auction hammer strike sound.
+ * For 'sold': deep resonant gavel knock followed by gold chime ringing.
+ * For 'unsold': sharp, decisive single gavel strike.
+ */
+export function playHammerStrikeSound(
+  status: 'sold' | 'unsold',
+  lotId?: string | null
+): boolean {
+  if (!getAudioEnabled()) return false;
+  if (typeof window === 'undefined') return false;
+
+  if (lotId) {
+    const dedupeKey = `hammer:${lotId}:${status}`;
+    if (lastPlayedKey === dedupeKey) return false;
+    lastPlayedKey = dedupeKey;
+  }
+
+  try {
+    unlockAudioContext();
+    if (!audioCtx || audioCtx.state !== 'running') return true;
+
+    const now = audioCtx.currentTime;
+
+    // Gavel Head Impact (low frequency square/triangle click)
+    const impactOsc = audioCtx.createOscillator();
+    const impactGain = audioCtx.createGain();
+
+    impactOsc.type = 'triangle';
+    impactOsc.frequency.setValueAtTime(220, now);
+    impactOsc.frequency.exponentialRampToValueAtTime(55, now + 0.08);
+
+    impactGain.gain.setValueAtTime(0.4, now);
+    impactGain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+
+    impactOsc.connect(impactGain);
+    impactGain.connect(audioCtx.destination);
+
+    impactOsc.start(now);
+    impactOsc.stop(now + 0.26);
+
+    if (status === 'sold') {
+      const ringOsc = audioCtx.createOscillator();
+      const ringGain = audioCtx.createGain();
+
+      ringOsc.type = 'sine';
+      ringOsc.frequency.setValueAtTime(880, now + 0.04);
+      ringOsc.frequency.exponentialRampToValueAtTime(440, now + 0.4);
+
+      ringGain.gain.setValueAtTime(0.25, now + 0.04);
+      ringGain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+
+      ringOsc.connect(ringGain);
+      ringGain.connect(audioCtx.destination);
+
+      ringOsc.start(now + 0.04);
+      ringOsc.stop(now + 0.52);
+    }
+  } catch {
+    // Non-fatal if audio fails
+  }
+
+  return true;
+}
+
 export function resetAudioDeduplicationForTests(): void {
   lastPlayedKey = null;
 }

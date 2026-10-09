@@ -51,7 +51,7 @@ export function MatchRealtimeSync({
           coordinator.handleRealtimeEvent();
         }
       )
-      .subscribe((status) => {
+      .subscribe((status: any) => {
         if (
           status === 'SUBSCRIBED' ||
           status === 'CHANNEL_ERROR' ||
