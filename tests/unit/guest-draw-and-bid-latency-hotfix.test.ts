@@ -143,7 +143,7 @@ describe('Guest Draw Lookup & Bid Update Latency Hotfix Verification', () => {
             branch: 'CSE',
             academic_year: 3,
             programme: 'B.Tech',
-            cricheroes_profile_url: 'https://cricheroes.com/p/123',
+            cricheroes_url: 'https://cricheroes.com/p/123',
             players: [
               {
                 id: 'player-01',
@@ -180,10 +180,13 @@ describe('Guest Draw Lookup & Bid Update Latency Hotfix Verification', () => {
       expect(res.data?.playerName).toBe('Rohit Sharma');
       expect(res.data?.activeLot?.player?.full_name).toBe('Rohit Sharma');
       expect((res.data?.activeLot?.registration as any)?.roll_number).toBe('21CS001');
+      expect(res.data?.activeLot?.registration?.cricheroes_profile_url).toBe('https://cricheroes.com/p/123');
 
       const lotDetailsSelect = capturedSelects.find((s) => s.includes('player_season_registrations')) || '';
 
-      // CRITICAL FORENSIC CHECK: Projection must not request non-existent columns (phone, email, reg.roll_number)
+      // CRITICAL FORENSIC CHECK: Projection must query canonical cricheroes_url and not non-existent columns
+      expect(lotDetailsSelect).toContain('cricheroes_url');
+      expect(lotDetailsSelect).not.toContain('cricheroes_profile_url');
       expect(lotDetailsSelect).not.toContain('phone');
       expect(lotDetailsSelect).not.toContain('email');
       expect(lotDetailsSelect).toContain('roll_number'); // correctly placed under players

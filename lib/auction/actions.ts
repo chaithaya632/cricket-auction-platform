@@ -1516,7 +1516,7 @@ export async function callGuestDrawNumberAction(
           branch,
           academic_year,
           programme,
-          cricheroes_profile_url,
+          cricheroes_url,
           players (
             id,
             full_name,
@@ -1646,7 +1646,7 @@ export async function callGuestDrawNumberAction(
             branch: reg.branch || null,
             academic_year: reg.academic_year || null,
             programme: reg.programme || null,
-            cricheroes_profile_url: reg.cricheroes_profile_url || null,
+            cricheroes_profile_url: reg.cricheroes_url || null,
           }
         : {
             id: 'unknown-reg',
