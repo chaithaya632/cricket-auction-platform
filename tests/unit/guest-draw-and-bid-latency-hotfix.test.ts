@@ -365,7 +365,7 @@ describe('Guest Draw Lookup & Bid Update Latency Hotfix Verification', () => {
         expect.anything(),
         'fran-mi',
         seasonId,
-        { skipPlayerProfiles: true }
+        expect.objectContaining({ skipPlayerProfiles: true })
       );
     });
   });

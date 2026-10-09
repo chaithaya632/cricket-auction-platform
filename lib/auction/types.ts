@@ -90,6 +90,14 @@ export interface AuctionActionResult<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
+  debugTimings?: {
+    authMs?: number;
+    dataFetchMs?: number;
+    validationMs?: number;
+    dbCommitMs?: number;
+    broadcastMs?: number;
+    totalServerMs?: number;
+  };
 }
 
 export type RestoreToMode = 'resume_bidding' | 'return_to_queue';

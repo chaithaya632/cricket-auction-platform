@@ -57,8 +57,8 @@ export async function broadcastAuctionUpdate(
       });
     }
 
-    // Clean up the server-side channel after sending
-    await adminClient.removeChannel(channel);
+    // Clean up the server-side channel asynchronously without blocking caller
+    adminClient.removeChannel(channel).catch(() => {});
   } catch (err) {
     // Broadcast failure MUST NEVER fail the parent Server Action.
     // The database mutation already succeeded — clients will catch up

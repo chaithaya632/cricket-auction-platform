@@ -239,11 +239,19 @@ export async function placeBidAction(
   lotId: string,
   expectedPrice: number | null
 ): Promise<AuctionActionResult<{ newPrice: number }>> {
+  const t0 = performance.now();
+  let t1 = t0;
+  let t2 = t0;
+  let t3 = t0;
+  let t4 = t0;
+  let t5 = t0;
+
   try {
     // 1. Session authorization BEFORE any privileged database call
     const franchiseContext = await requireFranchise();
     const franchiseId = franchiseContext.assignedFranchise.id;
     const adminClient = createAdminClient();
+    t1 = performance.now();
 
     // 2. Fetch active lot, session config, and franchise squad concurrently
     const targetSeasonId = franchiseContext.activeSeason?.id || '00000000-0000-0000-0000-000000000001';
@@ -259,9 +267,17 @@ export async function placeBidAction(
           'first_bid_timer_seconds',
           'auction_subsequent_bid_timer_seconds',
           'subsequent_bid_timer_seconds',
+          'default_purse',
+          'min_squad_size',
+          'max_squad_size',
+          'min_auction_purchases',
         ]),
-      getFranchiseSquadData(adminClient, franchiseId, targetSeasonId, { skipPlayerProfiles: true }),
+      getFranchiseSquadData(adminClient, franchiseId, targetSeasonId, {
+        skipPlayerProfiles: true,
+        franchise: franchiseContext.assignedFranchise,
+      }),
     ]);
+    t2 = performance.now();
 
     const lot = lotRes.data;
     if (lotRes.error || !lot) {
@@ -367,6 +383,7 @@ export async function placeBidAction(
 
     const nextBid = validation.expectedBid;
     const now = new Date().toISOString();
+    t3 = performance.now();
 
     // 4. Execute atomic mutation flow
     const mutation = await executeAuctionMutationFlow(
@@ -398,6 +415,7 @@ export async function placeBidAction(
     if (!mutation.success) {
       return { success: false, error: mutation.error };
     }
+    t4 = performance.now();
 
     const franchise = franchiseContext.assignedFranchise;
     const durationSeconds = subsequentBidTimerVal;
@@ -415,12 +433,24 @@ export async function placeBidAction(
       durationSeconds,
       sequenceNumber: mutation.data?.event?.sequence_number,
     });
+    t5 = performance.now();
 
     // Note: Blocking synchronous revalidatePath calls removed from incremental bids.
     // Instantaneous delta updates (<50ms) are delivered to all connected devices via broadcastAuctionUpdate.
     // Terminal transitions (SOLD, UNSOLD, END_LOT) retain authoritative full-page revalidations.
 
-    return { success: true, data: { newPrice: nextBid } };
+    return {
+      success: true,
+      data: { newPrice: nextBid },
+      debugTimings: {
+        authMs: Math.round((t1 - t0) * 100) / 100,
+        dataFetchMs: Math.round((t2 - t1) * 100) / 100,
+        validationMs: Math.round((t3 - t2) * 100) / 100,
+        dbCommitMs: Math.round((t4 - t3) * 100) / 100,
+        broadcastMs: Math.round((t5 - t4) * 100) / 100,
+        totalServerMs: Math.round((t5 - t0) * 100) / 100,
+      },
+    };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to place bid.' };
   }

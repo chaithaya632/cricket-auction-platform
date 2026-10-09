@@ -4,7 +4,7 @@
 // ACC Auction Portal — Components: Franchise Bidding Control Panel
 // =============================================================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { placeBidAction } from '@/lib/auction/actions';
 import {
@@ -33,6 +33,7 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
   const [isPending, setIsPending] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [optimisticBid, setOptimisticBid] = useState<{ lotId: string; price: number } | null>(null);
+  const isSubmittingRef = useRef(false);
 
   useEffect(() => {
     setLiveLot((prev) => {
@@ -95,14 +96,19 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
     );
   }
 
-  // Active optimistic state applies if for this lot and not yet reflected in current_price
-  const hasOptimisticBid =
+  // Authoritative server status vs. optimistic pending provisional state
+  const isConfirmedLeader = activeLot.highest_bidder_franchise_id === franchise.id;
+  const isProvisionalPending = Boolean(
     optimisticBid !== null &&
     optimisticBid.lotId === activeLot.id &&
-    (activeLot.current_price === null || activeLot.current_price < optimisticBid.price);
+    !isConfirmedLeader &&
+    (activeLot.current_price === null || activeLot.current_price < optimisticBid.price)
+  );
 
-  const displayPrice = hasOptimisticBid ? optimisticBid.price : activeLot.current_price;
-  const isHighestBidder = hasOptimisticBid || activeLot.highest_bidder_franchise_id === franchise.id;
+  const displayPrice = isProvisionalPending
+    ? optimisticBid!.price
+    : activeLot.current_price;
+  const isHighestBidder = isConfirmedLeader || isProvisionalPending;
 
   const nextBid = calculateNextBid(displayPrice, activeLot.base_price);
   const isSquadFull = franchise.squadCount >= franchise.maxSquadSize;
@@ -111,7 +117,10 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
   const canBid = !isHighestBidder && !isSquadFull && !exceedsMaxBid && !isPending;
 
   const handlePlaceBid = async () => {
-    if (isPending || !activeLot) return;
+    // Immediate anti-duplicate guard: reject secondary clicks synchronously before React rerenders
+    if (isSubmittingRef.current || isPending || !activeLot) return;
+    isSubmittingRef.current = true;
+
     setErrorMsg(null);
     const bidTarget = nextBid;
     setOptimisticBid({ lotId: activeLot.id, price: bidTarget });
@@ -122,23 +131,38 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
         placeBidAction(activeLot.id, activeLot.current_price)
       );
       if (!res.success) {
+        // Revert provisional pending state immediately upon rejection
         setOptimisticBid(null);
         const isStale =
           res.error?.includes('STALE_BID_PRICE') ||
           res.error?.includes('no longer in progress') ||
           res.error?.includes('concurrent') ||
-          res.error?.includes('expected price');
+          res.error?.includes('expected price') ||
+          res.error?.includes('expired');
         if (isStale) {
           router.refresh();
           setErrorMsg('Another franchise placed a bid first. The auction has been updated.');
         } else {
           setErrorMsg(res.error || 'Failed to place bid.');
         }
+      } else if (res.data) {
+        // Server confirmed: update local floor immediately if broadcast hasn't already arrived
+        setLiveLot((prev) => {
+          const base = prev || activeLot;
+          return {
+            ...base,
+            current_price: res.data!.newPrice,
+            highest_bidder_franchise_id: franchise.id,
+          };
+        });
+        setOptimisticBid(null);
       }
     } catch (err: any) {
+      // Revert provisional pending state on network or unexpected error
       setOptimisticBid(null);
       setErrorMsg(err?.message || 'Failed to place bid.');
     } finally {
+      isSubmittingRef.current = false;
       setIsPending(false);
     }
   };
@@ -189,7 +213,14 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
       )}
 
       {/* Status Warning Pills */}
-      {isHighestBidder && (
+      {isProvisionalPending && (
+        <div className="rounded-lg bg-amber-950/60 border border-amber-800/60 p-3 text-xs text-amber-300 text-center font-medium flex items-center justify-center gap-2 animate-pulse">
+          <span className="inline-block size-2 rounded-full bg-amber-400 animate-ping" />
+          <span>✓ Your franchise currently holds the highest bid at ₹{displayPrice} (Pending Confirmation...)</span>
+        </div>
+      )}
+
+      {isConfirmedLeader && !isProvisionalPending && (
         <div className="rounded-lg bg-emerald-950/60 border border-emerald-800/60 p-3 text-xs text-emerald-300 text-center font-medium">
           ✓ Your franchise currently holds the highest bid at ₹{displayPrice}
         </div>
@@ -215,17 +246,19 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
         disabled={!canBid}
         className={`w-full py-4 px-6 rounded-xl font-bold text-base transition-all duration-150 shadow-lg flex items-center justify-center gap-2 touch-manipulation select-none ${
           canBid
-            ? 'bg-emerald-600 hover:bg-emerald-500 text-white active:scale-[0.99] cursor-pointer'
+            ? 'bg-emerald-600 hover:bg-emerald-500 text-white active:scale-[0.98] cursor-pointer'
             : 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700/50'
         }`}
       >
         {isPending ? (
           <span className="flex items-center gap-2">
             <span className="inline-block size-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            <span>Submitting ₹{nextBid}...</span>
+            <span>Submitting ₹{optimisticBid?.price || nextBid} (Pending)...</span>
           </span>
-        ) : isHighestBidder ? (
+        ) : isConfirmedLeader ? (
           <span>Leading Bidder (₹{displayPrice})</span>
+        ) : isProvisionalPending ? (
+          <span>Provisional Bid ₹{displayPrice} Pending</span>
         ) : exceedsMaxBid ? (
           <span>Bid Exceeds Permissible Limit</span>
         ) : (

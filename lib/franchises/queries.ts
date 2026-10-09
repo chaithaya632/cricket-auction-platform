@@ -21,6 +21,16 @@ import type {
 } from './types';
 import { parseCareerStats } from '@/lib/players/queries';
 
+// Module-level in-memory cache for static bucket rules during live auction
+const bucketRulesCache = new Map<string, { rules: DbBucketRule[]; expiresAt: number }>();
+
+export interface FranchiseSquadDataOptions {
+  skipPlayerProfiles?: boolean;
+  franchise?: DbFranchise;
+  cachedConfig?: Record<string, string>;
+  cachedBucketRules?: DbBucketRule[];
+}
+
 /**
  * Retrieves the complete squad, financial state, bucket progress, and roster
  * for an authenticated franchise in a specific season.
@@ -30,9 +40,14 @@ export const getFranchiseSquadData = cache(async (
   supabase: SupabaseClient,
   franchiseId: string,
   seasonId: string,
-  options?: { skipPlayerProfiles?: boolean }
+  options?: FranchiseSquadDataOptions
 ): Promise<FranchiseSquadSummary | null> => {
-  // 1-5. Concurrently fetch franchise, config, bucket rules, acquired lots, and leadership
+  const cachedRulesEntry = bucketRulesCache.get(seasonId);
+  const effectiveCachedBucketRules =
+    options?.cachedBucketRules ||
+    (cachedRulesEntry && cachedRulesEntry.expiresAt > Date.now() ? cachedRulesEntry.rules : null);
+
+  // Concurrently fetch necessary data, safely skipping redundant queries when cached/provided
   const [
     franchiseResult,
     configRowsResult,
@@ -41,24 +56,32 @@ export const getFranchiseSquadData = cache(async (
     membersResult,
     referralsResult,
   ] = await Promise.all([
-    supabase.from('franchises').select('*').eq('id', franchiseId).maybeSingle(),
-    supabase.from('season_config').select('key, value').eq('season_id', seasonId),
-    supabase
-      .from('bucket_rules')
-      .select('*')
-      .eq('season_id', seasonId)
-      .order('auction_order', { ascending: true }),
+    options?.franchise
+      ? Promise.resolve({ data: options.franchise, error: null })
+      : supabase.from('franchises').select('*').eq('id', franchiseId).maybeSingle(),
+    options?.cachedConfig
+      ? Promise.resolve({ data: null, error: null })
+      : supabase.from('season_config').select('key, value').eq('season_id', seasonId),
+    effectiveCachedBucketRules
+      ? Promise.resolve({ data: effectiveCachedBucketRules, error: null })
+      : supabase
+          .from('bucket_rules')
+          .select('*')
+          .eq('season_id', seasonId)
+          .order('auction_order', { ascending: true }),
     supabase
       .from('auction_lots')
       .select('id, registration_id, bucket, status, current_price, base_price')
       .eq('season_id', seasonId)
       .eq('highest_bidder_franchise_id', franchiseId)
       .in('status', ['sold', 'allotted', 'scouted']),
-    supabase
-      .from('franchise_members')
-      .select('role, player_registration_id')
-      .eq('franchise_id', franchiseId)
-      .eq('is_active', true),
+    options?.skipPlayerProfiles
+      ? Promise.resolve({ data: [], error: null })
+      : supabase
+          .from('franchise_members')
+          .select('role, player_registration_id')
+          .eq('franchise_id', franchiseId)
+          .eq('is_active', true),
     supabase
       .from('franchise_referrals')
       .select(`
@@ -73,13 +96,13 @@ export const getFranchiseSquadData = cache(async (
       .eq('status', 'approved'),
   ]);
 
-  const franchise = franchiseResult.data as DbFranchise | null;
+  const franchise = (options?.franchise || franchiseResult.data) as DbFranchise | null;
   if (!franchise) {
     return null;
   }
 
-  const configMap: Record<string, string> = {};
-  if (configRowsResult.data) {
+  const configMap: Record<string, string> = { ...(options?.cachedConfig || {}) };
+  if (!options?.cachedConfig && configRowsResult.data) {
     for (const c of configRowsResult.data as { key: string; value: string }[]) {
       configMap[c.key] = c.value;
     }
@@ -91,7 +114,11 @@ export const getFranchiseSquadData = cache(async (
   const minAuctionPurchases = parseInt(configMap['min_auction_purchases'] || '15', 10);
   const minBasePrice = 20;
 
-  const bucketRules: DbBucketRule[] = (bucketRulesResult.data as DbBucketRule[]) || [];
+  let bucketRules: DbBucketRule[] = effectiveCachedBucketRules || [];
+  if (!effectiveCachedBucketRules && bucketRulesResult.data) {
+    bucketRules = bucketRulesResult.data as DbBucketRule[];
+    bucketRulesCache.set(seasonId, { rules: bucketRules, expiresAt: Date.now() + 30000 });
+  }
 
   const rawLots = (lotsResult.data || []) as {
     id: string;
