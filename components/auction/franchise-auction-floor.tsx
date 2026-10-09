@@ -52,6 +52,31 @@ export function FranchiseAuctionFloor({
   const [sessionState, setSessionState] = useState<AuctionSessionState>(initialSessionState);
   const [franchiseData, setFranchiseData] = useState<FranchiseBiddingData | null>(franchise);
 
+  // Single authoritative owner for Guest Draw completion:
+  // pendingGuestDrawLotRef stores the incoming lot while GuestDrawRevealOverlay displays.
+  // When the overlay completes its 3,000 ms lifecycle, onTransitionComplete triggers setActiveLot.
+  const pendingGuestDrawLotRef = React.useRef<AuctionLotWithDetails | null>(null);
+  const guestDrawFallbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleGuestDrawTransitionComplete = React.useCallback(() => {
+    if (guestDrawFallbackTimerRef.current) {
+      clearTimeout(guestDrawFallbackTimerRef.current);
+      guestDrawFallbackTimerRef.current = null;
+    }
+    if (pendingGuestDrawLotRef.current) {
+      setActiveLot(pendingGuestDrawLotRef.current);
+      pendingGuestDrawLotRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (guestDrawFallbackTimerRef.current) {
+        clearTimeout(guestDrawFallbackTimerRef.current);
+      }
+    };
+  }, []);
+
   // Anti-stale sequence tracking ref
   const lastAuthoritativeSequenceRef = React.useRef<number>(0);
 
@@ -131,9 +156,16 @@ export function FranchiseAuctionFloor({
       } else if (payload.type === 'PLAYER_SELECTED') {
         const nextLot = payload.activeLot as AuctionLotWithDetails | null;
         if (payload.isGuestDraw && nextLot) {
-          setTimeout(() => {
-            setActiveLot(nextLot);
-          }, 3000);
+          pendingGuestDrawLotRef.current = nextLot;
+          if (guestDrawFallbackTimerRef.current) {
+            clearTimeout(guestDrawFallbackTimerRef.current);
+          }
+          guestDrawFallbackTimerRef.current = setTimeout(() => {
+            if (pendingGuestDrawLotRef.current) {
+              setActiveLot(pendingGuestDrawLotRef.current);
+              pendingGuestDrawLotRef.current = null;
+            }
+          }, 3500);
         } else if (
           activeLot &&
           (activeLot.status === 'sold' || activeLot.status === 'unsold') &&
@@ -244,7 +276,11 @@ export function FranchiseAuctionFloor({
       )}
 
       {/* Official Guest Draw Reveal Popup Overlay */}
-      <GuestDrawRevealOverlay seasonId={seasonId} currentLot={activeLot} />
+      <GuestDrawRevealOverlay
+        seasonId={seasonId}
+        currentLot={activeLot}
+        onTransitionComplete={handleGuestDrawTransitionComplete}
+      />
     </div>
   );
 }

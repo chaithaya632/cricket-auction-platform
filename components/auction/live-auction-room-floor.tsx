@@ -44,6 +44,31 @@ export function LiveAuctionRoomFloor({
   const [activeLot, setActiveLot] = useState<AuctionLotWithDetails | null>(initialActiveLot);
   const [sessionState, setSessionState] = useState<AuctionSessionState>(initialSessionState);
 
+  // Single authoritative owner for Guest Draw completion:
+  // pendingGuestDrawLotRef stores the incoming lot while GuestDrawRevealOverlay displays.
+  // When the overlay completes its 3,000 ms lifecycle, onTransitionComplete triggers setActiveLot.
+  const pendingGuestDrawLotRef = React.useRef<AuctionLotWithDetails | null>(null);
+  const guestDrawFallbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleGuestDrawTransitionComplete = React.useCallback(() => {
+    if (guestDrawFallbackTimerRef.current) {
+      clearTimeout(guestDrawFallbackTimerRef.current);
+      guestDrawFallbackTimerRef.current = null;
+    }
+    if (pendingGuestDrawLotRef.current) {
+      setActiveLot(pendingGuestDrawLotRef.current);
+      pendingGuestDrawLotRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (guestDrawFallbackTimerRef.current) {
+        clearTimeout(guestDrawFallbackTimerRef.current);
+      }
+    };
+  }, []);
+
   // Sync from server RSC props if no local action is in flight, guarded against stale RSC regressions
   useEffect(() => {
     if (isLocalActionEchoWindowActive()) return;
@@ -112,9 +137,16 @@ export function LiveAuctionRoomFloor({
       } else if (payload.type === 'PLAYER_SELECTED') {
         const nextLot = payload.activeLot as AuctionLotWithDetails | null;
         if (payload.isGuestDraw && nextLot) {
-          setTimeout(() => {
-            setActiveLot(nextLot);
-          }, 3000);
+          pendingGuestDrawLotRef.current = nextLot;
+          if (guestDrawFallbackTimerRef.current) {
+            clearTimeout(guestDrawFallbackTimerRef.current);
+          }
+          guestDrawFallbackTimerRef.current = setTimeout(() => {
+            if (pendingGuestDrawLotRef.current) {
+              setActiveLot(pendingGuestDrawLotRef.current);
+              pendingGuestDrawLotRef.current = null;
+            }
+          }, 3500);
         } else if (
           activeLot &&
           (activeLot.status === 'sold' || activeLot.status === 'unsold') &&
@@ -203,7 +235,11 @@ export function LiveAuctionRoomFloor({
   return (
     <div className="lg:col-span-8 space-y-6">
       {/* Cinematic Guest Draw Reveal Popup (§Feature 1) */}
-      <GuestDrawRevealOverlay seasonId={seasonId} currentLot={activeLot} />
+      <GuestDrawRevealOverlay
+        seasonId={seasonId}
+        currentLot={activeLot}
+        onTransitionComplete={handleGuestDrawTransitionComplete}
+      />
 
       {scarcityReport?.isWarningActive && (
         <div className="rounded-2xl border-2 border-amber-500 bg-amber-950/80 px-5 py-3.5 text-center shadow-lg animate-pulse">

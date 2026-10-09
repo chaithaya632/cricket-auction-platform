@@ -201,7 +201,7 @@ export function GuestDrawRevealOverlay({
       aria-modal="true"
       aria-label="Guest Draw Player Card Reveal"
       data-testid="guest-draw-reveal-overlay"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-300 opacity-100"
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-300 opacity-100"
     >
       {/* Ambient Golden Stage Spotlight */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-gradient-to-b from-amber-500/20 via-amber-600/10 to-transparent rounded-full blur-3xl pointer-events-none" />

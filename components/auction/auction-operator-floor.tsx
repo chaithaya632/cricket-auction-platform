@@ -8,7 +8,7 @@
 // preventing multi-second delays caused by full RSC tree revalidations.
 // =============================================================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ActiveLotCard } from '@/components/auction/active-lot-card';
 import { AuctionTimer } from '@/components/auction/auction-timer';
 import {
@@ -74,6 +74,36 @@ export function AuctionOperatorFloor({
   const [activeLot, setActiveLot] = useState<AuctionLotWithDetails | null>(initialActiveLot);
   const [sessionState, setSessionState] = useState<AuctionSessionState>(initialSessionState);
   const [upcomingLots, setUpcomingLots] = useState<AuctionLotWithDetails[]>(initialUpcomingLots);
+
+  // Single authoritative owner for Guest Draw completion:
+  // pendingGuestDrawLotRef stores the incoming lot while GuestDrawRevealOverlay displays.
+  // When the overlay completes its 3,000 ms lifecycle, onTransitionComplete triggers setActiveLot.
+  const pendingGuestDrawLotRef = useRef<AuctionLotWithDetails | null>(null);
+  const guestDrawFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleGuestDrawTransitionComplete = useCallback(() => {
+    if (guestDrawFallbackTimerRef.current) {
+      clearTimeout(guestDrawFallbackTimerRef.current);
+      guestDrawFallbackTimerRef.current = null;
+    }
+    if (pendingGuestDrawLotRef.current) {
+      setActiveLot(pendingGuestDrawLotRef.current);
+      pendingGuestDrawLotRef.current = null;
+    }
+  }, []);
+
+  const endLotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (guestDrawFallbackTimerRef.current) {
+        clearTimeout(guestDrawFallbackTimerRef.current);
+      }
+      if (endLotTimerRef.current) {
+        clearTimeout(endLotTimerRef.current);
+      }
+    };
+  }, []);
 
   // Synchronize with background RSC refreshes when new server data arrives (except during local action window)
   useEffect(() => {
@@ -165,30 +195,36 @@ export function AuctionOperatorFloor({
       } else if (payload.type === 'PLAYER_SELECTED') {
         const nextLot = payload.activeLot as AuctionLotWithDetails | null;
         if (payload.isGuestDraw) {
-          setTimeout(() => {
-            if (nextLot) {
-              setActiveLot(nextLot);
-            } else if (payload.lotId) {
-              setUpcomingLots((prev) => {
-                const found = prev.find((l) => l.id === payload.lotId);
-                if (found) {
-                  setActiveLot({
-                    ...found,
-                    status: 'in_progress',
-                    started_at: payload.startedAt || new Date().toISOString(),
-                    current_price: found.base_price,
-                    highest_bidder_franchise_id: null,
-                    highest_bidder: null,
-                  });
-                  return prev.filter((l) => l.id !== payload.lotId);
-                }
-                return prev;
-              });
+          // Coordinated reveal: store target lot; floor lot update is triggered
+          // when GuestDrawRevealOverlay completes via onTransitionComplete (3,000 ms).
+          let targetLot: AuctionLotWithDetails | null = nextLot;
+          if (!targetLot && payload.lotId) {
+            const found = upcomingLots.find((l) => l.id === payload.lotId);
+            if (found) {
+              targetLot = {
+                ...found,
+                status: 'in_progress',
+                started_at: payload.startedAt || new Date().toISOString(),
+                current_price: found.base_price,
+                highest_bidder_franchise_id: null,
+                highest_bidder: null,
+              };
             }
-            if (payload.lotId) {
-              setUpcomingLots((prev) => prev.filter((l) => l.id !== payload.lotId));
+          }
+          pendingGuestDrawLotRef.current = targetLot;
+          if (payload.lotId) {
+            setUpcomingLots((prev) => prev.filter((l) => l.id !== payload.lotId));
+          }
+          // Fallback timer (3,500ms) in case overlay unmounts or fails to render
+          if (guestDrawFallbackTimerRef.current) {
+            clearTimeout(guestDrawFallbackTimerRef.current);
+          }
+          guestDrawFallbackTimerRef.current = setTimeout(() => {
+            if (pendingGuestDrawLotRef.current) {
+              setActiveLot(pendingGuestDrawLotRef.current);
+              pendingGuestDrawLotRef.current = null;
             }
-          }, 3000);
+          }, 3500);
         } else if (activeLot && (activeLot.status === 'sold' || activeLot.status === 'unsold') && nextLot && nextLot.id !== activeLot.id) {
           setTimeout(() => {
             setActiveLot(nextLot);
@@ -304,7 +340,8 @@ export function AuctionOperatorFloor({
                   confirmSaleAction(activeLot.id)
                 );
                 if (res.success) {
-                  setTimeout(() => {
+                  if (endLotTimerRef.current) clearTimeout(endLotTimerRef.current);
+                  endLotTimerRef.current = setTimeout(() => {
                     if (res.data?.activeLot !== undefined) {
                       setActiveLot(res.data.activeLot);
                       if (res.data.activeLot) {
@@ -327,7 +364,8 @@ export function AuctionOperatorFloor({
                   markUnsoldAction(activeLot.id)
                 );
                 if (res.success) {
-                  setTimeout(() => {
+                  if (endLotTimerRef.current) clearTimeout(endLotTimerRef.current);
+                  endLotTimerRef.current = setTimeout(() => {
                     if (res.data?.activeLot !== undefined) {
                       setActiveLot(res.data.activeLot);
                       if (res.data.activeLot) {
@@ -374,6 +412,7 @@ export function AuctionOperatorFloor({
       <GuestDrawRevealOverlay
         seasonId={seasonId || sessionState.seasonId}
         currentLot={activeLot}
+        onTransitionComplete={handleGuestDrawTransitionComplete}
       />
     </div>
   );

@@ -18,7 +18,10 @@ import {
   getGuestDrawSnapshotAction,
   callGuestDrawNumberAction,
 } from '@/lib/auction/actions';
-import { runWithLocalActionTracking } from '@/components/auction/auction-realtime-sync';
+import {
+  runWithLocalActionTracking,
+  subscribeAuctionDelta,
+} from '@/components/auction/auction-realtime-sync';
 import type {
   GuestDrawCandidate,
   AuctionLotWithDetails,
@@ -71,6 +74,20 @@ export function GuestDrawDialog({
       loadSnapshot(target);
     }
   }, [isOpen, initialBucket]);
+
+  // Close modal immediately upon receipt of authoritative PLAYER_SELECTED event
+  // so the cinematic GuestDrawRevealOverlay displays with zero delay!
+  useEffect(() => {
+    if (!isOpen) return;
+    return subscribeAuctionDelta((payload) => {
+      if (payload.type === 'PLAYER_SELECTED' && payload.isGuestDraw) {
+        setIsDrawing(false);
+        setRevealingLotId(null);
+        setRevealedCandidate(null);
+        onClose();
+      }
+    });
+  }, [isOpen, onClose]);
 
   const loadSnapshot = async (bucket: string) => {
     setIsLoading(true);

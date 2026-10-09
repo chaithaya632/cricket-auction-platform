@@ -2339,11 +2339,8 @@ export function OperatorControls({
               onSessionStateChange(drawnSessionState);
             }
             setSuccessMsg(`Guest Draw: ${playerName} brought to floor!`);
-            if (drawnActiveLot !== undefined && onActiveLotChange) {
-              setTimeout(() => {
-                onActiveLotChange(drawnActiveLot);
-              }, 3000);
-            }
+            // Floor active lot transition is coordinated through GuestDrawRevealOverlay's
+            // onTransitionComplete at the 3,000 ms boundary in the parent floor coordinator.
           }}
         />
       )}
