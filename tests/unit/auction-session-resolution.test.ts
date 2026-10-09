@@ -24,6 +24,14 @@ describe('Auction Session Status Resolution — State Model & Calendar Transitio
       });
       expect(status).toBe('not_started');
     });
+
+    it('resolves seasonStatus="auction" with sessionConfigStatus="not_started" to "not_started"', () => {
+      const status = resolveAuctionSessionStatus({
+        seasonStatus: 'auction',
+        sessionConfigStatus: 'not_started',
+      });
+      expect(status).toBe('not_started');
+    });
   });
 
   // 2. Active Session

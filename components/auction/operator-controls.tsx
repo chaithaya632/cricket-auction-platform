@@ -900,11 +900,11 @@ export function OperatorControls({
           </div>
           <button
             type="button"
-            onClick={handleStartAuctionAgain}
-            disabled={isActionPending('start')}
+            onClick={() => setShowStartModeModal(true)}
+            disabled={isActionPending('start') || isActionPending('restart')}
             className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-950/50 transition-all duration-150 cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isActionPending('start') ? (
+            {isActionPending('start') || isActionPending('restart') ? (
               <>
                 <Loader2 className="size-3.5 animate-spin" />
                 <span>REOPENING FLOOR...</span>
@@ -980,7 +980,7 @@ export function OperatorControls({
           </div>
 
           {/* Floor Player notification if Guest Draw pre-start was used */}
-          {activeLot && (
+          {activeLot && activeLot.status === 'in_progress' && (
             <div className="max-w-md mx-auto p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center justify-center gap-2">
               <Sparkles className="size-4 shrink-0 text-amber-400" />
               <span>
@@ -2261,7 +2261,11 @@ export function OperatorControls({
                 type="button"
                 onClick={() => {
                   setShowStartModeModal(false);
-                  handleStartAuction();
+                  if (sessionState.isCompleted) {
+                    handleStartAuctionAgain();
+                  } else {
+                    handleStartAuction();
+                  }
                 }}
                 disabled={activeBuckets.length === 0 || isFloorMutationPending || isStateMutationPending}
                 className="w-full py-4 px-5 rounded-2xl font-black text-sm bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white shadow-xl shadow-emerald-950/50 transition-all flex flex-col items-center justify-center gap-1 cursor-pointer border border-emerald-400/30"

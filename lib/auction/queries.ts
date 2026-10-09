@@ -564,7 +564,12 @@ export function resolveAuctionSessionStatus(params: {
     return 'completed';
   }
 
-  // 2. If currently in operational auction mode
+  // 2. Explicitly configured not_started takes precedence
+  if (sessionConfigStatus === 'not_started') {
+    return 'not_started';
+  }
+
+  // 3. If currently in operational auction mode
   if (seasonStatus === 'auction') {
     if (sessionConfigStatus === 'paused') {
       return 'paused';
@@ -572,7 +577,7 @@ export function resolveAuctionSessionStatus(params: {
     return 'live';
   }
 
-  // 3. Unstarted (draft, registration, etc.)
+  // 4. Unstarted (draft, registration, etc.)
   return 'not_started';
 }
 

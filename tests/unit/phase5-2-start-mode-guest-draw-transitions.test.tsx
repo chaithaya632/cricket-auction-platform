@@ -69,6 +69,7 @@ describe('Phase 5.2 — Start Mode Dialog, Guest Draw & Transitions', () => {
     };
 
     it('opens Start-Mode Dialog with options when NOT_STARTED and Start Auction is clicked', () => {
+      const startSpy = vi.spyOn(auctionActions, 'startAuctionAction');
       render(
         <OperatorControls
           seasonId="season-001"
@@ -93,7 +94,44 @@ describe('Phase 5.2 — Start Mode Dialog, Guest Draw & Transitions', () => {
       expect(within(dialog).getByRole('button', { name: /START FROM BUCKETS/i })).toBeDefined();
       expect(within(dialog).getByRole('button', { name: /GUEST DRAW/i })).toBeDefined();
       expect(within(dialog).getByRole('button', { name: /CANCEL/i })).toBeDefined();
+
+      // STRICT CHECK: startAuctionAction was NOT invoked
+      expect(startSpy).not.toHaveBeenCalled();
     }, 20000);
+
+    it('opens Start Auction Mode Dialog when START AUCTION AGAIN is clicked on completed session', () => {
+      const restartSpy = vi.spyOn(auctionActions, 'startAuctionAgainAction');
+      const completedSessionState = {
+        status: 'completed' as const,
+        seasonId: 'season-001',
+        seasonName: 'ACC 2026',
+        isLive: false,
+        isPaused: false,
+        isNotStarted: false,
+        isCompleted: true,
+        startedAt: new Date().toISOString(),
+        activeLotId: null,
+      };
+
+      render(
+        <OperatorControls
+          seasonId="season-001"
+          activeLot={null}
+          upcomingLots={[]}
+          sessionState={completedSessionState}
+          initialActiveBuckets={['B1']}
+        />
+      );
+
+      const startAgainButton = screen.getByRole('button', { name: /START AUCTION AGAIN/i });
+      expect(startAgainButton).toBeDefined();
+
+      fireEvent.click(startAgainButton);
+
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toBeDefined();
+      expect(restartSpy).not.toHaveBeenCalled();
+    });
 
     it('executes startAuctionAction when START FROM BUCKETS is selected', async () => {
       const startSpy = vi.spyOn(auctionActions, 'startAuctionAction').mockResolvedValue({
