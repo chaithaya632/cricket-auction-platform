@@ -28,7 +28,20 @@ export const getActiveLot = cache(async (
   supabase: SupabaseClient,
   seasonId: string
 ): Promise<AuctionLotWithDetails | null> => {
-  // 1. Fetch current in-progress lot
+  // 0. Authoritative Floor Rule: If session is completed, floor is always empty
+  const { data: sessionConfig } = await supabase
+    .from('season_config')
+    .select('value')
+    .eq('season_id', seasonId)
+    .eq('key', 'auction_session_status')
+    .maybeSingle();
+
+  if (sessionConfig?.value === 'completed') {
+    return null;
+  }
+
+  // 1. Authoritative Floor Rule: ONLY lots with status = 'in_progress' are active floor lots.
+  // A SOLD or UNSOLD lot is NEVER an active floor lot.
   const { data: activeLot } = await supabase
     .from('auction_lots')
     .select('*')
@@ -36,29 +49,11 @@ export const getActiveLot = cache(async (
     .eq('status', 'in_progress')
     .maybeSingle();
 
-  let lot = activeLot;
-
-  // 2. If no lot is actively in progress, retrieve the most recently concluded lot (sold or unsold)
-  // so the hammer / "SOLD TO" banner remains prominently visible across all 5 operational views
-  // until the next player is brought to the floor.
-  if (!lot) {
-    const { data: recentLots } = await supabase
-      .from('auction_lots')
-      .select('*')
-      .eq('season_id', seasonId)
-      .in('status', ['sold', 'unsold'])
-      .order('ended_at', { ascending: false, nullsFirst: false })
-      .order('updated_at', { ascending: false })
-      .limit(1);
-
-    if (recentLots && recentLots.length > 0) {
-      lot = recentLots[0];
-    }
-  }
-
-  if (!lot) {
+  if (!activeLot) {
     return null;
   }
+
+  const lot = activeLot;
 
   // Fetch player details safely via public_players_view
   const { data: playerView } = await supabase

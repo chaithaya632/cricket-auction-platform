@@ -626,6 +626,21 @@ export async function confirmSaleAction(
       };
     }
 
+    // Session status check: cannot advance or sell lot if session is completed
+    const { data: sessionStatusRow } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', lot.season_id)
+      .eq('key', 'auction_session_status')
+      .maybeSingle();
+
+    if (sessionStatusRow?.value === 'completed') {
+      return {
+        success: false,
+        error: 'Cannot finalize lot: auction session has ended.',
+      };
+    }
+
     if (!lot.highest_bidder_franchise_id || lot.current_price === null) {
       return {
         success: false,
@@ -753,6 +768,21 @@ export async function markUnsoldAction(
       return {
         success: false,
         error: `Cannot mark unsold. Status is '${lot.status}', expected 'in_progress'.`,
+      };
+    }
+
+    // Session status check: cannot advance or mark unsold if session is completed
+    const { data: sessionStatusRow } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', lot.season_id)
+      .eq('key', 'auction_session_status')
+      .maybeSingle();
+
+    if (sessionStatusRow?.value === 'completed') {
+      return {
+        success: false,
+        error: 'Cannot finalize lot: auction session has ended.',
       };
     }
 
@@ -2695,6 +2725,8 @@ export async function endAuctionAction(
 
     await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_ENDED', {
       sessionStatus: 'completed',
+      lotId: null,
+      activeLot: null,
     });
 
     const sessionState: AuctionSessionState = {

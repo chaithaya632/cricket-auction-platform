@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // =============================================================================
 // ACC Auction Portal — Unit & Integration Test Suite
-// END LOT Auto-Advance, Pause Retention, Timer Re-Mount & Empty Queue Alert
+// END AUCTION Empty Floor + END LOT Auto-Advance & Authoritative Floor Rule
 // =============================================================================
 
 import React from 'react';
@@ -9,6 +9,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
 import { AuctionOperatorFloor } from '@/components/auction/auction-operator-floor';
 import * as auctionActions from '@/lib/auction/actions';
+import * as guardsLib from '@/lib/permissions/guards';
+import * as supabaseAdmin from '@/lib/supabase/admin';
+import { getActiveLot } from '@/lib/auction/queries';
 import { toast } from 'sonner';
 import type { AuctionSessionState, AuctionLotWithDetails } from '@/lib/auction/types';
 
@@ -96,7 +99,7 @@ function createMockLot(
   };
 }
 
-describe('END LOT — Automatic Progression, Timer Reset & Floor Synchronization', () => {
+describe('ACC Auction — Authoritative Floor Invariants, END LOT & END AUCTION', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -115,187 +118,399 @@ describe('END LOT — Automatic Progression, Timer Reset & Floor Synchronization
     pausedAt: null,
   };
 
-  it('1. Clicking END LOT with bids finalizes sale and automatically mounts next player with fresh timer', async () => {
-    const activeLot = createMockLot('lot-1', 1, 'B1', 'in_progress', 'fran-1', 500);
-    const nextLot = createMockLot('lot-2', 2, 'B1', 'in_progress', null, null);
+  const defaultAuctionConfig = {
+    firstBidTimerSeconds: 30,
+    subsequentBidTimerSeconds: 20,
+    minAuctionPurchases: 15,
+    maxSquadSize: 18,
+    minSquadSize: 15,
+    defaultPurse: 10000,
+  };
 
-    const confirmSaleSpy = vi
-      .spyOn(auctionActions, 'confirmSaleAction')
-      .mockResolvedValueOnce({
+  // ===========================================================================
+  // 1. AUTHORITATIVE FLOOR RULES IN GET_ACTIVE_LOT
+  // ===========================================================================
+  describe('Authoritative Floor Server Queries', () => {
+    it('1. getActiveLot returns null when session is COMPLETED', async () => {
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'season_config') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    maybeSingle: async () => ({ data: { value: 'completed' }, error: null }),
+                  }),
+                }),
+              }),
+            };
+          }
+          return { select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) }) };
+        }),
+      } as any;
+
+      const result = await getActiveLot(mockSupabase, 'season-001');
+      expect(result).toBeNull();
+    });
+
+    it('2. getActiveLot returns null when no lot is in_progress (SOLD/UNSOLD are never returned)', async () => {
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'season_config') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    maybeSingle: async () => ({ data: { value: 'live' }, error: null }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === 'auction_lots') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: (field: string, val: string) => {
+                    expect(field).toBe('status');
+                    expect(val).toBe('in_progress');
+                    return {
+                      maybeSingle: async () => ({ data: null, error: null }),
+                    };
+                  },
+                }),
+              }),
+            };
+          }
+          return {};
+        }),
+      } as any;
+
+      const result = await getActiveLot(mockSupabase, 'season-001');
+      expect(result).toBeNull();
+    });
+  });
+
+  // ===========================================================================
+  // 2. END LOT AUTOMATIC ADVANCE WORKFLOW
+  // ===========================================================================
+  describe('END LOT Behavior', () => {
+    it('3. Clicking END LOT with bids finalizes sale and automatically mounts next player with fresh timer', async () => {
+      const activeLot = createMockLot('lot-1', 1, 'B1', 'in_progress', 'fran-1', 500);
+      const nextLot = createMockLot('lot-2', 2, 'B1', 'in_progress', null, null);
+
+      const confirmSaleSpy = vi
+        .spyOn(auctionActions, 'confirmSaleAction')
+        .mockResolvedValueOnce({
+          success: true,
+          data: {
+            price: 500,
+            franchiseId: 'fran-1',
+            nextLotId: nextLot.id,
+            activeLot: nextLot,
+            sessionState: baseSessionState,
+          },
+        });
+
+      render(
+        <AuctionOperatorFloor
+          seasonId="season-001"
+          initialActiveLot={activeLot}
+          initialUpcomingLots={[nextLot]}
+          initialSessionState={baseSessionState}
+          config={defaultAuctionConfig}
+        />
+      );
+
+      expect(screen.getByText('Test Player 1')).toBeDefined();
+
+      const endLotBtn = screen.getByRole('button', { name: /END LOT/i });
+      await act(async () => {
+        fireEvent.click(endLotBtn);
+      });
+
+      expect(confirmSaleSpy).toHaveBeenCalledWith('lot-1');
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Player 2')).toBeDefined();
+      });
+    });
+
+    it('4. Clicking END LOT without bids marks unsold and automatically mounts next player with fresh timer', async () => {
+      const activeLot = createMockLot('lot-1', 1, 'B1', 'in_progress', null, null);
+      const nextLot = createMockLot('lot-2', 2, 'B1', 'in_progress', null, null);
+
+      const markUnsoldSpy = vi
+        .spyOn(auctionActions, 'markUnsoldAction')
+        .mockResolvedValueOnce({
+          success: true,
+          data: {
+            nextLotId: nextLot.id,
+            activeLot: nextLot,
+            sessionState: baseSessionState,
+          },
+        });
+
+      render(
+        <AuctionOperatorFloor
+          seasonId="season-001"
+          initialActiveLot={activeLot}
+          initialUpcomingLots={[nextLot]}
+          initialSessionState={baseSessionState}
+          config={defaultAuctionConfig}
+        />
+      );
+
+      expect(screen.getByText('Test Player 1')).toBeDefined();
+
+      const endLotBtn = screen.getByRole('button', { name: /END LOT/i });
+      await act(async () => {
+        fireEvent.click(endLotBtn);
+      });
+
+      expect(markUnsoldSpy).toHaveBeenCalledWith('lot-1');
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Player 2')).toBeDefined();
+      });
+    });
+
+    it('5. When no eligible players remain, END LOT alerts the operator and clears the floor', async () => {
+      const activeLot = createMockLot('lot-last', 10, 'B3', 'in_progress', null, null);
+
+      vi.spyOn(auctionActions, 'markUnsoldAction').mockResolvedValueOnce({
         success: true,
         data: {
-          price: 500,
-          franchiseId: 'fran-1',
-          nextLotId: nextLot.id,
-          activeLot: nextLot,
+          nextLotId: null,
+          activeLot: null,
           sessionState: baseSessionState,
+          message: 'No eligible players remain in the selected buckets.',
         },
       });
 
-    render(
-      <AuctionOperatorFloor
-        seasonId="season-001"
-        initialActiveLot={activeLot}
-        initialUpcomingLots={[nextLot]}
-        initialSessionState={baseSessionState}
-        config={{
-          firstBidTimerSeconds: 30,
-          subsequentBidTimerSeconds: 20,
-          minAuctionPurchases: 15,
-          maxSquadSize: 18,
-          minSquadSize: 15,
-          defaultPurse: 10000,
-        }}
-      />
-    );
+      render(
+        <AuctionOperatorFloor
+          seasonId="season-001"
+          initialActiveLot={activeLot}
+          initialUpcomingLots={[]}
+          initialSessionState={baseSessionState}
+          config={defaultAuctionConfig}
+        />
+      );
 
-    // Initial player is on floor
-    expect(screen.getByText('Test Player 1')).toBeDefined();
+      const endLotBtn = screen.getByRole('button', { name: /END LOT/i });
+      await act(async () => {
+        fireEvent.click(endLotBtn);
+      });
 
-    // Click END LOT button
-    const endLotBtn = screen.getByRole('button', { name: /END LOT/i });
-    await act(async () => {
-      fireEvent.click(endLotBtn);
+      await waitFor(() => {
+        expect(toast.info).toHaveBeenCalledWith('No eligible players remain in the selected buckets.');
+      });
     });
 
-    expect(confirmSaleSpy).toHaveBeenCalledWith('lot-1');
+    it('6. When auction session is paused, ending a lot keeps the session paused and preserves full duration for next lot', async () => {
+      const pausedSessionState: AuctionSessionState = {
+        ...baseSessionState,
+        status: 'paused',
+        isPaused: true,
+        pausedRemainingSeconds: 30,
+      };
 
-    // Next player must appear on floor automatically
-    await waitFor(() => {
-      expect(screen.getByText('Test Player 2')).toBeDefined();
-    });
-  });
+      const activeLot = createMockLot('lot-1', 1, 'B1', 'in_progress', null, null);
+      const nextLot = createMockLot('lot-2', 2, 'B1', 'in_progress', null, null);
 
-  it('2. Clicking END LOT without bids marks unsold and automatically mounts next player with fresh timer', async () => {
-    const activeLot = createMockLot('lot-1', 1, 'B1', 'in_progress', null, null);
-    const nextLot = createMockLot('lot-2', 2, 'B1', 'in_progress', null, null);
-
-    const markUnsoldSpy = vi
-      .spyOn(auctionActions, 'markUnsoldAction')
-      .mockResolvedValueOnce({
+      vi.spyOn(auctionActions, 'markUnsoldAction').mockResolvedValueOnce({
         success: true,
         data: {
           nextLotId: nextLot.id,
           activeLot: nextLot,
-          sessionState: baseSessionState,
+          sessionState: pausedSessionState,
         },
       });
 
-    render(
-      <AuctionOperatorFloor
-        seasonId="season-001"
-        initialActiveLot={activeLot}
-        initialUpcomingLots={[nextLot]}
-        initialSessionState={baseSessionState}
-        config={{
-          firstBidTimerSeconds: 30,
-          subsequentBidTimerSeconds: 20,
-          minAuctionPurchases: 15,
-          maxSquadSize: 18,
-          minSquadSize: 15,
-          defaultPurse: 10000,
-        }}
-      />
-    );
+      render(
+        <AuctionOperatorFloor
+          seasonId="season-001"
+          initialActiveLot={activeLot}
+          initialUpcomingLots={[nextLot]}
+          initialSessionState={pausedSessionState}
+          config={defaultAuctionConfig}
+        />
+      );
 
-    expect(screen.getByText('Test Player 1')).toBeDefined();
+      const endLotBtn = screen.getByRole('button', { name: /END LOT/i });
+      await act(async () => {
+        fireEvent.click(endLotBtn);
+      });
 
-    const endLotBtn = screen.getByRole('button', { name: /END LOT/i });
-    await act(async () => {
-      fireEvent.click(endLotBtn);
-    });
-
-    expect(markUnsoldSpy).toHaveBeenCalledWith('lot-1');
-
-    await waitFor(() => {
-      expect(screen.getByText('Test Player 2')).toBeDefined();
+      await waitFor(() => {
+        expect(screen.getByText('Test Player 2')).toBeDefined();
+      });
     });
   });
 
-  it('3. When no eligible players remain, END LOT alerts the operator and clears the floor', async () => {
-    const activeLot = createMockLot('lot-last', 10, 'B3', 'in_progress', null, null);
+  // ===========================================================================
+  // 3. END AUCTION EMPTY FLOOR AND SECURITY INVARIANTS
+  // ===========================================================================
+  describe('END AUCTION Invariants & Protection', () => {
+    it('7. Completed session displays empty floor on operator console without previous sold/unsold player', () => {
+      const completedSessionState: AuctionSessionState = {
+        ...baseSessionState,
+        status: 'completed',
+        isLive: false,
+        isCompleted: true,
+        activeLotId: null,
+      };
 
-    vi.spyOn(auctionActions, 'markUnsoldAction').mockResolvedValueOnce({
-      success: true,
-      data: {
-        nextLotId: null,
-        activeLot: null,
-        sessionState: baseSessionState,
-        message: 'No eligible players remain in the selected buckets.',
-      },
+      render(
+        <AuctionOperatorFloor
+          seasonId="season-001"
+          initialActiveLot={null}
+          initialUpcomingLots={[]}
+          initialSessionState={completedSessionState}
+          config={defaultAuctionConfig}
+        />
+      );
+
+      // Must display No Lot Currently In Progress empty state
+      expect(screen.getByText('No Lot Currently In Progress')).toBeDefined();
     });
 
-    render(
-      <AuctionOperatorFloor
-        seasonId="season-001"
-        initialActiveLot={activeLot}
-        initialUpcomingLots={[]}
-        initialSessionState={baseSessionState}
-        config={{
-          firstBidTimerSeconds: 30,
-          subsequentBidTimerSeconds: 20,
-          minAuctionPurchases: 15,
-          maxSquadSize: 18,
-          minSquadSize: 15,
-          defaultPurse: 10000,
-        }}
-      />
-    );
+    it('8. Completed session hides active lot controls and prevents lot reactivation', () => {
+      const completedSessionState: AuctionSessionState = {
+        ...baseSessionState,
+        status: 'completed',
+        isLive: false,
+        isCompleted: true,
+        activeLotId: null,
+      };
 
-    const endLotBtn = screen.getByRole('button', { name: /END LOT/i });
-    await act(async () => {
-      fireEvent.click(endLotBtn);
+      const activeLot = createMockLot('lot-1', 1, 'B1', 'in_progress', null, null);
+
+      render(
+        <AuctionOperatorFloor
+          seasonId="season-001"
+          initialActiveLot={activeLot}
+          initialUpcomingLots={[]}
+          initialSessionState={completedSessionState}
+          config={defaultAuctionConfig}
+        />
+      );
+
+      // Session completion banner must be visible
+      expect(screen.getByText('AUCTION SESSION COMPLETED')).toBeDefined();
+      // Active END LOT controls must not be displayed when session is completed
+      expect(screen.queryByRole('button', { name: /END LOT/i })).toBeNull();
     });
 
-    await waitFor(() => {
-      expect(toast.info).toHaveBeenCalledWith('No eligible players remain in the selected buckets.');
+    it('9. markUnsoldAction rejects execution if auction session has ended', async () => {
+      const mockSeason = { id: 'season-001', name: 'ACC 2026', status: 'completed' };
+      const mockUser = { id: 'admin-001', email: 'admin@acc.edu' };
+
+      vi.spyOn(guardsLib, 'requireAdmin').mockResolvedValue({
+        user: mockUser as any,
+        activeSeason: mockSeason as any,
+        roles: [],
+        assignedFranchise: null,
+        isSuperAdmin: true,
+        isOperator: false,
+        isAdmin: true,
+        isFranchise: false,
+        isPlayer: false,
+        isViewer: false,
+      });
+
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'auction_lots') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  single: async () => ({
+                    data: createMockLot('lot-1', 1, 'B1', 'in_progress'),
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === 'season_config') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    maybeSingle: async () => ({
+                      data: { value: 'completed' },
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          return {};
+        }),
+      };
+      vi.spyOn(supabaseAdmin, 'createAdminClient').mockReturnValue(mockSupabase as any);
+
+      const result = await auctionActions.markUnsoldAction('lot-1');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Cannot finalize lot: auction session has ended.');
     });
-  });
 
-  it('4. When auction session is paused, ending a lot keeps the session paused and preserves full duration for next lot', async () => {
-    const pausedSessionState: AuctionSessionState = {
-      ...baseSessionState,
-      status: 'paused',
-      isPaused: true,
-      pausedRemainingSeconds: 30,
-    };
+    it('10. confirmSaleAction rejects execution if auction session has ended', async () => {
+      const mockSeason = { id: 'season-001', name: 'ACC 2026', status: 'completed' };
+      const mockUser = { id: 'admin-001', email: 'admin@acc.edu' };
 
-    const activeLot = createMockLot('lot-1', 1, 'B1', 'in_progress', null, null);
-    const nextLot = createMockLot('lot-2', 2, 'B1', 'in_progress', null, null);
+      vi.spyOn(guardsLib, 'requireAdmin').mockResolvedValue({
+        user: mockUser as any,
+        activeSeason: mockSeason as any,
+        roles: [],
+        assignedFranchise: null,
+        isSuperAdmin: true,
+        isOperator: false,
+        isAdmin: true,
+        isFranchise: false,
+        isPlayer: false,
+        isViewer: false,
+      });
 
-    vi.spyOn(auctionActions, 'markUnsoldAction').mockResolvedValueOnce({
-      success: true,
-      data: {
-        nextLotId: nextLot.id,
-        activeLot: nextLot,
-        sessionState: pausedSessionState,
-      },
-    });
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'auction_lots') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  single: async () => ({
+                    data: createMockLot('lot-1', 1, 'B1', 'in_progress', 'fran-1', 500),
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === 'season_config') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    maybeSingle: async () => ({
+                      data: { value: 'completed' },
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          return {};
+        }),
+      };
+      vi.spyOn(supabaseAdmin, 'createAdminClient').mockReturnValue(mockSupabase as any);
 
-    render(
-      <AuctionOperatorFloor
-        seasonId="season-001"
-        initialActiveLot={activeLot}
-        initialUpcomingLots={[nextLot]}
-        initialSessionState={pausedSessionState}
-        config={{
-          firstBidTimerSeconds: 30,
-          subsequentBidTimerSeconds: 20,
-          minAuctionPurchases: 15,
-          maxSquadSize: 18,
-          minSquadSize: 15,
-          defaultPurse: 10000,
-        }}
-      />
-    );
-
-    const endLotBtn = screen.getByRole('button', { name: /END LOT/i });
-    await act(async () => {
-      fireEvent.click(endLotBtn);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText('Test Player 2')).toBeDefined();
+      const result = await auctionActions.confirmSaleAction('lot-1');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Cannot finalize lot: auction session has ended.');
     });
   });
 });

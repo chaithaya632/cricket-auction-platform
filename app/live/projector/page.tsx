@@ -157,7 +157,19 @@ export default async function ProjectorPage() {
 
         {/* Centerpiece: Active Lot & Stage Clock */}
         <div className="my-8 max-w-6xl mx-auto w-full space-y-8">
-          {sessionState.isNotStarted && !activeLot ? (
+          {sessionState.isCompleted ? (
+            <div className="rounded-3xl border-2 border-blue-500/30 bg-gradient-to-b from-blue-950/40 via-zinc-950 to-zinc-950 p-12 text-center space-y-4 shadow-2xl max-w-4xl mx-auto">
+              <div className="size-16 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/40 flex items-center justify-center mx-auto text-2xl font-bold">
+                ✓
+              </div>
+              <h2 className="text-3xl md:text-4xl font-black text-white uppercase tracking-wider">
+                Official Auction Session Completed
+              </h2>
+              <p className="text-sm md:text-base text-zinc-400 max-w-md mx-auto">
+                The auction floor is officially closed. Final rosters and squad distributions are preserved in the auction records.
+              </p>
+            </div>
+          ) : sessionState.isNotStarted && !activeLot ? (
             <div className="rounded-3xl border-2 border-dashed border-zinc-800 bg-zinc-950/80 p-12 text-center space-y-3">
               <h2 className="text-2xl font-bold text-zinc-300">Auction Floor On Standby</h2>
               <p className="text-sm text-zinc-500 max-w-lg mx-auto">
