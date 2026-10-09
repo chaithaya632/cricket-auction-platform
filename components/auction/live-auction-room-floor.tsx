@@ -43,17 +43,44 @@ export function LiveAuctionRoomFloor({
   const [activeLot, setActiveLot] = useState<AuctionLotWithDetails | null>(initialActiveLot);
   const [sessionState, setSessionState] = useState<AuctionSessionState>(initialSessionState);
 
-  // Sync from server RSC props if no local action is in flight
+  // Sync from server RSC props if no local action is in flight, guarded against stale RSC regressions
   useEffect(() => {
-    if (!isLocalActionEchoWindowActive()) {
-      setActiveLot(initialActiveLot);
-    }
-  }, [initialActiveLot]);
+    if (isLocalActionEchoWindowActive()) return;
+
+    setActiveLot((prev) => {
+      // Authoritative Floor Rule: When auction session is completed, the floor is unconditionally cleared
+      if (sessionState.isCompleted || sessionState.status === 'completed') {
+        return null;
+      }
+      if (!prev) return initialActiveLot;
+      if (!initialActiveLot) return prev;
+      if (prev.id === initialActiveLot.id) {
+        if (
+          prev.current_price !== null &&
+          (initialActiveLot.current_price === null || initialActiveLot.current_price < prev.current_price)
+        ) {
+          return prev;
+        }
+        if (
+          (prev.status === 'sold' || prev.status === 'unsold') &&
+          initialActiveLot.status === 'in_progress'
+        ) {
+          return prev;
+        }
+      }
+      return initialActiveLot;
+    });
+  }, [initialActiveLot, sessionState.isCompleted, sessionState.status]);
 
   useEffect(() => {
-    if (!isLocalActionEchoWindowActive()) {
-      setSessionState(initialSessionState);
-    }
+    if (isLocalActionEchoWindowActive()) return;
+
+    setSessionState((prev) => {
+      if (prev.isCompleted && !initialSessionState.isCompleted) {
+        return prev;
+      }
+      return initialSessionState;
+    });
   }, [initialSessionState]);
 
   // Subscribe to instantaneous broadcast deltas

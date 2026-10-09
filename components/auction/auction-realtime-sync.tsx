@@ -39,8 +39,32 @@ export function setLatestSequence(seasonId: string, seq: number): void {
   latestSequences.set(seasonId, Math.max(latestSequences.get(seasonId) ?? 0, seq));
 }
 
+// Calibrated clock offset between server UTC and client local Date.now()
+let serverClockOffsetMs = 0;
+let hasServerClockSample = false;
+
+export function getServerClockOffsetMs(): number {
+  return serverClockOffsetMs;
+}
+
+export function getCalibratedNow(): number {
+  return Date.now() + serverClockOffsetMs;
+}
+
+export function setServerClockOffsetForTests(offsetMs: number): void {
+  serverClockOffsetMs = offsetMs;
+  hasServerClockSample = true;
+}
+
+export function resetClockCalibrationForTests(): void {
+  serverClockOffsetMs = 0;
+  hasServerClockSample = false;
+}
+
 export function resetSequenceTrackingForTests(): void {
   latestSequences.clear();
+  serverClockOffsetMs = 0;
+  hasServerClockSample = false;
 }
 
 export function subscribeAuctionDelta(listener: AuctionDeltaListener): () => void {
@@ -51,7 +75,7 @@ export function subscribeAuctionDelta(listener: AuctionDeltaListener): () => voi
 }
 
 export function notifyAuctionDelta(payload: AuctionBroadcastPayload): boolean {
-  // 1. Monotonic sequence deduplication and ordering protection
+  // 1. Monotonic sequence deduplication, ordering protection & gap detection
   if (payload.sequenceNumber !== undefined && payload.seasonId) {
     const seqNum =
       typeof payload.sequenceNumber === 'string'
@@ -64,19 +88,46 @@ export function notifyAuctionDelta(payload: AuctionBroadcastPayload): boolean {
         // Discard stale or duplicate event
         return false;
       }
+
+      // Sequence gap detection: If current > 0 and seqNum > current + 1, one or more intermediate
+      // broadcast packets were lost. Schedule a background reconciliation refresh immediately.
+      if (current > 0 && seqNum > current + 1) {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn(
+            `[RealtimeSync] Sequence gap detected: season ${payload.seasonId} jumped from ${current} to ${seqNum}. Scheduling background reconciliation.`
+          );
+        }
+        for (const coord of activeCoordinators) {
+          coord.handleRealtimeEvent?.();
+        }
+      }
+
       latestSequences.set(payload.seasonId, seqNum);
     }
   }
 
-  // 2. Client latency telemetry calculation
+  // 2. Client latency telemetry & Server Clock Offset Calibration
   if (payload.serverTimestamp) {
-    const lagMs = Date.now() - new Date(payload.serverTimestamp).getTime();
-    if (lagMs >= 0 && lagMs < 60000) {
-      // Non-sensitive telemetry log
-      if (process.env.NODE_ENV === 'development') {
-        console.debug(
-          `[RealtimeSync] Event ${payload.type} seq=${payload.sequenceNumber ?? 'N/A'} lag=${lagMs}ms`
-        );
+    const serverTimeMs = new Date(payload.serverTimestamp).getTime();
+    if (!Number.isNaN(serverTimeMs)) {
+      const clientNow = Date.now();
+      const currentOffset = serverTimeMs - clientNow;
+
+      if (!hasServerClockSample) {
+        serverClockOffsetMs = currentOffset;
+        hasServerClockSample = true;
+      } else {
+        // Exponential moving average filter (alpha = 0.25) to smooth out transit jitter
+        serverClockOffsetMs = Math.round(serverClockOffsetMs * 0.75 + currentOffset * 0.25);
+      }
+
+      const lagMs = clientNow + serverClockOffsetMs - serverTimeMs;
+      if (lagMs >= 0 && lagMs < 60000) {
+        if (process.env.NODE_ENV === 'development') {
+          console.debug(
+            `[RealtimeSync] Event ${payload.type} seq=${payload.sequenceNumber ?? 'N/A'} lag=${lagMs}ms clockOffset=${serverClockOffsetMs}ms`
+          );
+        }
       }
     }
   }
@@ -100,6 +151,7 @@ let activeLocalActionCount = 0;
 const activeCoordinators = new Set<{
   notifyLocalActionStarted: () => void;
   notifyLocalActionCompleted: (didMutate: boolean) => void;
+  handleRealtimeEvent?: () => void;
 }>();
 
 export function isLocalActionEchoWindowActive(): boolean {

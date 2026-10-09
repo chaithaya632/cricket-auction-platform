@@ -23,6 +23,7 @@ import {
 import {
   runWithLocalActionTracking,
   subscribeAuctionDelta,
+  getCalibratedNow,
 } from '@/components/auction/auction-realtime-sync';
 
 interface AuctionTimerProps {
@@ -157,7 +158,7 @@ export function AuctionTimer({
           ? pausedRemainingSeconds
           : remaining;
       resumeAnchorRef.current = {
-        resumedAt: Date.now(),
+        resumedAt: getCalibratedNow(),
         remainingAtResume: baseRemaining,
         startedAtWhenResumed: effectiveStartedAt,
       };
@@ -171,6 +172,7 @@ export function AuctionTimer({
     }
 
     const computeLiveRemaining = () => {
+      const nowMs = getCalibratedNow();
       // If we have an active resume anchor and effectiveStartedAt hasn't changed yet,
       // count down smoothly from the anchor to eliminate the 20 -> 16 -> 20 jump.
       if (resumeAnchorRef.current) {
@@ -178,13 +180,13 @@ export function AuctionTimer({
           // Parent/server caught up with the updated started_at timestamp
           resumeAnchorRef.current = null;
         } else {
-          const elapsedSec = (Date.now() - resumeAnchorRef.current.resumedAt) / 1000;
+          const elapsedSec = (nowMs - resumeAnchorRef.current.resumedAt) / 1000;
           return Math.max(0, Math.ceil(resumeAnchorRef.current.remainingAtResume - elapsedSec));
         }
       }
 
       const deadline = new Date(effectiveStartedAt).getTime() + effectiveDuration * 1000;
-      return Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      return Math.max(0, Math.ceil((deadline - nowMs) / 1000));
     };
 
     const initialLeft = computeLiveRemaining();

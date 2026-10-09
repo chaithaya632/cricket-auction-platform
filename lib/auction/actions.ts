@@ -250,10 +250,9 @@ export async function placeBidAction(
       adminClient.from('auction_lots').select('*').eq('id', lotId).single(),
       adminClient
         .from('season_config')
-        .select('value')
+        .select('key, value')
         .eq('season_id', targetSeasonId)
-        .eq('key', 'auction_session_status')
-        .maybeSingle(),
+        .in('key', ['auction_session_status', 'auction_subsequent_bid_timer_seconds']),
       getFranchiseSquadData(adminClient, franchiseId, targetSeasonId),
     ]);
 
@@ -266,11 +265,26 @@ export async function placeBidAction(
       return { success: false, error: 'Lot is no longer in progress.' };
     }
 
-    const sessionConfig = sessionConfigRes.data;
-    if (sessionConfig?.value === 'paused') {
+    const configRows = sessionConfigRes.data;
+    let sessionStatusVal: string | null = null;
+    let subsequentBidTimerVal = 20;
+
+    if (Array.isArray(configRows)) {
+      for (const row of configRows) {
+        if (row.key === 'auction_session_status') sessionStatusVal = row.value;
+        if (row.key === 'auction_subsequent_bid_timer_seconds' && row.value) {
+          const parsed = parseInt(row.value, 10);
+          if (!isNaN(parsed)) subsequentBidTimerVal = parsed;
+        }
+      }
+    } else if (configRows && typeof configRows === 'object' && 'value' in configRows) {
+      sessionStatusVal = (configRows as any).value;
+    }
+
+    if (sessionStatusVal === 'paused') {
       return { success: false, error: 'Cannot place bid: auction session is currently paused.' };
     }
-    if (sessionConfig?.value === 'completed') {
+    if (sessionStatusVal === 'completed') {
       return { success: false, error: 'Cannot place bid: auction session has ended.' };
     }
 
@@ -351,13 +365,7 @@ export async function placeBidAction(
     }
 
     const franchise = franchiseContext.assignedFranchise;
-    const { data: timerConfig } = await adminClient
-      .from('season_config')
-      .select('value')
-      .eq('season_id', targetSeasonId)
-      .eq('key', 'auction_subsequent_bid_timer_seconds')
-      .maybeSingle();
-    const durationSeconds = timerConfig?.value ? parseInt(timerConfig.value, 10) : 20;
+    const durationSeconds = subsequentBidTimerVal;
 
     // Immediate post-commit broadcast with sequenceNumber to all connected devices
     await broadcastAuctionUpdate(lot.season_id, 'BID_PLACED', {
@@ -695,13 +703,7 @@ export async function confirmSaleAction(
     }
 
     // Preserve pause config if session is currently paused
-    const { data: currentStatusConfig } = await adminClient
-      .from('season_config')
-      .select('value')
-      .eq('season_id', lot.season_id)
-      .eq('key', 'auction_session_status')
-      .maybeSingle();
-    const isSessionPaused = currentStatusConfig?.value === 'paused';
+    const isSessionPaused = sessionStatusRow?.value === 'paused';
 
     if (!isSessionPaused) {
       await adminClient
@@ -836,13 +838,7 @@ export async function markUnsoldAction(
     }
 
     // Preserve pause config if session is currently paused
-    const { data: currentStatusConfig } = await adminClient
-      .from('season_config')
-      .select('value')
-      .eq('season_id', lot.season_id)
-      .eq('key', 'auction_session_status')
-      .maybeSingle();
-    const isSessionPaused = currentStatusConfig?.value === 'paused';
+    const isSessionPaused = sessionStatusRow?.value === 'paused';
 
     if (!isSessionPaused) {
       await adminClient

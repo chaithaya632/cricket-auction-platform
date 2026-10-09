@@ -51,17 +51,49 @@ export function FranchiseAuctionFloor({
   const [sessionState, setSessionState] = useState<AuctionSessionState>(initialSessionState);
   const [franchiseData, setFranchiseData] = useState<FranchiseBiddingData | null>(franchise);
 
-  // Sync from server RSC props if no local action is in flight
+  // Anti-stale sequence tracking ref
+  const lastAuthoritativeSequenceRef = React.useRef<number>(0);
+
+  // Sync from server RSC props if no local action is in flight, guarded against stale RSC regressions
   useEffect(() => {
-    if (!isLocalActionEchoWindowActive()) {
-      setActiveLot(initialActiveLot);
-    }
-  }, [initialActiveLot]);
+    if (isLocalActionEchoWindowActive()) return;
+
+    setActiveLot((prev) => {
+      // Authoritative Floor Rule: When auction session is completed, the floor is unconditionally cleared
+      if (sessionState.isCompleted || sessionState.status === 'completed') {
+        return null;
+      }
+      if (!prev) return initialActiveLot;
+      if (!initialActiveLot) return prev;
+      // If same lot, never let a stale RSC payload downgrade price or regress sold/unsold status
+      if (prev.id === initialActiveLot.id) {
+        if (
+          prev.current_price !== null &&
+          (initialActiveLot.current_price === null || initialActiveLot.current_price < prev.current_price)
+        ) {
+          return prev;
+        }
+        if (
+          (prev.status === 'sold' || prev.status === 'unsold') &&
+          initialActiveLot.status === 'in_progress'
+        ) {
+          return prev;
+        }
+      }
+      return initialActiveLot;
+    });
+  }, [initialActiveLot, sessionState.isCompleted, sessionState.status]);
 
   useEffect(() => {
-    if (!isLocalActionEchoWindowActive()) {
-      setSessionState(initialSessionState);
-    }
+    if (isLocalActionEchoWindowActive()) return;
+
+    setSessionState((prev) => {
+      // If in-memory state is completed, ignore older live RSC snapshots
+      if (prev.isCompleted && !initialSessionState.isCompleted) {
+        return prev;
+      }
+      return initialSessionState;
+    });
   }, [initialSessionState]);
 
   useEffect(() => {

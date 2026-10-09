@@ -55,19 +55,29 @@ export const getActiveLot = cache(async (
 
   const lot = activeLot;
 
-  // Fetch player details safely via public_players_view
-  const { data: playerView } = await supabase
-    .from('public_players_view')
-    .select('player_id, full_name, photo_url, programme, academic_year, branch, cricheroes_url, derived_player_type, is_batter, is_bowler, is_wicket_keeper, batting_style, bowling_style, experience_years')
-    .eq('registration_id', lot.registration_id)
-    .maybeSingle();
+  // Fetch player details, skills, and highest bidder concurrently
+  const [playerViewRes, skillProfileRes, franchiseViewRes] = await Promise.all([
+    supabase
+      .from('public_players_view')
+      .select('player_id, full_name, photo_url, programme, academic_year, branch, cricheroes_url, derived_player_type, is_batter, is_bowler, is_wicket_keeper, batting_style, bowling_style, experience_years')
+      .eq('registration_id', lot.registration_id)
+      .maybeSingle(),
+    supabase
+      .from('player_skill_profiles')
+      .select('batting_order, fielding_position, experience_description')
+      .eq('registration_id', lot.registration_id)
+      .maybeSingle(),
+    lot.highest_bidder_franchise_id
+      ? supabase
+          .from('public_franchises_view')
+          .select('franchise_id, name, short_name, color_primary, color_secondary')
+          .eq('franchise_id', lot.highest_bidder_franchise_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
 
-  // Fetch questionnaire responses & stats from player_skill_profiles
-  const { data: skillProfile } = await supabase
-    .from('player_skill_profiles')
-    .select('batting_order, fielding_position, experience_description')
-    .eq('registration_id', lot.registration_id)
-    .maybeSingle();
+  const playerView = playerViewRes.data;
+  const skillProfile = skillProfileRes.data;
 
   let parsedStats: Record<string, any> | null = null;
   if (skillProfile?.experience_description) {
@@ -81,12 +91,7 @@ export const getActiveLot = cache(async (
   // Fetch highest bidder franchise if exists
   let highestBidder = null;
   if (lot.highest_bidder_franchise_id) {
-    const { data: franchiseView } = await supabase
-      .from('public_franchises_view')
-      .select('franchise_id, name, short_name, color_primary, color_secondary')
-      .eq('franchise_id', lot.highest_bidder_franchise_id)
-      .maybeSingle();
-
+    const franchiseView = franchiseViewRes.data;
     if (franchiseView) {
       highestBidder = {
         id: franchiseView.franchise_id,

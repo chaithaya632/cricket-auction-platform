@@ -13,11 +13,16 @@ import {
   getLatestSequence,
   setLatestSequence,
   resetSequenceTrackingForTests,
+  getServerClockOffsetMs,
+  getCalibratedNow,
+  setServerClockOffsetForTests,
+  resetClockCalibrationForTests,
 } from '@/components/auction/auction-realtime-sync';
 import { FranchiseAuctionFloor } from '@/components/auction/franchise-auction-floor';
 import { ProjectorAuctionFloor } from '@/components/auction/projector-auction-floor';
 import { LiveAuctionRoomFloor } from '@/components/auction/live-auction-room-floor';
 import { BiddingControl } from '@/components/auction/bidding-control';
+import { AuctionTimer } from '@/components/auction/auction-timer';
 import { broadcastAuctionUpdate } from '@/lib/auction/realtime';
 import * as supabaseAdmin from '@/lib/supabase/admin';
 import type {
@@ -471,6 +476,163 @@ describe('ACC Auction — Global Realtime Synchronization Hotfix', () => {
       expect(screen.getByText(/Leading Bidder/i)).toBeDefined();
       expect(screen.getByText(/Your franchise currently holds the highest bid/i)).toBeDefined();
       expect(screen.getByRole('button')).toHaveProperty('disabled', true);
+    });
+  });
+
+  describe('6. Anti-Stale RSC Guard Invariants (Race Condition Immunity)', () => {
+    it('prevents older RSC snapshots from downgrading an in-memory price update', () => {
+      const initialLot = createMockLot('lot-1', 1, 'A', 'in_progress', 200, null);
+
+      const { rerender } = render(
+        <FranchiseAuctionFloor
+          seasonId="season-001"
+          initialActiveLot={initialLot}
+          initialSessionState={mockInitialSession}
+          franchise={mockFranchise}
+          config={mockConfig}
+        />
+      );
+
+      // In-memory delta arrives: price rises to ₹300
+      act(() => {
+        notifyAuctionDelta({
+          version: 2,
+          type: 'BID_PLACED',
+          seasonId: 'season-001',
+          sequenceNumber: 20,
+          lotId: 'lot-1',
+          currentPrice: 300,
+          highestBidderId: 'fran-rcb',
+        });
+      });
+
+      expect(screen.getByText('₹300')).toBeDefined();
+
+      // Later, a delayed RSC re-render delivers the older snapshot (₹200)
+      const staleRscLot = createMockLot('lot-1', 1, 'A', 'in_progress', 200, null);
+      rerender(
+        <FranchiseAuctionFloor
+          seasonId="season-001"
+          initialActiveLot={staleRscLot}
+          initialSessionState={mockInitialSession}
+          franchise={mockFranchise}
+          config={mockConfig}
+        />
+      );
+
+      // The Anti-Stale RSC Guard MUST reject the older snapshot and preserve ₹300!
+      expect(screen.getByText('₹300')).toBeDefined();
+    });
+
+    it('prevents older RSC snapshots from regressing a sold player back to in_progress', () => {
+      const initialLot = createMockLot('lot-1', 1, 'A', 'in_progress', 200, null);
+
+      const { rerender } = render(
+        <FranchiseAuctionFloor
+          seasonId="season-001"
+          initialActiveLot={initialLot}
+          initialSessionState={mockInitialSession}
+          franchise={mockFranchise}
+          config={mockConfig}
+        />
+      );
+
+      // Broadcast arrives: player SOLD
+      act(() => {
+        notifyAuctionDelta({
+          version: 2,
+          type: 'SALE',
+          seasonId: 'season-001',
+          sequenceNumber: 21,
+          lotId: 'lot-1',
+          currentPrice: 500,
+        });
+      });
+
+      // Older RSC arrives with lot still 'in_progress'
+      const staleRscLot = createMockLot('lot-1', 1, 'A', 'in_progress', 200, null);
+      rerender(
+        <FranchiseAuctionFloor
+          seasonId="season-001"
+          initialActiveLot={staleRscLot}
+          initialSessionState={mockInitialSession}
+          franchise={mockFranchise}
+          config={mockConfig}
+        />
+      );
+
+      // Status must not regress
+      expect(screen.queryByText('in_progress')).toBeNull();
+    });
+  });
+
+  describe('7. Server Clock Skew Calibration & Zero-Drift Timer Synchronization', () => {
+    it('calibrates client clock offset from authoritative server timestamps', () => {
+      resetClockCalibrationForTests();
+
+      // Simulate client clock that is 3 seconds BEHIND server time
+      const realNow = Date.now();
+      const serverAnchorTime = new Date(realNow + 3000).toISOString();
+
+      notifyAuctionDelta({
+        version: 2,
+        type: 'BID_PLACED',
+        seasonId: 'season-001',
+        sequenceNumber: 30,
+        serverTimestamp: serverAnchorTime,
+      });
+
+      // Offset must calibrate to approximately +3000ms
+      const offset = getServerClockOffsetMs();
+      expect(offset).toBeGreaterThanOrEqual(2900);
+      expect(offset).toBeLessThanOrEqual(3100);
+    });
+
+    it('calculates countdown accurately using calibrated server time', () => {
+      // Simulate client clock with 5000ms positive offset
+      setServerClockOffsetForTests(5000);
+
+      // Lot started 10s ago in server time. Duration = 30s. Remaining should be exactly 20s.
+      const serverStartedAt = new Date(Date.now() + 5000 - 10000).toISOString();
+
+      render(
+        <AuctionTimer
+          startedAt={serverStartedAt}
+          durationSeconds={30}
+          isActive={true}
+          isPaused={false}
+        />
+      );
+
+      // With 5s offset calibrated, remaining must be exactly 20s (not 25s or 15s)
+      expect(screen.getByText('20s')).toBeDefined();
+    });
+  });
+
+  describe('8. Sequence Gap Detection & Background Reconciliation', () => {
+    it('detects missing sequence numbers and triggers background reconciliation', () => {
+      const listener = vi.fn();
+      const unsubscribe = subscribeAuctionDelta(listener);
+
+      setLatestSequence('season-001', 5);
+
+      // Packet arrives with sequenceNumber = 8 (missed 6 and 7!)
+      const gapPayload: AuctionBroadcastPayload = {
+        version: 2,
+        type: 'BID_PLACED',
+        seasonId: 'season-001',
+        sequenceNumber: 8,
+        currentPrice: 400,
+      };
+
+      const accepted = notifyAuctionDelta(gapPayload);
+
+      // The new authoritative packet must still be accepted
+      expect(accepted).toBe(true);
+      expect(getLatestSequence('season-001')).toBe(8);
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ sequenceNumber: 8 }));
+
+      unsubscribe();
     });
   });
 });

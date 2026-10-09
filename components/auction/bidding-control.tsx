@@ -35,7 +35,18 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
   const [optimisticBid, setOptimisticBid] = useState<{ lotId: string; price: number } | null>(null);
 
   useEffect(() => {
-    setLiveLot(lot);
+    setLiveLot((prev) => {
+      if (!lot) return null;
+      if (!prev || prev.id !== lot.id) return lot;
+      // Anti-stale guard: never downgrade current price if an in-memory broadcast has a higher price
+      if (
+        prev.current_price !== null &&
+        (lot.current_price === null || lot.current_price < prev.current_price)
+      ) {
+        return prev;
+      }
+      return lot;
+    });
   }, [lot?.id, lot?.current_price, lot?.highest_bidder_franchise_id, lot?.status]);
 
   useEffect(() => {
