@@ -33,6 +33,7 @@ interface GuestDrawDialogProps {
   activeBuckets: string[];
   initialBucket?: string;
   hasActiveFloorPlayer?: boolean;
+  isRestart?: boolean;
   onPlayerDrawn?: (
     lotId: string,
     playerName: string,
@@ -48,6 +49,7 @@ export function GuestDrawDialog({
   activeBuckets,
   initialBucket,
   hasActiveFloorPlayer = false,
+  isRestart = false,
   onPlayerDrawn,
 }: GuestDrawDialogProps) {
   const [selectedBucket, setSelectedBucket] = useState<string>(
@@ -110,7 +112,9 @@ export function GuestDrawDialog({
     try {
       // 2. Start server action concurrently with minimum 2-second visual reveal hold
       const actionPromise = runWithLocalActionTracking(() =>
-        callGuestDrawNumberAction(candidate.lotId, candidate.bucket, seasonId)
+        isRestart
+          ? callGuestDrawNumberAction(candidate.lotId, candidate.bucket, seasonId, { isRestart: true })
+          : callGuestDrawNumberAction(candidate.lotId, candidate.bucket, seasonId)
       );
       const holdPromise = new Promise((resolve) => setTimeout(resolve, 2000));
 

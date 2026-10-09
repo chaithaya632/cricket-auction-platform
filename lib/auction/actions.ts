@@ -1017,7 +1017,8 @@ export async function drawRandomLotFromBucketsAction(): Promise<
 export async function callGuestDrawNumberAction(
   lotIdOrDrawNumber: string | number,
   bucket: string,
-  seasonId?: string
+  seasonId?: string,
+  options?: { isRestart?: boolean }
 ): Promise<AuctionActionResult<{
   lotId: string;
   drawNumber: number;
@@ -1033,15 +1034,10 @@ export async function callGuestDrawNumberAction(
       '00000000-0000-0000-0000-000000000001';
     const adminClient = createAdminClient();
 
-    // 1. Session check
-    const { data: sessionConfig } = await adminClient
-      .from('season_config')
-      .select('value')
-      .eq('season_id', targetSeasonId)
-      .eq('key', 'auction_session_status')
-      .maybeSingle();
+    // 1. Authoritative Session check
+    const currentSessionState = await getAuctionSessionState(adminClient, targetSeasonId);
 
-    if (sessionConfig?.value === 'completed') {
+    if (currentSessionState.isCompleted && !options?.isRestart) {
       return { success: false, error: 'Cannot select lot: auction session has ended.' };
     }
 
@@ -1191,9 +1187,9 @@ export async function callGuestDrawNumberAction(
       .eq('season_id', targetSeasonId)
       .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
 
-    // 5. Automatically activate the auction session if called before auction start
-    const isSessionLive = sessionConfig?.value === 'live';
-    if (!isSessionLive) {
+    // 5. Automatically activate the auction session if called before auction start or during explicit restart
+    const isSessionLive = currentSessionState.status === 'live';
+    if (!isSessionLive || options?.isRestart) {
       await adminClient
         .from('seasons')
         .update({ status: 'auction', updated_at: now })
@@ -1222,6 +1218,30 @@ export async function callGuestDrawNumberAction(
         },
         { onConflict: 'season_id,key' }
       );
+
+      // Clean up ended_at and record audit log if this was an explicit restart
+      if (options?.isRestart || currentSessionState.isCompleted) {
+        await adminClient
+          .from('season_config')
+          .delete()
+          .eq('season_id', targetSeasonId)
+          .eq('key', 'auction_ended_at');
+
+        await writeAuditLog(
+          {
+            seasonId: targetSeasonId,
+            actorUserId: adminContext.user.id,
+            action: 'AUCTION_SESSION_REOPENED',
+            entityType: 'auction_session',
+            entityId: targetSeasonId,
+            reason: `Auction session reopened by operator via Guest Draw (Card #${lot.draw_number})`,
+            metadata: { restarted_at: now, multi_session: true, lot_id: lot.id },
+          },
+          adminClient
+        );
+
+        await broadcastAuctionUpdate(targetSeasonId, 'AUCTION_RESTARTED');
+      }
 
       await broadcastAuctionUpdate(targetSeasonId, 'AUCTION_STARTED', {
         lotId: lot.id,

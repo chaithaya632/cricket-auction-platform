@@ -541,7 +541,12 @@ export function resolveAuctionSessionStatus(params: {
     referenceDate = new Date(),
   } = params;
 
-  // 1. If season or session was explicitly marked completed
+  // 1. Explicitly configured not_started takes absolute precedence
+  if (sessionConfigStatus === 'not_started') {
+    return 'not_started';
+  }
+
+  // 2. If season or session was explicitly marked completed
   const isExplicitlyCompleted =
     seasonStatus === 'completed' ||
     seasonStatus === 'archived' ||
@@ -562,11 +567,6 @@ export function resolveAuctionSessionStatus(params: {
 
     // Persists for the current completed session
     return 'completed';
-  }
-
-  // 2. Explicitly configured not_started takes precedence
-  if (sessionConfigStatus === 'not_started') {
-    return 'not_started';
   }
 
   // 3. If currently in operational auction mode

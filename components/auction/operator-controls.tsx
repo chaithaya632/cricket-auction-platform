@@ -2317,6 +2317,7 @@ export function OperatorControls({
           activeBuckets={activeBuckets}
           initialBucket={activeBuckets[0] || 'B3'}
           hasActiveFloorPlayer={activeLot?.status === 'in_progress'}
+          isRestart={sessionState.isCompleted}
           onPlayerDrawn={(_lotId, playerName, drawnActiveLot, drawnSessionState) => {
             setShowGuestDrawModal(false);
             if (drawnActiveLot !== undefined && onActiveLotChange) {
