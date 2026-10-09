@@ -402,9 +402,14 @@ export async function autoAdvanceToNextLot(
   adminClient: any,
   seasonId: string,
   actorUserId: string
-): Promise<{ advanced: boolean; nextLotId: string | null; nextLot?: AuctionLotWithDetails | null }> {
+): Promise<{
+  advanced: boolean;
+  nextLotId: string | null;
+  nextLot: AuctionLotWithDetails | null;
+  message?: string;
+}> {
   try {
-    // 1. Check session state - do not advance if completed
+    // 1. Check session state - only advance if session is live or paused
     const { data: sessionConfig } = await adminClient
       .from('season_config')
       .select('value')
@@ -412,9 +417,10 @@ export async function autoAdvanceToNextLot(
       .eq('key', 'auction_session_status')
       .maybeSingle();
 
-    if (sessionConfig?.value === 'completed') {
+    if (sessionConfig?.value === 'completed' || sessionConfig?.value === 'not_started') {
       return { advanced: false, nextLotId: null, nextLot: null };
     }
+    const isPaused = sessionConfig?.value === 'paused';
 
     // 2. Ensure no lot is currently in_progress
     const { data: activeLot } = await adminClient
@@ -466,21 +472,32 @@ export async function autoAdvanceToNextLot(
       .limit(100);
 
     if (!pendingLots || pendingLots.length === 0) {
-      return { advanced: false, nextLotId: null, nextLot: null };
+      return {
+        advanced: false,
+        nextLotId: null,
+        nextLot: null,
+        message: 'No eligible players remain in the selected buckets.',
+      };
     }
 
-    // 5. Deterministic sorting: active bucket priority first, then draw_number ASC
+    // 5. Deterministic sorting: active bucket priority first, round ASC, then draw_number ASC
     const nextLot = [...pendingLots].sort((a, b) => {
       const rankA = activeBuckets.indexOf(a.bucket);
       const rankB = activeBuckets.indexOf(b.bucket);
       const orderA = rankA === -1 ? 999 : rankA;
       const orderB = rankB === -1 ? 999 : rankB;
       if (orderA !== orderB) return orderA - orderB;
+      if (a.round !== b.round) return a.round - b.round;
       return a.draw_number - b.draw_number;
     })[0];
 
     if (!nextLot) {
-      return { advanced: false, nextLotId: null, nextLot: null };
+      return {
+        advanced: false,
+        nextLotId: null,
+        nextLot: null,
+        message: 'No eligible players remain in the selected buckets.',
+      };
     }
 
     const now = new Date().toISOString();
@@ -509,20 +526,8 @@ export async function autoAdvanceToNextLot(
     );
 
     if (!mutation.success) {
-      return { advanced: false, nextLotId: null, nextLot: null };
+      return { advanced: false, nextLotId: null, nextLot: null, message: mutation.error };
     }
-
-    // Clear pause states
-    await adminClient
-      .from('season_config')
-      .delete()
-      .eq('season_id', seasonId)
-      .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
-
-    revalidatePath('/live');
-    revalidatePath('/live/projector');
-    revalidatePath('/franchise/auction');
-    revalidatePath('/player/auction');
 
     const { data: timerConfig } = await adminClient
       .from('season_config')
@@ -533,21 +538,52 @@ export async function autoAdvanceToNextLot(
 
     const durationSeconds = timerConfig?.value ? parseInt(timerConfig.value, 10) : 30;
 
-    // Broadcast PLAYER_SELECTED for the new lot
+    // Handle paused state: preserve paused session and freeze timer at full duration
+    if (isPaused) {
+      await adminClient.from('season_config').upsert(
+        {
+          season_id: seasonId,
+          key: 'auction_lot_paused_remaining_seconds',
+          value: String(durationSeconds),
+          value_type: 'integer',
+          updated_at: now,
+        },
+        { onConflict: 'season_id,key' }
+      );
+    } else {
+      await adminClient
+        .from('season_config')
+        .delete()
+        .eq('season_id', seasonId)
+        .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
+    }
+
+    revalidatePath('/admin');
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin/queue');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+
+    const nextLotDetails = await getActiveLot(adminClient, seasonId);
+
+    // Broadcast PLAYER_SELECTED for the new lot with hydrated details
     await broadcastAuctionUpdate(seasonId, 'PLAYER_SELECTED', {
       lotId: nextLot.id,
       currentPrice: null,
       highestBidderId: null,
       startedAt: now,
       durationSeconds,
+      activeLot: nextLotDetails,
+      isPaused,
+      pausedRemainingSeconds: isPaused ? durationSeconds : null,
     });
 
-    const nextLotDetails = await getActiveLot(adminClient, seasonId);
-
     return { advanced: true, nextLotId: nextLot.id, nextLot: nextLotDetails };
-  } catch (err) {
+  } catch (err: any) {
     console.error('[autoAdvanceToNextLot] Error during automatic progression:', err);
-    return { advanced: false, nextLotId: null, nextLot: null };
+    return { advanced: false, nextLotId: null, nextLot: null, message: err?.message };
   }
 }
 
@@ -565,6 +601,7 @@ export async function confirmSaleAction(
     nextLotId?: string | null;
     activeLot?: AuctionLotWithDetails | null;
     sessionState?: AuctionSessionState;
+    message?: string;
   }>
 > {
   try {
@@ -624,12 +661,26 @@ export async function confirmSaleAction(
       return { success: false, error: mutation.error };
     }
 
-    await adminClient
+    // Preserve pause config if session is currently paused
+    const { data: currentStatusConfig } = await adminClient
       .from('season_config')
-      .delete()
+      .select('value')
       .eq('season_id', lot.season_id)
-      .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
+      .eq('key', 'auction_session_status')
+      .maybeSingle();
+    const isSessionPaused = currentStatusConfig?.value === 'paused';
 
+    if (!isSessionPaused) {
+      await adminClient
+        .from('season_config')
+        .delete()
+        .eq('season_id', lot.season_id)
+        .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
+    }
+
+    revalidatePath('/admin');
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
@@ -660,6 +711,7 @@ export async function confirmSaleAction(
         nextLotId: advanceResult.nextLotId,
         activeLot: advanceResult.nextLot ?? null,
         sessionState,
+        message: advanceResult.message,
       },
     };
   } catch (err: any) {
@@ -679,6 +731,7 @@ export async function markUnsoldAction(
     nextLotId?: string | null;
     activeLot?: AuctionLotWithDetails | null;
     sessionState?: AuctionSessionState;
+    message?: string;
   }>
 > {
   try {
@@ -731,12 +784,26 @@ export async function markUnsoldAction(
       return { success: false, error: mutation.error };
     }
 
-    await adminClient
+    // Preserve pause config if session is currently paused
+    const { data: currentStatusConfig } = await adminClient
       .from('season_config')
-      .delete()
+      .select('value')
       .eq('season_id', lot.season_id)
-      .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
+      .eq('key', 'auction_session_status')
+      .maybeSingle();
+    const isSessionPaused = currentStatusConfig?.value === 'paused';
 
+    if (!isSessionPaused) {
+      await adminClient
+        .from('season_config')
+        .delete()
+        .eq('season_id', lot.season_id)
+        .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
+    }
+
+    revalidatePath('/admin');
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
@@ -761,6 +828,7 @@ export async function markUnsoldAction(
         nextLotId: advanceResult.nextLotId,
         activeLot: advanceResult.nextLot ?? null,
         sessionState,
+        message: advanceResult.message,
       },
     };
   } catch (err: any) {

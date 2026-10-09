@@ -39,6 +39,7 @@ import {
 import type { BucketScarcityReport } from '@/domain/scarcity';
 import { getAudioEnabled, setAudioEnabled } from '@/lib/auction/audio';
 import { GuestDrawDialog } from '@/components/auction/guest-draw-dialog';
+import { toast } from 'sonner';
 import {
   Play,
   Pause,
@@ -643,7 +644,14 @@ export function OperatorControls({
           if (res.data?.sessionState) {
             onSessionStateChange?.(res.data.sessionState);
           }
-          setSuccessMsg(`Player SOLD for ₹${res.data?.price}!`);
+          if (res.data?.message) {
+            toast.info(res.data.message);
+          }
+          if (res.data?.activeLot) {
+            setSuccessMsg(`Player SOLD for ₹${res.data?.price}! Auto-advanced to next player.`);
+          } else {
+            setSuccessMsg(`Player SOLD for ₹${res.data?.price}! ${res.data?.message || ''}`);
+          }
         }
       }
     );
@@ -673,7 +681,14 @@ export function OperatorControls({
           if (res.data?.sessionState) {
             onSessionStateChange?.(res.data.sessionState);
           }
-          setSuccessMsg('Player passed and marked UNSOLD.');
+          if (res.data?.message) {
+            toast.info(res.data.message);
+          }
+          if (res.data?.activeLot) {
+            setSuccessMsg('Player passed and marked UNSOLD. Auto-advanced to next player.');
+          } else {
+            setSuccessMsg(`Player passed and marked UNSOLD. ${res.data?.message || ''}`);
+          }
         }
       }
     );

@@ -33,6 +33,7 @@ import {
   confirmSaleAction,
   markUnsoldAction,
 } from '@/lib/auction/actions';
+import { toast } from 'sonner';
 
 export interface AuctionOperatorFloorProps {
   seasonId?: string;
@@ -160,14 +161,19 @@ export function AuctionOperatorFloor({
           return { ...prev, status: 'unsold' };
         });
       } else if (payload.type === 'PLAYER_SELECTED') {
-        if (payload.lotId) {
+        if (payload.activeLot) {
+          setActiveLot(payload.activeLot as AuctionLotWithDetails);
+          if (payload.lotId) {
+            setUpcomingLots((prev) => prev.filter((l) => l.id !== payload.lotId));
+          }
+        } else if (payload.lotId) {
           setUpcomingLots((prev) => {
             const found = prev.find((l) => l.id === payload.lotId);
             if (found) {
               setActiveLot({
                 ...found,
                 status: 'in_progress',
-                started_at: new Date().toISOString(),
+                started_at: payload.startedAt || new Date().toISOString(),
                 current_price: found.base_price,
                 highest_bidder_franchise_id: null,
                 highest_bidder: null,
@@ -176,6 +182,14 @@ export function AuctionOperatorFloor({
             }
             return prev;
           });
+        }
+        if (payload.isPaused !== undefined) {
+          setSessionState((prev) => ({
+            ...prev,
+            isPaused: Boolean(payload.isPaused),
+            status: payload.isPaused ? 'paused' : 'live',
+            pausedRemainingSeconds: payload.pausedRemainingSeconds ?? prev.pausedRemainingSeconds,
+          }));
         }
       } else if (payload.type === 'TIMER_EXTENDED') {
         if (payload.lotId && payload.startedAt) {
@@ -203,6 +217,7 @@ export function AuctionOperatorFloor({
       {activeLot && (
         <div className="rounded-2xl border-2 border-zinc-700/50 bg-zinc-900/90 p-8 shadow-xl">
           <AuctionTimer
+            key={activeLot.id}
             startedAt={activeLot.started_at}
             durationSeconds={timerDuration}
             isActive={activeLot.status === 'in_progress' && sessionState.isLive}
@@ -254,8 +269,16 @@ export function AuctionOperatorFloor({
                   confirmSaleAction(activeLot.id)
                 );
                 if (res.success) {
-                  if (res.data?.activeLot !== undefined) setActiveLot(res.data.activeLot);
+                  if (res.data?.activeLot !== undefined) {
+                    setActiveLot(res.data.activeLot);
+                    if (res.data.activeLot) {
+                      setUpcomingLots((prev) => prev.filter((l) => l.id !== res.data!.activeLot!.id));
+                    }
+                  }
                   if (res.data?.sessionState) setSessionState(res.data.sessionState);
+                  if (res.data?.message) {
+                    toast.info(res.data.message);
+                  }
                 } else {
                   setActiveLot(prevActiveLot);
                   setSessionState(prevSessionState);
@@ -267,8 +290,16 @@ export function AuctionOperatorFloor({
                   markUnsoldAction(activeLot.id)
                 );
                 if (res.success) {
-                  if (res.data?.activeLot !== undefined) setActiveLot(res.data.activeLot);
+                  if (res.data?.activeLot !== undefined) {
+                    setActiveLot(res.data.activeLot);
+                    if (res.data.activeLot) {
+                      setUpcomingLots((prev) => prev.filter((l) => l.id !== res.data!.activeLot!.id));
+                    }
+                  }
                   if (res.data?.sessionState) setSessionState(res.data.sessionState);
+                  if (res.data?.message) {
+                    toast.info(res.data.message);
+                  }
                 } else {
                   setActiveLot(prevActiveLot);
                   setSessionState(prevSessionState);

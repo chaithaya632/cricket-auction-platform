@@ -175,6 +175,9 @@ export interface AuctionBroadcastPayload {
   sessionStatus?: string | null;
   sequenceNumber?: number | string;
   activeBuckets?: string[] | null;
+  activeLot?: AuctionLotWithDetails | Record<string, any> | null;
+  isPaused?: boolean;
+  pausedRemainingSeconds?: number | null;
   timestamp: string;
 }
 
