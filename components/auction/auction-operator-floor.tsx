@@ -33,6 +33,7 @@ import {
   extendTimerAction,
   confirmSaleAction,
   markUnsoldAction,
+  finalizeExpiredLotAction,
 } from '@/lib/auction/actions';
 import { toast } from 'sonner';
 
@@ -91,6 +92,26 @@ export function AuctionOperatorFloor({
       pendingGuestDrawLotRef.current = null;
     }
   }, []);
+
+  const hasTriggeredExpiryRef = useRef<string | null>(null);
+
+  const handleTimerExpire = useCallback(async () => {
+    if (!activeLot || activeLot.status !== 'in_progress' || sessionState.isPaused || !sessionState.isLive) {
+      return;
+    }
+    if (hasTriggeredExpiryRef.current === activeLot.id) {
+      return;
+    }
+    hasTriggeredExpiryRef.current = activeLot.id;
+
+    try {
+      await runWithLocalActionTracking(() =>
+        finalizeExpiredLotAction(activeLot.id, sessionState.seasonId)
+      );
+    } catch (err: any) {
+      console.error('[OperatorFloor] Auto-finalization error:', err);
+    }
+  }, [activeLot, sessionState]);
 
   const endLotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -301,6 +322,7 @@ export function AuctionOperatorFloor({
             onRemainingChange={(sec) => {
               currentRemainingSecondsRef.current = sec;
             }}
+            onExpire={handleTimerExpire}
             onExtend={async (seconds) => {
               if (!activeLot) return;
               const prevStartedAt = activeLot.started_at;

@@ -22,6 +22,7 @@ import type {
   AuctionSessionState,
   AuctionConfigDTO,
 } from '@/lib/auction/types';
+import { finalizeExpiredLotAction } from '@/lib/auction/actions';
 import type { BucketScarcityReport } from '@/domain/scarcity';
 
 interface ProjectorAuctionFloorProps {
@@ -74,6 +75,24 @@ export function ProjectorAuctionFloor({
       }
     };
   }, []);
+
+  const hasTriggeredExpiryRef = React.useRef<string | null>(null);
+
+  const handleTimerExpire = React.useCallback(async () => {
+    if (!activeLot || activeLot.status !== 'in_progress' || sessionState.isPaused || !sessionState.isLive) {
+      return;
+    }
+    if (hasTriggeredExpiryRef.current === activeLot.id) {
+      return;
+    }
+    hasTriggeredExpiryRef.current = activeLot.id;
+
+    try {
+      await finalizeExpiredLotAction(activeLot.id, seasonId);
+    } catch (err: any) {
+      console.error('[ProjectorFloor] Auto-finalization error:', err);
+    }
+  }, [activeLot, sessionState, seasonId]);
 
   // Sync from server RSC props if no local action is in flight, guarded against stale RSC regressions
   useEffect(() => {
@@ -340,6 +359,7 @@ export function ProjectorAuctionFloor({
                 lotId={activeLot.id}
                 highestBidderId={activeLot.highest_bidder_franchise_id}
                 size="lg"
+                onExpire={handleTimerExpire}
               />
             </div>
           )}

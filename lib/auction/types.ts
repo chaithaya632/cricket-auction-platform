@@ -189,5 +189,7 @@ export interface AuctionBroadcastPayload {
   isGuestDraw?: boolean;
   guestDrawCardNumber?: number;
   guestDrawBucket?: string;
+  playerName?: string | null;
+  basePrice?: number | null;
 }
 

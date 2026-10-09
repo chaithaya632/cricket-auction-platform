@@ -22,6 +22,7 @@ import type {
   AuctionSessionState,
   AuctionConfigDTO,
 } from '@/lib/auction/types';
+import { finalizeExpiredLotAction } from '@/lib/auction/actions';
 
 export interface FranchiseBiddingData {
   id: string;
@@ -76,6 +77,24 @@ export function FranchiseAuctionFloor({
       }
     };
   }, []);
+
+  const hasTriggeredExpiryRef = React.useRef<string | null>(null);
+
+  const handleTimerExpire = React.useCallback(async () => {
+    if (!activeLot || activeLot.status !== 'in_progress' || sessionState.isPaused || !sessionState.isLive) {
+      return;
+    }
+    if (hasTriggeredExpiryRef.current === activeLot.id) {
+      return;
+    }
+    hasTriggeredExpiryRef.current = activeLot.id;
+
+    try {
+      await finalizeExpiredLotAction(activeLot.id, seasonId);
+    } catch (err: any) {
+      console.error('[FranchiseFloor] Auto-finalization error:', err);
+    }
+  }, [activeLot, sessionState, seasonId]);
 
   // Anti-stale sequence tracking ref
   const lastAuthoritativeSequenceRef = React.useRef<number>(0);
@@ -267,6 +286,7 @@ export function FranchiseAuctionFloor({
             lotId={activeLot.id}
             highestBidderId={activeLot.highest_bidder_franchise_id}
             size="md"
+            onExpire={handleTimerExpire}
           />
         </div>
       )}
