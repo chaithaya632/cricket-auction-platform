@@ -54,13 +54,14 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
       if (payload.type === 'BID_PLACED') {
         if (payload.lotId && (!liveLot || liveLot.id === payload.lotId)) {
           setLiveLot((prev) => {
-            if (!prev || prev.id !== payload.lotId) return prev;
+            const base = prev || (lot && lot.id === payload.lotId ? lot : null);
+            if (!base || base.id !== payload.lotId) return base;
             return {
-              ...prev,
-              current_price: payload.currentPrice ?? prev.current_price,
+              ...base,
+              current_price: payload.currentPrice ?? base.current_price,
               highest_bidder_franchise_id:
-                payload.highestBidderId ?? prev.highest_bidder_franchise_id,
-              started_at: payload.startedAt || prev.started_at,
+                payload.highestBidderId ?? base.highest_bidder_franchise_id,
+              started_at: payload.startedAt || base.started_at,
             };
           });
           setOptimisticBid(null);
@@ -134,8 +135,6 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
           setErrorMsg(res.error || 'Failed to place bid.');
         }
       }
-      // On success, placeBidAction already called revalidatePath() on the server
-      // and returned the authoritative RSC payload; no redundant router.refresh() needed.
     } catch (err: any) {
       setOptimisticBid(null);
       setErrorMsg(err?.message || 'Failed to place bid.');

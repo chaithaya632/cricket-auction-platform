@@ -29,7 +29,8 @@ import { parseCareerStats } from '@/lib/players/queries';
 export const getFranchiseSquadData = cache(async (
   supabase: SupabaseClient,
   franchiseId: string,
-  seasonId: string
+  seasonId: string,
+  options?: { skipPlayerProfiles?: boolean }
 ): Promise<FranchiseSquadSummary | null> => {
   // 1-5. Concurrently fetch franchise, config, bucket rules, acquired lots, and leadership
   const [
@@ -137,7 +138,7 @@ export const getFranchiseSquadData = cache(async (
   const registrationIds = acquiredLots.map((l) => l.registrationId);
   const playerMap = new Map<string, any>();
 
-  if (registrationIds.length > 0) {
+  if (!options?.skipPlayerProfiles && registrationIds.length > 0) {
     const { data: playersData } = await supabase
       .from('public_players_view')
       .select('*')

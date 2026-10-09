@@ -260,7 +260,7 @@ export async function placeBidAction(
           'auction_subsequent_bid_timer_seconds',
           'subsequent_bid_timer_seconds',
         ]),
-      getFranchiseSquadData(adminClient, franchiseId, targetSeasonId),
+      getFranchiseSquadData(adminClient, franchiseId, targetSeasonId, { skipPlayerProfiles: true }),
     ]);
 
     const lot = lotRes.data;
@@ -416,11 +416,9 @@ export async function placeBidAction(
       sequenceNumber: mutation.data?.event?.sequence_number,
     });
 
-    revalidatePath('/live');
-    revalidatePath('/live/projector');
-    revalidatePath('/franchise/auction');
-    revalidatePath('/player/auction');
-    revalidatePath('/admin/auction');
+    // Note: Blocking synchronous revalidatePath calls removed from incremental bids.
+    // Instantaneous delta updates (<50ms) are delivered to all connected devices via broadcastAuctionUpdate.
+    // Terminal transitions (SOLD, UNSOLD, END_LOT) retain authoritative full-page revalidations.
 
     return { success: true, data: { newPrice: nextBid } };
   } catch (err: any) {
@@ -1515,26 +1513,31 @@ export async function callGuestDrawNumberAction(
         *,
         player_season_registrations (
           id,
-          roll_number,
           branch,
           academic_year,
           programme,
-          player_skill_profiles (*),
+          cricheroes_profile_url,
           players (
             id,
             full_name,
             photo_url,
-            phone,
-            email
+            roll_number
+          ),
+          player_skill_profiles (
+            derived_player_type,
+            batting_style,
+            bowling_style
           )
         )
-      `)
-      .eq('season_id', targetSeasonId);
+      `);
 
     if (targetLotId) {
       lotQuery = lotQuery.eq('id', targetLotId);
     } else if (targetDrawNumber !== null) {
-      lotQuery = lotQuery.eq('draw_number', targetDrawNumber).eq('bucket', bucket);
+      lotQuery = lotQuery
+        .eq('season_id', targetSeasonId)
+        .eq('draw_number', targetDrawNumber)
+        .eq('bucket', bucket);
     } else {
       return { success: false, error: 'Selected Guest Draw lot was not found.' };
     }
@@ -1543,10 +1546,28 @@ export async function callGuestDrawNumberAction(
     const lot: any = lots?.[0];
 
     if (fetchErr || !lot) {
-      return { success: false, error: 'Selected Guest Draw lot was not found.' };
+      console.error(
+        '[callGuestDrawNumberAction] fetch error:',
+        fetchErr,
+        'targetLotId:',
+        targetLotId,
+        'targetDrawNumber:',
+        targetDrawNumber
+      );
+      return {
+        success: false,
+        error: fetchErr ? `Failed to load lot: ${fetchErr.message}` : 'Selected Guest Draw lot was not found.',
+      };
     }
 
-    if (lot.bucket !== bucket) {
+    if (targetSeasonId && lot.season_id !== targetSeasonId) {
+      return {
+        success: false,
+        error: 'Selected lot does not belong to the active season.',
+      };
+    }
+
+    if (lot.bucket?.trim().toUpperCase() !== bucket.trim().toUpperCase()) {
       return {
         success: false,
         error: `Lot bucket mismatch. Expected '${bucket}', found '${lot.bucket}'.`,
@@ -1612,19 +1633,28 @@ export async function callGuestDrawNumberAction(
             id: player.id,
             full_name: player.full_name,
             photo_url: player.photo_url || null,
-            phone: player.phone || null,
-            email: player.email || null,
           }
-        : null,
+        : {
+            id: 'unknown-player',
+            full_name: 'Player',
+            photo_url: null,
+          },
       registration: reg
         ? {
             id: reg.id,
-            roll_number: reg.roll_number || null,
+            roll_number: player?.roll_number || null,
             branch: reg.branch || null,
             academic_year: reg.academic_year || null,
             programme: reg.programme || null,
+            cricheroes_profile_url: reg.cricheroes_profile_url || null,
           }
-        : null,
+        : {
+            id: 'unknown-reg',
+            branch: '',
+            academic_year: 1,
+            programme: '',
+            cricheroes_profile_url: null,
+          },
       skills: skills || null,
     };
 
