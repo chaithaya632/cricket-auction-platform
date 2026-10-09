@@ -110,15 +110,12 @@ export function GuestDrawDialog({
     setRevealedCandidate(candidate);
 
     try {
-      // 2. Start server action concurrently with minimum 2-second visual reveal hold
-      const actionPromise = runWithLocalActionTracking(() =>
+      // 2. Execute server action to select player and broadcast PLAYER_SELECTED
+      const res = await runWithLocalActionTracking(() =>
         isRestart
           ? callGuestDrawNumberAction(candidate.lotId, candidate.bucket, seasonId, { isRestart: true })
           : callGuestDrawNumberAction(candidate.lotId, candidate.bucket, seasonId)
       );
-      const holdPromise = new Promise((resolve) => setTimeout(resolve, 2000));
-
-      const [res] = await Promise.all([actionPromise, holdPromise]);
 
       if (!res.success) {
         setErrorMessage(res.error || 'Failed to select player from card.');
@@ -134,9 +131,11 @@ export function GuestDrawDialog({
         prev.map((c) => (c.lotId === candidate.lotId ? { ...c, drawn: true } : c))
       );
 
-      setSuccessMessage(
-        `Card #${candidate.cardLabel}: ${candidate.playerName} brought to floor!`
-      );
+      // Close modal immediately so the full-screen GuestDrawRevealOverlay displays
+      // synchronously across operator and connected viewer/projector screens!
+      setRevealedCandidate(null);
+      setRevealingLotId(null);
+      setIsDrawing(false);
 
       if (onPlayerDrawn) {
         onPlayerDrawn(
@@ -147,16 +146,11 @@ export function GuestDrawDialog({
         );
       }
 
-      // Brief delay so operator sees floor confirmation, then close
-      setTimeout(() => {
-        setRevealedCandidate(null);
-        onClose();
-      }, 600);
+      onClose();
     } catch (err: any) {
       setErrorMessage(err?.message || 'Error executing guest draw.');
       setRevealingLotId(null);
       setRevealedCandidate(null);
-    } finally {
       setIsDrawing(false);
     }
   };

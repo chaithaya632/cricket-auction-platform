@@ -164,7 +164,32 @@ export function AuctionOperatorFloor({
         });
       } else if (payload.type === 'PLAYER_SELECTED') {
         const nextLot = payload.activeLot as AuctionLotWithDetails | null;
-        if (activeLot && (activeLot.status === 'sold' || activeLot.status === 'unsold') && nextLot && nextLot.id !== activeLot.id) {
+        if (payload.isGuestDraw) {
+          setTimeout(() => {
+            if (nextLot) {
+              setActiveLot(nextLot);
+            } else if (payload.lotId) {
+              setUpcomingLots((prev) => {
+                const found = prev.find((l) => l.id === payload.lotId);
+                if (found) {
+                  setActiveLot({
+                    ...found,
+                    status: 'in_progress',
+                    started_at: payload.startedAt || new Date().toISOString(),
+                    current_price: found.base_price,
+                    highest_bidder_franchise_id: null,
+                    highest_bidder: null,
+                  });
+                  return prev.filter((l) => l.id !== payload.lotId);
+                }
+                return prev;
+              });
+            }
+            if (payload.lotId) {
+              setUpcomingLots((prev) => prev.filter((l) => l.id !== payload.lotId));
+            }
+          }, 3000);
+        } else if (activeLot && (activeLot.status === 'sold' || activeLot.status === 'unsold') && nextLot && nextLot.id !== activeLot.id) {
           setTimeout(() => {
             setActiveLot(nextLot);
             if (payload.lotId) {

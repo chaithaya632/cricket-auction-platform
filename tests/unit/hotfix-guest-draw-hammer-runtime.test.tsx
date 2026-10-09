@@ -459,4 +459,232 @@ describe('Hotfix Verification: Guest Draw Popup & Hammer Runtime Execution', () 
       expect(screen.getByText('Player Two')).toBeDefined();
     });
   });
+
+  // ===========================================================================
+  // 5. GUEST DRAW SYNCHRONIZED 3,000 MS REVEAL & FLOOR COORDINATION
+  // ===========================================================================
+  describe('5. Guest Draw Synchronized 3,000 ms Reveal & Floor Coordination', () => {
+    it('overlay remains visible for full 3,000 ms and completes at the 3,000 ms boundary', () => {
+      const onCompleteMock = vi.fn();
+      render(<GuestDrawRevealOverlay seasonId="season-001" onTransitionComplete={onCompleteMock} />);
+
+      act(() => {
+        notifyAuctionDelta({
+          version: 2,
+          type: 'PLAYER_SELECTED',
+          seasonId: 'season-001',
+          lotId: 'lot-gd-3000',
+          isGuestDraw: true,
+          guestDrawCardNumber: 7,
+          guestDrawBucket: 'B3',
+          activeLot: {
+            ...mockLotA,
+            id: 'lot-gd-3000',
+            draw_number: 7,
+            player: { id: 'p-7', full_name: 'Three Thousand Milliseconds Star', photo_url: null },
+          },
+        });
+      });
+
+      // T = 0ms: Card-back visible
+      expect(screen.getByTestId('guest-draw-card-back')).toBeDefined();
+      expect(screen.getByText('CARD #07')).toBeDefined();
+
+      // T = 700ms: Card front revealed
+      act(() => {
+        vi.advanceTimersByTime(700);
+      });
+      expect(screen.getByTestId('guest-draw-card-front')).toBeDefined();
+      expect(screen.getByText('Three Thousand Milliseconds Star')).toBeDefined();
+
+      // T = 2,900ms (700 + 2200): Front MUST still be rendered and visible
+      act(() => {
+        vi.advanceTimersByTime(2200);
+      });
+      expect(screen.getByTestId('guest-draw-reveal-overlay')).toBeDefined();
+      expect(screen.getByTestId('guest-draw-card-front')).toBeDefined();
+      expect(onCompleteMock).not.toHaveBeenCalled();
+
+      // T = 3,000ms (+ 100ms): Lifecycle completes cleanly
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(onCompleteMock).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId('guest-draw-reveal-overlay')).toBeNull();
+    });
+
+    it('overlay in reduced-motion mode remains visible until 3,000 ms boundary', () => {
+      const originalMatchMedia = window.matchMedia;
+      window.matchMedia = vi.fn().mockImplementation((query) => ({
+        matches: query === '(prefers-reduced-motion: reduce)',
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }));
+
+      const onCompleteMock = vi.fn();
+      render(<GuestDrawRevealOverlay seasonId="season-001" onTransitionComplete={onCompleteMock} />);
+
+      act(() => {
+        notifyAuctionDelta({
+          version: 2,
+          type: 'PLAYER_SELECTED',
+          seasonId: 'season-001',
+          lotId: 'lot-gd-reduced',
+          isGuestDraw: true,
+          guestDrawCardNumber: 9,
+          guestDrawBucket: 'B1',
+          activeLot: {
+            ...mockLotA,
+            id: 'lot-gd-reduced',
+            draw_number: 9,
+            player: { id: 'p-9', full_name: 'Reduced Motion Hero', photo_url: null },
+          },
+        });
+      });
+
+      // Front displayed immediately without flip
+      expect(screen.getByTestId('guest-draw-card-front')).toBeDefined();
+      expect(screen.getByText('Reduced Motion Hero')).toBeDefined();
+
+      // At 2,900ms, still visible
+      act(() => {
+        vi.advanceTimersByTime(2900);
+      });
+      expect(screen.getByTestId('guest-draw-reveal-overlay')).toBeDefined();
+      expect(onCompleteMock).not.toHaveBeenCalled();
+
+      // At 3,000ms, completes
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(onCompleteMock).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId('guest-draw-reveal-overlay')).toBeNull();
+
+      window.matchMedia = originalMatchMedia;
+    });
+
+    it('ProjectorAuctionFloor holds floor card for 3,000 ms on isGuestDraw to prevent premature replacement', () => {
+      render(
+        <ProjectorAuctionFloor
+          seasonId="season-001"
+          initialActiveLot={mockLotA}
+          initialSessionState={mockSessionState}
+          config={mockConfig}
+        />
+      );
+
+      // Initially shows Lot A
+      expect(screen.getByText('Player One')).toBeDefined();
+      expect(screen.getByText('LOT #1')).toBeDefined();
+
+      // PLAYER_SELECTED arrives with isGuestDraw: true for Lot B
+      act(() => {
+        notifyAuctionDelta({
+          version: 2,
+          type: 'PLAYER_SELECTED',
+          seasonId: 'season-001',
+          lotId: mockLotB.id,
+          isGuestDraw: true,
+          guestDrawCardNumber: 2,
+          guestDrawBucket: 'B2',
+          activeLot: mockLotB,
+        });
+      });
+
+      // Overlay is mounted
+      expect(screen.getByTestId('guest-draw-reveal-overlay')).toBeDefined();
+
+      // Floor card MUST NOT replace Lot A prematurely at 1,000ms
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(screen.getByText('LOT #1')).toBeDefined();
+      expect(screen.queryByText('LOT #2')).toBeNull();
+
+      // Floor card MUST NOT replace Lot A prematurely at 2,500ms
+      act(() => {
+        vi.advanceTimersByTime(1500);
+      });
+      expect(screen.getByText('LOT #1')).toBeDefined();
+      expect(screen.queryByText('LOT #2')).toBeNull();
+
+      // At 3,000ms, overlay unmounts and floor card transitions to Lot B
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(screen.queryByTestId('guest-draw-reveal-overlay')).toBeNull();
+      expect(screen.getByText('LOT #2')).toBeDefined();
+      expect(screen.getByText('Player Two')).toBeDefined();
+    });
+
+    it('subsequent legitimate Guest Draw triggers new reveal without stuck state', () => {
+      resetGuestDrawDeduplicationForTests();
+      render(<GuestDrawRevealOverlay seasonId="season-001" />);
+
+      // First Guest Draw: Lot 1
+      act(() => {
+        notifyAuctionDelta({
+          version: 2,
+          type: 'PLAYER_SELECTED',
+          seasonId: 'season-001',
+          lotId: 'lot-first-draw',
+          isGuestDraw: true,
+          guestDrawCardNumber: 1,
+          guestDrawBucket: 'B3',
+          activeLot: {
+            ...mockLotA,
+            id: 'lot-first-draw',
+            draw_number: 1,
+            player: { id: 'p-1', full_name: 'First Drawn Player', photo_url: null },
+          },
+        });
+      });
+
+      expect(screen.getByText('CARD #01')).toBeDefined();
+
+      // Complete first draw at 3,500ms
+      act(() => {
+        vi.advanceTimersByTime(3500);
+      });
+      expect(screen.queryByTestId('guest-draw-reveal-overlay')).toBeNull();
+
+      // Second legitimate Guest Draw: Lot 2
+      act(() => {
+        notifyAuctionDelta({
+          version: 2,
+          type: 'PLAYER_SELECTED',
+          seasonId: 'season-001',
+          lotId: 'lot-second-draw',
+          isGuestDraw: true,
+          guestDrawCardNumber: 2,
+          guestDrawBucket: 'B3',
+          activeLot: {
+            ...mockLotB,
+            id: 'lot-second-draw',
+            draw_number: 2,
+            player: { id: 'p-2', full_name: 'Second Drawn Player', photo_url: null },
+          },
+        });
+      });
+
+      // Second draw MUST open and run its reveal!
+      expect(screen.getByTestId('guest-draw-reveal-overlay')).toBeDefined();
+      expect(screen.getByText('CARD #02')).toBeDefined();
+
+      act(() => {
+        vi.advanceTimersByTime(700);
+      });
+      expect(screen.getByText('Second Drawn Player')).toBeDefined();
+
+      act(() => {
+        vi.advanceTimersByTime(2800);
+      });
+      expect(screen.queryByTestId('guest-draw-reveal-overlay')).toBeNull();
+    });
+  });
 });

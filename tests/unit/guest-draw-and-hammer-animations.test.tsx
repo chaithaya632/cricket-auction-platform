@@ -140,7 +140,7 @@ describe('Guest Draw Popup & Hammer Animations Test Suite', () => {
       expect(screen.getByText('₹50')).toBeDefined();
     });
 
-    it('2. transitions from reveal overlay to the active auction floor after ~2.8 seconds', () => {
+    it('2. transitions from reveal overlay to the active auction floor at exactly 3.0 seconds (3,000 ms)', () => {
       const onTransitionCompleteMock = vi.fn();
       render(
         <GuestDrawRevealOverlay
@@ -160,20 +160,23 @@ describe('Guest Draw Popup & Hammer Animations Test Suite', () => {
       // Card-back shown initially
       expect(screen.getByTestId('guest-draw-card-back')).toBeDefined();
 
-      // Flip to front
+      // Flip to front at 600ms (advance to 700ms)
       act(() => {
         vi.advanceTimersByTime(700);
       });
       expect(screen.getByTestId('guest-draw-card-front')).toBeDefined();
 
-      // Hold visible, then transition to floor (~2.8s)
+      // Advance to 2,900 ms: overlay MUST remain fully visible and NOT prematurely close or transition
       act(() => {
         vi.advanceTimersByTime(2200);
       });
+      expect(screen.getByTestId('guest-draw-reveal-overlay')).toBeDefined();
+      expect(screen.getByTestId('guest-draw-card-front')).toBeDefined();
+      expect(onTransitionCompleteMock).not.toHaveBeenCalled();
 
-      // Completes transition and unmounts overlay at ~3.3s
+      // Completes transition and unmounts overlay at exactly 3,000 ms (+ 100 ms)
       act(() => {
-        vi.advanceTimersByTime(500);
+        vi.advanceTimersByTime(100);
       });
 
       expect(onTransitionCompleteMock).toHaveBeenCalledTimes(1);

@@ -117,7 +117,11 @@ export function ProjectorAuctionFloor({
         }
       } else if (payload.type === 'PLAYER_SELECTED') {
         const nextLot = payload.activeLot as AuctionLotWithDetails | null;
-        if (
+        if (payload.isGuestDraw && nextLot) {
+          setTimeout(() => {
+            setActiveLot(nextLot);
+          }, 3000);
+        } else if (
           activeLot &&
           (activeLot.status === 'sold' || activeLot.status === 'unsold') &&
           nextLot &&

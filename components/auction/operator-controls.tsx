@@ -2335,13 +2335,15 @@ export function OperatorControls({
           isRestart={sessionState.isCompleted}
           onPlayerDrawn={(_lotId, playerName, drawnActiveLot, drawnSessionState) => {
             setShowGuestDrawModal(false);
-            if (drawnActiveLot !== undefined && onActiveLotChange) {
-              onActiveLotChange(drawnActiveLot);
-            }
             if (drawnSessionState && onSessionStateChange) {
               onSessionStateChange(drawnSessionState);
             }
             setSuccessMsg(`Guest Draw: ${playerName} brought to floor!`);
+            if (drawnActiveLot !== undefined && onActiveLotChange) {
+              setTimeout(() => {
+                onActiveLotChange(drawnActiveLot);
+              }, 3000);
+            }
           }}
         />
       )}

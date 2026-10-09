@@ -50,6 +50,9 @@ interface GuestDrawRevealOverlayProps {
   manualCandidate?: GuestDrawCandidatePayload | null;
 }
 
+export const GUEST_DRAW_REVEAL_DURATION_MS = 3000;
+export const GUEST_DRAW_CARD_FLIP_DELAY_MS = 600;
+
 export function GuestDrawRevealOverlay({
   seasonId,
   currentLot,
@@ -57,14 +60,27 @@ export function GuestDrawRevealOverlay({
   manualCandidate,
 }: GuestDrawRevealOverlayProps) {
   const [candidate, setCandidate] = useState<GuestDrawCandidatePayload | null>(null);
-  // Phase: 'card_back' | 'revealed' | 'transitioning_to_floor' | 'closed'
-  const [phase, setPhase] = useState<'card_back' | 'revealed' | 'transitioning_to_floor' | 'closed'>('closed');
+  // Phase: 'card_back' | 'revealed' | 'closed'
+  const [phase, setPhase] = useState<'card_back' | 'revealed' | 'closed'>('closed');
 
   const onCompleteRef = useRef(onTransitionComplete);
   onCompleteRef.current = onTransitionComplete;
 
   const candidateRef = useRef(candidate);
   candidateRef.current = candidate;
+
+  const activeTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const clearActiveTimers = () => {
+    activeTimersRef.current.forEach((t) => clearTimeout(t));
+    activeTimersRef.current = [];
+  };
+
+  useEffect(() => {
+    return () => {
+      clearActiveTimers();
+    };
+  }, []);
 
   // Handle manualCandidate injection for testing
   useEffect(() => {
@@ -136,46 +152,41 @@ export function GuestDrawRevealOverlay({
   }, [seasonId]);
 
   const startRevealSequence = () => {
+    clearActiveTimers();
+
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
       window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
     if (prefersReducedMotion) {
       setPhase('revealed');
-      // Hold for 2.2 seconds then close
-      setTimeout(() => {
+      // Hold visible for exact 3,000 ms lifecycle, then close
+      const motionTimer = setTimeout(() => {
         setPhase('closed');
         setCandidate(null);
         onCompleteRef.current?.();
-      }, 2200);
+      }, GUEST_DRAW_REVEAL_DURATION_MS);
+      activeTimersRef.current.push(motionTimer);
       return;
     }
 
     // Step 1: Card-back display (0.6s)
     setPhase('card_back');
 
-    // Step 2: 3D Flip reveal front of card
+    // Step 2: 3D Flip reveal front of card at 600ms
     const flipTimer = setTimeout(() => {
       setPhase('revealed');
-    }, 600);
+    }, GUEST_DRAW_CARD_FLIP_DELAY_MS);
+    activeTimersRef.current.push(flipTimer);
 
-    // Step 3: Hold front of card visible (~2.2s), then begin glide to floor
-    const glideTimer = setTimeout(() => {
-      setPhase('transitioning_to_floor');
-    }, 2800);
-
-    // Step 4: Transition finished (total ~3.3s), unmount overlay
+    // Step 3: Exact 3,000 ms boundary completion. Front remains prominently visible
+    // with opacity-100 until the full 3 seconds expire.
     const completeTimer = setTimeout(() => {
       setPhase('closed');
       setCandidate(null);
       onCompleteRef.current?.();
-    }, 3300);
-
-    return () => {
-      clearTimeout(flipTimer);
-      clearTimeout(glideTimer);
-      clearTimeout(completeTimer);
-    };
+    }, GUEST_DRAW_REVEAL_DURATION_MS);
+    activeTimersRef.current.push(completeTimer);
   };
 
   if (phase === 'closed' || !candidate) {
@@ -183,7 +194,6 @@ export function GuestDrawRevealOverlay({
   }
 
   const isCardBack = phase === 'card_back';
-  const isTransitioning = phase === 'transitioning_to_floor';
 
   return (
     <div
@@ -191,9 +201,7 @@ export function GuestDrawRevealOverlay({
       aria-modal="true"
       aria-label="Guest Draw Player Card Reveal"
       data-testid="guest-draw-reveal-overlay"
-      className={`fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-300 ${
-        isTransitioning ? 'opacity-0 pointer-events-none' : 'opacity-100'
-      }`}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-300 opacity-100"
     >
       {/* Ambient Golden Stage Spotlight */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-gradient-to-b from-amber-500/20 via-amber-600/10 to-transparent rounded-full blur-3xl pointer-events-none" />
@@ -203,8 +211,6 @@ export function GuestDrawRevealOverlay({
         className={`relative w-full max-w-xl transition-all duration-500 ${
           isCardBack
             ? 'scale-95'
-            : isTransitioning
-            ? 'animate-card-glide-to-floor'
             : 'animate-card-reveal-flip scale-100'
         }`}
       >
