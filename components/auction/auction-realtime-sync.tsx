@@ -28,6 +28,21 @@ export type RealtimeChannelHealth =
 export type AuctionDeltaListener = (payload: AuctionBroadcastPayload) => void;
 const deltaListeners = new Set<AuctionDeltaListener>();
 
+// Monotonic event sequence tracker per season to eliminate stale / duplicate events
+const latestSequences = new Map<string, number>();
+
+export function getLatestSequence(seasonId: string): number {
+  return latestSequences.get(seasonId) ?? 0;
+}
+
+export function setLatestSequence(seasonId: string, seq: number): void {
+  latestSequences.set(seasonId, Math.max(latestSequences.get(seasonId) ?? 0, seq));
+}
+
+export function resetSequenceTrackingForTests(): void {
+  latestSequences.clear();
+}
+
 export function subscribeAuctionDelta(listener: AuctionDeltaListener): () => void {
   deltaListeners.add(listener);
   return () => {
@@ -35,7 +50,38 @@ export function subscribeAuctionDelta(listener: AuctionDeltaListener): () => voi
   };
 }
 
-export function notifyAuctionDelta(payload: AuctionBroadcastPayload): void {
+export function notifyAuctionDelta(payload: AuctionBroadcastPayload): boolean {
+  // 1. Monotonic sequence deduplication and ordering protection
+  if (payload.sequenceNumber !== undefined && payload.seasonId) {
+    const seqNum =
+      typeof payload.sequenceNumber === 'string'
+        ? parseInt(payload.sequenceNumber, 10)
+        : payload.sequenceNumber;
+
+    if (!Number.isNaN(seqNum)) {
+      const current = latestSequences.get(payload.seasonId) ?? 0;
+      if (seqNum <= current && current > 0) {
+        // Discard stale or duplicate event
+        return false;
+      }
+      latestSequences.set(payload.seasonId, seqNum);
+    }
+  }
+
+  // 2. Client latency telemetry calculation
+  if (payload.serverTimestamp) {
+    const lagMs = Date.now() - new Date(payload.serverTimestamp).getTime();
+    if (lagMs >= 0 && lagMs < 60000) {
+      // Non-sensitive telemetry log
+      if (process.env.NODE_ENV === 'development') {
+        console.debug(
+          `[RealtimeSync] Event ${payload.type} seq=${payload.sequenceNumber ?? 'N/A'} lag=${lagMs}ms`
+        );
+      }
+    }
+  }
+
+  // 3. Dispatch to all active delta listeners
   for (const listener of deltaListeners) {
     try {
       listener(payload);
@@ -43,6 +89,8 @@ export function notifyAuctionDelta(payload: AuctionBroadcastPayload): void {
       console.error('[notifyAuctionDelta] Listener error:', e);
     }
   }
+
+  return true;
 }
 
 // Per-tab in-flight action counter to prevent self-echo Realtime events from
@@ -256,14 +304,21 @@ export function AuctionRealtimeSync({
         'broadcast',
         { event: 'auction_update' },
         (event: any) => {
-          const payload = event?.payload as AuctionBroadcastPayload | undefined;
-          if (payload) {
-            notifyAuctionDelta(payload);
-            if (payload.type === 'BID_PLACED') {
+          const payload = (event?.payload ?? event) as AuctionBroadcastPayload | undefined;
+          let isAccepted = true;
+          if (
+            payload &&
+            typeof payload === 'object' &&
+            ('type' in payload || 'seasonId' in payload || 'sequenceNumber' in payload)
+          ) {
+            isAccepted = notifyAuctionDelta(payload);
+            if (isAccepted && payload.type === 'BID_PLACED') {
               playBidGavelChime(payload.lotId, payload.currentPrice);
             }
           }
-          coordinator.handleRealtimeEvent();
+          if (isAccepted) {
+            coordinator.handleRealtimeEvent();
+          }
         }
       )
       .subscribe((status) => {

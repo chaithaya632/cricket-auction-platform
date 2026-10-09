@@ -7,6 +7,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { subscribeAuctionDelta } from '@/components/auction/auction-realtime-sync';
 import { Flame, ArrowRight, Gavel } from 'lucide-react';
 
 interface LiveAuctionBannerProps {
@@ -29,6 +30,16 @@ export function LiveAuctionBanner({
   }, [initialIsLive]);
 
   useEffect(() => {
+    return subscribeAuctionDelta((payload) => {
+      if (payload.type === 'AUCTION_STARTED' || payload.sessionStatus === 'live') {
+        setIsLive(true);
+      } else if (payload.type === 'AUCTION_ENDED' || payload.sessionStatus === 'completed') {
+        setIsLive(false);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
     if (!seasonId) return;
 
     const supabase = createClient();
@@ -39,14 +50,13 @@ export function LiveAuctionBanner({
       .on(
         'broadcast',
         { event: 'auction_update' },
-        () => {
-          // Broadcast received — refresh server state to get authoritative session status.
-          // We use router.refresh() pattern but since this component uses local state,
-          // we refetch via a lightweight check. For simplicity and consistency with
-          // the rest of the app, just toggle a re-render by setting isLive from props.
-          // The parent Server Component will re-render with fresh data on router.refresh().
-          // Since LiveAuctionBanner syncs from initialIsLive prop via the useEffect above,
-          // router.refresh() from AuctionRealtimeSync will propagate the new state.
+        (event: any) => {
+          const payload = event?.payload;
+          if (payload?.type === 'AUCTION_STARTED' || payload?.sessionStatus === 'live') {
+            setIsLive(true);
+          } else if (payload?.type === 'AUCTION_ENDED' || payload?.sessionStatus === 'completed') {
+            setIsLive(false);
+          }
         }
       )
       .subscribe();

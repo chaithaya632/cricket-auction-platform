@@ -8,9 +8,7 @@ import {
   getAuctionSessionState,
 } from '@/lib/auction/queries';
 import { getFranchiseSquadData } from '@/lib/franchises/queries';
-import { ActiveLotCard } from '@/components/auction/active-lot-card';
-import { AuctionTimer } from '@/components/auction/auction-timer';
-import { BiddingControl } from '@/components/auction/bidding-control';
+import { FranchiseAuctionFloor } from '@/components/auction/franchise-auction-floor';
 import { RecentActivityStream } from '@/components/auction/recent-activity-stream';
 import { DashboardShell } from '@/components/acc/dashboard-shell';
 import { getSessionUser } from '@/lib/acc/server-session';
@@ -34,10 +32,6 @@ export default async function FranchiseAuctionPage() {
     getSessionUser('franchise'),
     getAuctionSessionState(supabase, seasonId),
   ]);
-
-  const timerDuration = activeLot?.highest_bidder_franchise_id
-    ? config.subsequentBidTimerSeconds
-    : config.firstBidTimerSeconds;
 
   const franchiseBiddingData = squadData
     ? {
@@ -81,24 +75,13 @@ export default async function FranchiseAuctionPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           <div className="lg:col-span-8 space-y-6">
-            <ActiveLotCard lot={activeLot} />
-
-            {activeLot && (
-              <div className="rounded-2xl border border-border bg-card p-5 shadow-lg">
-                <AuctionTimer
-                  startedAt={activeLot.started_at}
-                  durationSeconds={timerDuration}
-                  isActive={activeLot.status === 'in_progress' && sessionState.isLive}
-                  isPaused={sessionState.isPaused}
-                  pausedRemainingSeconds={sessionState.pausedRemainingSeconds}
-                  size="md"
-                />
-              </div>
-            )}
-
-            {franchiseBiddingData && (
-              <BiddingControl lot={activeLot} franchise={franchiseBiddingData} />
-            )}
+            <FranchiseAuctionFloor
+              seasonId={seasonId}
+              initialActiveLot={activeLot}
+              initialSessionState={sessionState}
+              franchise={franchiseBiddingData}
+              config={config}
+            />
           </div>
 
           <div className="lg:col-span-4 space-y-6">

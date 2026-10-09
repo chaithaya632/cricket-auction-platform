@@ -4,10 +4,13 @@
 // ACC Auction Portal — Components: Franchise Bidding Control Panel
 // =============================================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { placeBidAction } from '@/lib/auction/actions';
-import { runWithLocalActionTracking } from '@/components/auction/auction-realtime-sync';
+import {
+  runWithLocalActionTracking,
+  subscribeAuctionDelta,
+} from '@/components/auction/auction-realtime-sync';
 import { calculateNextBid } from '@/domain/auction/bid-increment';
 import type { AuctionLotWithDetails } from '@/lib/auction/types';
 
@@ -26,11 +29,52 @@ interface BiddingControlProps {
 
 export function BiddingControl({ lot, franchise }: BiddingControlProps) {
   const router = useRouter();
+  const [liveLot, setLiveLot] = useState<AuctionLotWithDetails | null>(lot);
   const [isPending, setIsPending] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [optimisticBid, setOptimisticBid] = useState<{ lotId: string; price: number } | null>(null);
 
-  if (!lot || lot.status !== 'in_progress') {
+  useEffect(() => {
+    setLiveLot(lot);
+  }, [lot?.id, lot?.current_price, lot?.highest_bidder_franchise_id, lot?.status]);
+
+  useEffect(() => {
+    return subscribeAuctionDelta((payload) => {
+      if (payload.type === 'BID_PLACED') {
+        if (payload.lotId && (!liveLot || liveLot.id === payload.lotId)) {
+          setLiveLot((prev) => {
+            if (!prev || prev.id !== payload.lotId) return prev;
+            return {
+              ...prev,
+              current_price: payload.currentPrice ?? prev.current_price,
+              highest_bidder_franchise_id:
+                payload.highestBidderId ?? prev.highest_bidder_franchise_id,
+            };
+          });
+          setOptimisticBid(null);
+        }
+      } else if (payload.type === 'PLAYER_SELECTED') {
+        if (payload.activeLot) {
+          setLiveLot(payload.activeLot as AuctionLotWithDetails);
+          setOptimisticBid(null);
+          setErrorMsg(null);
+        } else if (payload.isEmptyFloor) {
+          setLiveLot(null);
+          setOptimisticBid(null);
+        }
+      } else if (payload.type === 'SALE' || payload.type === 'UNSOLD') {
+        if (payload.lotId && liveLot && liveLot.id === payload.lotId) {
+          setLiveLot((prev) =>
+            prev ? { ...prev, status: payload.type === 'SALE' ? 'sold' : 'unsold' } : prev
+          );
+        }
+      }
+    });
+  }, [liveLot?.id]);
+
+  const activeLot = liveLot || lot;
+
+  if (!activeLot || activeLot.status !== 'in_progress') {
     return (
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-6 text-center text-zinc-400">
         <p className="text-sm">Bidding is closed while no lot is in progress.</p>
@@ -41,32 +85,33 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
   // Active optimistic state applies if for this lot and not yet reflected in current_price
   const hasOptimisticBid =
     optimisticBid !== null &&
-    optimisticBid.lotId === lot.id &&
-    (lot.current_price === null || lot.current_price < optimisticBid.price);
+    optimisticBid.lotId === activeLot.id &&
+    (activeLot.current_price === null || activeLot.current_price < optimisticBid.price);
 
-  const displayPrice = hasOptimisticBid ? optimisticBid.price : lot.current_price;
-  const isHighestBidder = hasOptimisticBid || lot.highest_bidder_franchise_id === franchise.id;
+  const displayPrice = hasOptimisticBid ? optimisticBid.price : activeLot.current_price;
+  const isHighestBidder = hasOptimisticBid || activeLot.highest_bidder_franchise_id === franchise.id;
 
-  const nextBid = calculateNextBid(displayPrice, lot.base_price);
+  const nextBid = calculateNextBid(displayPrice, activeLot.base_price);
   const isSquadFull = franchise.squadCount >= franchise.maxSquadSize;
   const exceedsMaxBid = nextBid > franchise.maxPermissibleBid;
 
   const canBid = !isHighestBidder && !isSquadFull && !exceedsMaxBid && !isPending;
 
   const handlePlaceBid = async () => {
-    if (isPending) return;
+    if (isPending || !activeLot) return;
     setErrorMsg(null);
     const bidTarget = nextBid;
-    setOptimisticBid({ lotId: lot.id, price: bidTarget });
+    setOptimisticBid({ lotId: activeLot.id, price: bidTarget });
     setIsPending(true);
 
     try {
       const res = await runWithLocalActionTracking(() =>
-        placeBidAction(lot.id, lot.current_price)
+        placeBidAction(activeLot.id, activeLot.current_price)
       );
       if (!res.success) {
         setOptimisticBid(null);
-        const isStale = res.error?.includes('STALE_BID_PRICE') ||
+        const isStale =
+          res.error?.includes('STALE_BID_PRICE') ||
           res.error?.includes('no longer in progress') ||
           res.error?.includes('concurrent') ||
           res.error?.includes('expected price');

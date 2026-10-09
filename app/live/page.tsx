@@ -18,9 +18,7 @@ import {
   getActiveBuckets,
 } from '@/lib/auction/queries';
 import { getFranchiseSquadData } from '@/lib/franchises/queries';
-import { ActiveLotCard } from '@/components/auction/active-lot-card';
-import { AuctionTimer } from '@/components/auction/auction-timer';
-import { BiddingControl } from '@/components/auction/bidding-control';
+import { LiveAuctionRoomFloor } from '@/components/auction/live-auction-room-floor';
 import { RecentActivityStream } from '@/components/auction/recent-activity-stream';
 import { LiveExitBar } from '@/components/auction/live-exit-bar';
 import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
@@ -157,51 +155,14 @@ export default async function LiveAuctionPage() {
 
       {/* Main Room Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* Left Column: Active Floor & Bidding */}
-        <div className="lg:col-span-8 space-y-6">
-          {scarcityReport?.isWarningActive && (
-            <div className="rounded-2xl border-2 border-amber-500 bg-amber-950/80 px-5 py-3.5 text-center shadow-lg animate-pulse">
-              <p className="text-amber-300 font-bold text-sm">
-                ⚠️ SCARCITY WARNING: Only {scarcityReport.unsoldSupply} player(s) remaining for {scarcityReport.totalPlayersNeeded} needed slots across franchises in Bucket {scarcityReport.bucket}!
-              </p>
-              <p className="text-[11px] text-amber-200/70 mt-0.5">
-                Bidding is not blocked. Teams with quotas met may still place bids.
-              </p>
-            </div>
-          )}
-
-          <ActiveLotCard lot={activeLot} />
-
-          {/* Countdown Clock */}
-          {activeLot && (
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-5 shadow-lg">
-              <AuctionTimer
-                startedAt={activeLot.started_at}
-                durationSeconds={timerDuration}
-                isActive={activeLot.status === 'in_progress' && sessionState.isLive}
-                isPaused={sessionState.isPaused}
-                pausedRemainingSeconds={sessionState.pausedRemainingSeconds}
-                size="md"
-              />
-            </div>
-          )}
-
-          {/* Bidding Controls (Franchises Only) or Spectator Banner */}
-          {franchiseBiddingData ? (
-            <BiddingControl
-              lot={activeLot}
-              franchise={franchiseBiddingData}
-            />
-          ) : (
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6 text-center text-xs text-zinc-400 space-y-1">
-              <p className="font-semibold text-zinc-300">Audience Spectator Mode</p>
-              <p className="text-zinc-500">
-                You are observing live bidding. Bids may only be submitted by verified
-                franchise representatives.
-              </p>
-            </div>
-          )}
-        </div>
+        <LiveAuctionRoomFloor
+          seasonId={seasonId}
+          initialActiveLot={activeLot}
+          initialSessionState={sessionState}
+          config={config}
+          scarcityReport={scarcityReport}
+          franchiseBiddingData={franchiseBiddingData}
+        />
 
         {/* Right Column: Activity Stream */}
         <div className="lg:col-span-4 space-y-6">

@@ -183,10 +183,6 @@ export async function selectLotAction(
       .eq('season_id', lot.season_id)
       .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
 
-    revalidatePath('/live');
-    revalidatePath('/live/projector');
-    revalidatePath('/franchise/auction');
-    revalidatePath('/player/auction');
     const { data: timerConfig } = await adminClient
       .from('season_config')
       .select('value')
@@ -195,16 +191,27 @@ export async function selectLotAction(
       .maybeSingle();
     const durationSeconds = timerConfig?.value ? parseInt(timerConfig.value, 10) : 30;
 
+    const activeLotWithDetails = await getActiveLot(adminClient, lot.season_id);
+    const sessionState = await getAuctionSessionState(adminClient, lot.season_id);
+
+    // Immediate post-commit broadcast with sequenceNumber and hydrated activeLot
     await broadcastAuctionUpdate(lot.season_id, 'PLAYER_SELECTED', {
       lotId: lot.id,
+      lotStatus: 'in_progress',
       currentPrice: null,
       highestBidderId: null,
       startedAt: now,
       durationSeconds,
+      sequenceNumber: mutation.data?.event?.sequence_number,
+      activeLot: activeLotWithDetails,
+      sessionStatus: sessionState?.status || 'live',
     });
 
-    const activeLotWithDetails = await getActiveLot(adminClient, lot.season_id);
-    const sessionState = await getAuctionSessionState(adminClient, lot.season_id);
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+    revalidatePath('/admin/auction');
 
     return {
       success: true,
@@ -343,12 +350,6 @@ export async function placeBidAction(
       return { success: false, error: mutation.error };
     }
 
-    revalidatePath('/live');
-    revalidatePath('/live/projector');
-    revalidatePath('/franchise/auction');
-    revalidatePath('/player/auction');
-    revalidatePath('/admin/auction');
-
     const franchise = franchiseContext.assignedFranchise;
     const { data: timerConfig } = await adminClient
       .from('season_config')
@@ -358,8 +359,10 @@ export async function placeBidAction(
       .maybeSingle();
     const durationSeconds = timerConfig?.value ? parseInt(timerConfig.value, 10) : 20;
 
+    // Immediate post-commit broadcast with sequenceNumber to all connected devices
     await broadcastAuctionUpdate(lot.season_id, 'BID_PLACED', {
       lotId: lot.id,
+      lotStatus: 'in_progress',
       currentPrice: nextBid,
       highestBidderId: franchise.id,
       highestBidderName: franchise.name,
@@ -367,7 +370,14 @@ export async function placeBidAction(
       highestBidderPrimaryColor: (franchise as any).color_primary || null,
       startedAt: now,
       durationSeconds,
+      sequenceNumber: mutation.data?.event?.sequence_number,
     });
+
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+    revalidatePath('/admin/auction');
 
     return { success: true, data: { newPrice: nextBid } };
   } catch (err: any) {
@@ -472,6 +482,12 @@ export async function autoAdvanceToNextLot(
       .limit(100);
 
     if (!pendingLots || pendingLots.length === 0) {
+      await broadcastAuctionUpdate(seasonId, 'PLAYER_SELECTED', {
+        lotId: null,
+        activeLot: null,
+        isEmptyFloor: true,
+      });
+
       return {
         advanced: false,
         nextLotId: null,
@@ -558,6 +574,22 @@ export async function autoAdvanceToNextLot(
         .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
     }
 
+    const nextLotDetails = await getActiveLot(adminClient, seasonId);
+
+    // Immediate broadcast with hydrated details and monotonic sequence number
+    await broadcastAuctionUpdate(seasonId, 'PLAYER_SELECTED', {
+      lotId: nextLot.id,
+      lotStatus: 'in_progress',
+      currentPrice: null,
+      highestBidderId: null,
+      startedAt: now,
+      durationSeconds,
+      sequenceNumber: mutation.data?.event?.sequence_number,
+      activeLot: nextLotDetails,
+      isPaused,
+      pausedRemainingSeconds: isPaused ? durationSeconds : null,
+    });
+
     revalidatePath('/admin');
     revalidatePath('/admin/auction');
     revalidatePath('/admin/queue');
@@ -565,20 +597,6 @@ export async function autoAdvanceToNextLot(
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
-
-    const nextLotDetails = await getActiveLot(adminClient, seasonId);
-
-    // Broadcast PLAYER_SELECTED for the new lot with hydrated details
-    await broadcastAuctionUpdate(seasonId, 'PLAYER_SELECTED', {
-      lotId: nextLot.id,
-      currentPrice: null,
-      highestBidderId: null,
-      startedAt: now,
-      durationSeconds,
-      activeLot: nextLotDetails,
-      isPaused,
-      pausedRemainingSeconds: isPaused ? durationSeconds : null,
-    });
 
     return { advanced: true, nextLotId: nextLot.id, nextLot: nextLotDetails };
   } catch (err: any) {
@@ -693,6 +711,15 @@ export async function confirmSaleAction(
         .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
     }
 
+    // Immediate post-commit broadcast for SALE
+    await broadcastAuctionUpdate(lot.season_id, 'SALE', {
+      lotId: lot.id,
+      lotStatus: 'sold',
+      currentPrice: lot.current_price,
+      highestBidderId: lot.highest_bidder_franchise_id,
+      sequenceNumber: mutation.data?.event?.sequence_number,
+    });
+
     revalidatePath('/admin');
     revalidatePath('/admin/auction');
     revalidatePath('/admin/queue');
@@ -702,12 +729,6 @@ export async function confirmSaleAction(
     revalidatePath('/player/auction');
     revalidatePath('/franchise');
     revalidatePath('/franchise/squad');
-
-    await broadcastAuctionUpdate(lot.season_id, 'SALE', {
-      lotId: lot.id,
-      currentPrice: lot.current_price,
-      highestBidderId: lot.highest_bidder_franchise_id,
-    });
 
     // 3. Concurrency-safe automatic advance to next player
     const advanceResult = await autoAdvanceToNextLot(
@@ -831,6 +852,13 @@ export async function markUnsoldAction(
         .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
     }
 
+    // Immediate post-commit broadcast for UNSOLD
+    await broadcastAuctionUpdate(lot.season_id, 'UNSOLD', {
+      lotId: lot.id,
+      lotStatus: 'unsold',
+      sequenceNumber: mutation.data?.event?.sequence_number,
+    });
+
     revalidatePath('/admin');
     revalidatePath('/admin/auction');
     revalidatePath('/admin/queue');
@@ -838,10 +866,6 @@ export async function markUnsoldAction(
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
-
-    await broadcastAuctionUpdate(lot.season_id, 'UNSOLD', {
-      lotId: lot.id,
-    });
 
     // 3. Concurrency-safe automatic advance to next player
     const advanceResult = await autoAdvanceToNextLot(
@@ -1066,11 +1090,6 @@ export async function drawRandomLotFromBucketsAction(): Promise<
       .eq('season_id', targetSeasonId)
       .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
 
-    revalidatePath('/live');
-    revalidatePath('/live/projector');
-    revalidatePath('/franchise/auction');
-    revalidatePath('/player/auction');
-
     const { data: timerConfig } = await adminClient
       .from('season_config')
       .select('value')
@@ -1080,16 +1099,27 @@ export async function drawRandomLotFromBucketsAction(): Promise<
 
     const durationSeconds = timerConfig?.value ? parseInt(timerConfig.value, 10) : 30;
 
+    const activeLotWithDetails = await getActiveLot(adminClient, targetSeasonId);
+    const sessionState = await getAuctionSessionState(adminClient, targetSeasonId);
+
+    // Immediate post-commit broadcast with hydrated details and sequenceNumber
     await broadcastAuctionUpdate(targetSeasonId, 'PLAYER_SELECTED', {
       lotId: selectedLot.id,
+      lotStatus: 'in_progress',
       currentPrice: null,
       highestBidderId: null,
       startedAt: now,
       durationSeconds,
+      sequenceNumber: mutation.data?.event?.sequence_number,
+      activeLot: activeLotWithDetails,
+      sessionStatus: sessionState?.status || 'live',
     });
 
-    const activeLotWithDetails = await getActiveLot(adminClient, targetSeasonId);
-    const sessionState = await getAuctionSessionState(adminClient, targetSeasonId);
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
+    revalidatePath('/admin/auction');
 
     return {
       success: true,
@@ -1348,14 +1378,6 @@ export async function callGuestDrawNumberAction(
       });
     }
 
-    revalidatePath('/admin');
-    revalidatePath('/admin/auction');
-    revalidatePath('/admin/queue');
-    revalidatePath('/live');
-    revalidatePath('/live/projector');
-    revalidatePath('/franchise/auction');
-    revalidatePath('/player/auction');
-
     const { data: timerConfig } = await adminClient
       .from('season_config')
       .select('value')
@@ -1365,16 +1387,28 @@ export async function callGuestDrawNumberAction(
 
     const durationSeconds = timerConfig?.value ? parseInt(timerConfig.value, 10) : 30;
 
+    const activeLotWithDetails = await getActiveLot(adminClient, targetSeasonId);
+    const sessionState = await getAuctionSessionState(adminClient, targetSeasonId);
+
+    // Immediate post-commit broadcast with activeLot and session status
     await broadcastAuctionUpdate(targetSeasonId, 'PLAYER_SELECTED', {
       lotId: lot.id,
+      lotStatus: 'in_progress',
       currentPrice: null,
       highestBidderId: null,
       startedAt: now,
       durationSeconds,
+      activeLot: activeLotWithDetails,
+      sessionStatus: 'live',
     });
 
-    const activeLotWithDetails = await getActiveLot(adminClient, targetSeasonId);
-    const sessionState = await getAuctionSessionState(adminClient, targetSeasonId);
+    revalidatePath('/admin');
+    revalidatePath('/admin/auction');
+    revalidatePath('/admin/queue');
+    revalidatePath('/live');
+    revalidatePath('/live/projector');
+    revalidatePath('/franchise/auction');
+    revalidatePath('/player/auction');
 
     return {
       success: true,
@@ -1883,6 +1917,7 @@ export async function startAuctionAction(
       lotId: activeLotId,
       startedAt: now,
       sessionStatus: 'live',
+      activeLot,
     });
 
     const sessionState: AuctionSessionState = {
@@ -2310,8 +2345,9 @@ export async function pauseAuctionAction(
     }
 
     // 3. If a lot is currently in progress, record PAUSE event in auction_events
+    let pauseSequenceNumber: number | undefined;
     if (activeLot) {
-      const { error: eventErr } = await adminClient.from('auction_events').insert({
+      const insertQuery = adminClient.from('auction_events').insert({
         season_id: activeSeason.id,
         auction_lot_id: activeLot.id,
         event_type: 'PAUSE',
@@ -2324,24 +2360,33 @@ export async function pauseAuctionAction(
         created_at: now,
       });
 
+      const { data: pauseEvent, error: eventErr } =
+        typeof (insertQuery as any)?.select === 'function'
+          ? await (insertQuery as any).select().single()
+          : await insertQuery;
+
       if (eventErr) {
         return {
           success: false,
           error: eventErr.message || 'Failed to record auction pause event.',
         };
       }
+      pauseSequenceNumber = pauseEvent?.sequence_number;
     }
+
+    // Immediate post-commit broadcast for PAUSE
+    await broadcastAuctionUpdate(activeSeason.id, 'PAUSE', {
+      remainingSeconds,
+      sessionStatus: 'paused',
+      isPaused: true,
+      sequenceNumber: pauseSequenceNumber,
+    });
 
     revalidatePath('/admin/auction');
     revalidatePath('/live');
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
-
-    await broadcastAuctionUpdate(activeSeason.id, 'PAUSE', {
-      remainingSeconds,
-      sessionStatus: 'paused',
-    });
 
     const sessionState: AuctionSessionState = {
       status: 'paused',
@@ -2496,8 +2541,9 @@ export async function resumeAuctionAction(): Promise<
     }
 
     // 4. If a lot is currently in progress, record RESUME event
+    let resumeSequenceNumber: number | undefined;
     if (activeLot) {
-      const { error: resumeEventErr } = await adminClient.from('auction_events').insert({
+      const insertQuery = adminClient.from('auction_events').insert({
         season_id: activeSeason.id,
         auction_lot_id: activeLot.id,
         event_type: 'RESUME',
@@ -2510,23 +2556,33 @@ export async function resumeAuctionAction(): Promise<
         created_at: now,
       });
 
+      const { data: resumeEvent, error: resumeEventErr } =
+        typeof (insertQuery as any)?.select === 'function'
+          ? await (insertQuery as any).select().single()
+          : await insertQuery;
+
       if (resumeEventErr) {
         return {
           success: false,
           error: resumeEventErr.message || 'Failed to record auction resume event.',
         };
       }
+      resumeSequenceNumber = resumeEvent?.sequence_number;
     }
+
+    // Immediate post-commit broadcast for RESUME
+    await broadcastAuctionUpdate(activeSeason.id, 'RESUME', {
+      startedAt: activeLot ? restoredStartedAt : null,
+      sessionStatus: 'live',
+      isPaused: false,
+      sequenceNumber: resumeSequenceNumber,
+    });
 
     revalidatePath('/live');
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
-
-    await broadcastAuctionUpdate(activeSeason.id, 'RESUME', {
-      startedAt: activeLot ? restoredStartedAt : null,
-      sessionStatus: 'live',
-    });
+    revalidatePath('/admin/auction');
 
     const sessionState: AuctionSessionState = {
       status: 'live',
@@ -2713,6 +2769,14 @@ export async function endAuctionAction(
       },
     });
 
+    // Immediate broadcast to clear floor across all connected clients
+    await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_ENDED', {
+      sessionStatus: 'completed',
+      lotId: null,
+      activeLot: null,
+      isEmptyFloor: true,
+    });
+
     revalidatePath('/admin/auction');
     revalidatePath('/admin');
     revalidatePath('/live');
@@ -2722,12 +2786,6 @@ export async function endAuctionAction(
     revalidatePath('/player/auction');
     revalidatePath('/franchise');
     revalidatePath('/player');
-
-    await broadcastAuctionUpdate(activeSeason.id, 'AUCTION_ENDED', {
-      sessionStatus: 'completed',
-      lotId: null,
-      activeLot: null,
-    });
 
     const sessionState: AuctionSessionState = {
       status: 'completed',

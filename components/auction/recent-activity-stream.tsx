@@ -4,8 +4,9 @@
 // ACC Auction Portal — Components: Recent Auction Activity Stream
 // =============================================================================
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import type { AuctionEventDTO } from '@/lib/auction/types';
+import { subscribeAuctionDelta } from '@/components/auction/auction-realtime-sync';
 
 interface RecentActivityStreamProps {
   events: AuctionEventDTO[];
@@ -32,7 +33,58 @@ export function formatActivityTimestampIST(isoString: string): string {
   return `${hours12}:${minutes}:${seconds} ${period}`;
 }
 
-export function RecentActivityStream({ events }: RecentActivityStreamProps) {
+export function RecentActivityStream({ events: initialEvents }: RecentActivityStreamProps) {
+  const [events, setEvents] = useState<AuctionEventDTO[]>(initialEvents || []);
+
+  useEffect(() => {
+    setEvents(initialEvents || []);
+  }, [initialEvents]);
+
+  useEffect(() => {
+    return subscribeAuctionDelta((payload) => {
+      if (payload.type === 'BID_PLACED') {
+        const newEvent: AuctionEventDTO = {
+          id: `evt-${Date.now()}-${Math.random()}`,
+          season_id: payload.seasonId,
+          auction_lot_id: payload.lotId || '',
+          event_type: 'BID_PLACED',
+          actor_user_id: '',
+          franchise_id: payload.highestBidderId || null,
+          price: payload.currentPrice ?? null,
+          reason: null,
+          payload: null,
+          sequence_number: payload.sequenceNumber ?? '...',
+          created_at: payload.serverTimestamp || new Date().toISOString(),
+          franchise: payload.highestBidderId
+            ? {
+                id: payload.highestBidderId,
+                name: payload.highestBidderName || 'Franchise',
+                short_name: payload.highestBidderShortName || '',
+                primary_color: payload.highestBidderPrimaryColor || null,
+                secondary_color: null,
+              }
+            : null,
+        };
+        setEvents((prev) => [newEvent, ...prev.slice(0, 24)]);
+      } else if (payload.type === 'SALE' || payload.type === 'UNSOLD') {
+        const newEvent: AuctionEventDTO = {
+          id: `evt-${Date.now()}-${Math.random()}`,
+          season_id: payload.seasonId,
+          auction_lot_id: payload.lotId || '',
+          event_type: payload.type as any,
+          actor_user_id: '',
+          franchise_id: payload.highestBidderId || null,
+          price: payload.currentPrice ?? null,
+          reason: payload.type === 'SALE' ? 'Sold by hammer' : 'Passed unsold',
+          payload: null,
+          sequence_number: payload.sequenceNumber ?? '...',
+          created_at: payload.serverTimestamp || new Date().toISOString(),
+        };
+        setEvents((prev) => [newEvent, ...prev.slice(0, 24)]);
+      }
+    });
+  }, []);
+
   if (!events || events.length === 0) {
     return (
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-6 text-center text-xs text-zinc-500">

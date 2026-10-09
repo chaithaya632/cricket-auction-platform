@@ -161,9 +161,14 @@ export interface GuestDrawCandidate {
 }
 
 export interface AuctionBroadcastPayload {
+  version?: number;
   type: string;
   seasonId: string;
+  sequenceNumber?: number | string;
+  serverTimestamp?: string;
+  correlationId?: string;
   lotId?: string | null;
+  lotStatus?: LotStatus | string | null;
   currentPrice?: number | null;
   highestBidderId?: string | null;
   highestBidderName?: string | null;
@@ -173,11 +178,13 @@ export interface AuctionBroadcastPayload {
   durationSeconds?: number | null;
   remainingSeconds?: number | null;
   sessionStatus?: string | null;
-  sequenceNumber?: number | string;
   activeBuckets?: string[] | null;
   activeLot?: AuctionLotWithDetails | Record<string, any> | null;
+  sessionState?: Partial<AuctionSessionState> | AuctionSessionState | null;
+  nextLotId?: string | null;
+  isEmptyFloor?: boolean;
   isPaused?: boolean;
   pausedRemainingSeconds?: number | null;
-  timestamp: string;
+  timestamp?: string;
 }
 

@@ -32,18 +32,30 @@ export async function broadcastAuctionUpdate(
     const channelName = `acc-auction-${seasonId}`;
     const channel = adminClient.channel(channelName);
 
+    const now = new Date().toISOString();
+    const correlationId =
+      payloadData?.correlationId ||
+      `evt-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
     const payload: AuctionBroadcastPayload = {
+      version: 2,
       type: eventType,
       seasonId,
-      timestamp: new Date().toISOString(),
+      serverTimestamp: now,
+      correlationId,
+      timestamp: now,
       ...(payloadData || {}),
     };
 
-    await channel.send({
-      type: 'broadcast',
-      event: 'auction_update',
-      payload,
-    });
+    if (typeof (channel as any).httpSend === 'function') {
+      await (channel as any).httpSend('auction_update', payload);
+    } else {
+      await channel.send({
+        type: 'broadcast',
+        event: 'auction_update',
+        payload,
+      });
+    }
 
     // Clean up the server-side channel after sending
     await adminClient.removeChannel(channel);
