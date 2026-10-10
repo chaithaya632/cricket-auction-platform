@@ -479,45 +479,15 @@ export function OperatorControls({
   };
 
   const handleResumeAuction = () => {
-    const previousState = sessionState;
-
-    // Calculate synthetic started_at optimistically so active lot clock has zero jitter
-    const currentRemaining =
-      sessionState.pausedRemainingSeconds ?? (getCurrentRemaining ? getCurrentRemaining() : 20);
-    const timerDuration = activeLot?.highest_bidder_franchise_id ? 20 : 30;
-    const remainingToRestore =
-      currentRemaining !== null && currentRemaining !== undefined
-        ? Math.min(timerDuration, Math.max(1, currentRemaining))
-        : timerDuration;
-    const elapsedSeconds = timerDuration - remainingToRestore;
-    const syntheticStartedAt = new Date(Date.now() - elapsedSeconds * 1000).toISOString();
-
-    // OPTIMISTIC UPDATE: Resume live session immediately (<250ms / 0ms)
-    const optimisticState: AuctionSessionState = {
-      ...sessionState,
-      status: 'live',
-      isPaused: false,
-      startedAt: syntheticStartedAt,
-      pausedRemainingSeconds: null,
-      pausedAt: null,
-    };
-    onSessionStateChange?.(optimisticState);
-    if (activeLot) {
-      onActiveLotChange?.({
-        ...activeLot,
-        started_at: syntheticStartedAt,
-      });
-    }
-
+    // Authoritative Resume synchronization:
+    // Do NOT start countdown optimistically before server confirms.
+    // The operator UI shows pending state ('RESUMING...') while awaiting the commit,
+    // ensuring admin countdown and all other clients unpause at the exact same moment.
     void runOperatorAction(
       'resume',
       () => resumeAuctionAction(),
       (res) => {
         if (!res.success) {
-          onSessionStateChange?.(previousState);
-          if (activeLot) {
-            onActiveLotChange?.(activeLot);
-          }
           setErrorMsg(sanitizeActionError(res.error, 'Failed to resume auction.'));
         } else {
           if (res.data?.sessionState) {

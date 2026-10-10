@@ -604,6 +604,90 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
     expect(queryByText('Bring to Floor')).toBeNull();
   });
 
+  it('Admin Operator Controls: clicking RESUME AUCTION displays RESUMING... and does NOT optimistically unpause session state before server confirms', async () => {
+    let resolveResume!: (val: any) => void;
+    mockResumeAuctionAction.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveResume = resolve;
+        })
+    );
+
+    const onSessionStateChange = vi.fn();
+    const onActiveLotChange = vi.fn();
+
+    const pausedSession: AuctionSessionState = {
+      status: 'paused',
+      seasonId: 'season-001',
+      seasonName: 'ACC Season 2026',
+      isLive: true,
+      isPaused: true,
+      isNotStarted: false,
+      isCompleted: false,
+      startedAt: null,
+      activeLotId: 'lot-active-1',
+      pausedRemainingSeconds: 20,
+      pausedAt: '2026-03-30T10:00:00.000Z',
+    };
+
+    const activeLot = makeSampleLot({
+      id: 'lot-active-1',
+      status: 'in_progress',
+      started_at: '2026-03-30T10:00:00.000Z',
+    });
+
+    const { getByText } = render(
+      <OperatorControls
+        activeLot={activeLot}
+        upcomingLots={[]}
+        sessionState={pausedSession}
+        onSessionStateChange={onSessionStateChange}
+        onActiveLotChange={onActiveLotChange}
+      />
+    );
+
+    expect(getByText('RESUME AUCTION')).toBeTruthy();
+
+    const resumeBtn = getByText('RESUME AUCTION').closest('button')!;
+    await act(async () => {
+      fireEvent.click(resumeBtn);
+    });
+
+    // 1. In-flight verification: Pending state displayed, button disabled, NO optimistic unpause
+    expect(getByText('RESUMING...')).toBeTruthy();
+    expect((resumeBtn as HTMLButtonElement).disabled).toBe(true);
+    expect(onSessionStateChange).not.toHaveBeenCalled();
+    expect(onActiveLotChange).not.toHaveBeenCalled();
+
+    // 2. Authoritative resolution: Server confirms with new synthetic startedAt
+    const liveStartedAt = new Date().toISOString();
+    const authoritativeLiveState: AuctionSessionState = {
+      ...pausedSession,
+      status: 'live',
+      isPaused: false,
+      startedAt: liveStartedAt,
+      pausedRemainingSeconds: null,
+      pausedAt: null,
+    };
+
+    await act(async () => {
+      resolveResume({
+        success: true,
+        data: {
+          status: 'live',
+          sessionState: authoritativeLiveState,
+        },
+      });
+    });
+
+    // 3. Callback verification: Session unpauses with authoritative startedAt
+    expect(onSessionStateChange).toHaveBeenCalledWith(authoritativeLiveState);
+    expect(onActiveLotChange).toHaveBeenCalledWith({
+      ...activeLot,
+      started_at: liveStartedAt,
+    });
+  });
+
   it('Franchise Bid applies optimistic bid immediately, completes without redundant router.refresh(), and never gets stuck in Submitting state', async () => {
     let resolveBid!: (val: { success: boolean; data?: any }) => void;
     mockPlaceBidAction.mockImplementation(

@@ -577,4 +577,67 @@ describe('Pause & Resume Server Actions — Schema Constraint Compliance, Atomic
     expect(result.error).toContain('Database connection timeout');
     expect(operationOrder).toEqual(['auction_lots.update']);
   });
+
+  it('C3. resumeAuctionAction and pauseAuctionAction avoid redundant blocking revalidatePath calls on /live, /franchise, /player', async () => {
+    mockRevalidatePath.mockReset();
+
+    mockAdminClientInstance = {
+      from: (table: string) => {
+        if (table === 'season_config') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({ data: { value: 'paused' }, error: null }),
+                }),
+                in: async () => ({
+                  data: [{ key: 'auction_lot_paused_remaining_seconds', value: '25' }],
+                  error: null,
+                }),
+              }),
+            }),
+            upsert: async () => ({ data: null, error: null }),
+            delete: () => ({
+              eq: () => ({
+                in: async () => ({ data: null, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'auction_lots') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: { id: 'lot-active-001', highest_bidder_franchise_id: null },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+            update: () => ({
+              eq: async () => ({ data: null, error: null }),
+            }),
+          };
+        }
+        if (table === 'auction_events') {
+          return {
+            insert: async () => ({ data: null, error: null }),
+          };
+        }
+        throw new Error(`Unexpected table: ${table}`);
+      },
+    };
+
+    const res = await resumeAuctionAction();
+    expect(res.success).toBe(true);
+
+    // Verify /admin/auction is revalidated once for authoritative operator state,
+    // and redundant blocking routes (/live, /live/projector, /franchise/auction, /player/auction) are omitted
+    expect(mockRevalidatePath).toHaveBeenCalledTimes(1);
+    expect(mockRevalidatePath).toHaveBeenCalledWith('/admin/auction');
+    expect(mockRevalidatePath).not.toHaveBeenCalledWith('/live');
+    expect(mockRevalidatePath).not.toHaveBeenCalledWith('/franchise/auction');
+  });
 });

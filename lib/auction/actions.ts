@@ -2762,11 +2762,8 @@ export async function pauseAuctionAction(
       sequenceNumber: pauseSequenceNumber,
     });
 
+    // Authoritative operator page revalidation only; delta broadcast covers all live viewing surfaces (<20ms)
     revalidatePath('/admin/auction');
-    revalidatePath('/live');
-    revalidatePath('/live/projector');
-    revalidatePath('/franchise/auction');
-    revalidatePath('/player/auction');
 
     const sessionState: AuctionSessionState = {
       status: 'paused',
@@ -2959,10 +2956,7 @@ export async function resumeAuctionAction(): Promise<
       sequenceNumber: resumeSequenceNumber,
     });
 
-    revalidatePath('/live');
-    revalidatePath('/live/projector');
-    revalidatePath('/franchise/auction');
-    revalidatePath('/player/auction');
+    // Authoritative operator page revalidation only; delta broadcast covers all live viewing surfaces (<20ms)
     revalidatePath('/admin/auction');
 
     const sessionState: AuctionSessionState = {
