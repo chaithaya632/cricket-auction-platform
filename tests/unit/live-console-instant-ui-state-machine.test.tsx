@@ -104,7 +104,11 @@ vi.mock('@/lib/auction/queries', () => ({
 describe('Phase 5.2 — Live Console Instant UI & State Machine Verification', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Anchor Date.now() to a fixed epoch BEFORE any test code runs new Date(Date.now() - N).
+    // Without this, Date.now() in test setup can return a real-clock value when the worker
+    // starts slowly under parallel load, causing wall-clock races with vi.useFakeTimers().
     vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
   });
 
   afterEach(() => {

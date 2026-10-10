@@ -488,7 +488,16 @@ function validationNextBidTarget(
 export async function autoAdvanceToNextLot(
   adminClient: any,
   seasonId: string,
-  actorUserId: string
+  actorUserId: string,
+  options?: {
+    /**
+     * Set true when the preceding lot was confirmed as SOLD (a franchise won the player).
+     * Causes /franchise and /franchise/squad to be invalidated — these pages reflect
+     * squad membership and purse balance that only change on a SOLD outcome.
+     * Do NOT set for UNSOLD lots or plain progression calls (skip, startNextBucketGroup).
+     */
+    soldToFranchise?: boolean;
+  }
 ): Promise<{
   advanced: boolean;
   nextLotId: string | null;
@@ -519,6 +528,18 @@ export async function autoAdvanceToNextLot(
 
     if (activeLot) {
       const existingDetails = await getActiveLot(adminClient, seasonId);
+      // The preceding terminal action (SOLD/UNSOLD) already changed DB state.
+      // Callers rely on us for invalidation since they no longer call revalidatePath.
+      revalidatePath('/admin');
+      revalidatePath('/admin/auction');
+      revalidatePath('/live');
+      revalidatePath('/live/projector');
+      revalidatePath('/franchise/auction');
+      revalidatePath('/player/auction');
+      if (options?.soldToFranchise) {
+        revalidatePath('/franchise');
+        revalidatePath('/franchise/squad');
+      }
       return { advanced: false, nextLotId: activeLot.id, nextLot: existingDetails };
     }
 
@@ -559,6 +580,20 @@ export async function autoAdvanceToNextLot(
       .limit(100);
 
     if (!pendingLots || pendingLots.length === 0) {
+      // No more eligible players — floor is empty. The preceding terminal action
+      // (SOLD/UNSOLD/finalize) already committed. Invalidate so all views reflect
+      // the now-empty floor before broadcasting the empty-floor signal.
+      revalidatePath('/admin');
+      revalidatePath('/admin/auction');
+      revalidatePath('/live');
+      revalidatePath('/live/projector');
+      revalidatePath('/franchise/auction');
+      revalidatePath('/player/auction');
+      if (options?.soldToFranchise) {
+        revalidatePath('/franchise');
+        revalidatePath('/franchise/squad');
+      }
+
       await broadcastAuctionUpdate(seasonId, 'PLAYER_SELECTED', {
         lotId: null,
         activeLot: null,
@@ -667,13 +702,27 @@ export async function autoAdvanceToNextLot(
       pausedRemainingSeconds: isPaused ? durationSeconds : null,
     });
 
+    // Fix B: All revalidation is centralized here, AFTER the new lot is committed to DB.
+    // This eliminates the premature-invalidation window where the previous blocks in
+    // confirmSaleAction/markUnsoldAction/finalizeExpiredLotAction fired revalidatePath
+    // before the next lot was activated, and removes 7–9 duplicate tag entries.
+    //
+    // /admin/queue is intentionally excluded: it is a pure redirect stub
+    // (redirect('/admin/auction')) and carries no data of its own.
+    //
+    // /franchise and /franchise/squad are only included when a franchise actually won
+    // a player (soldToFranchise=true), since those reflect squad membership and purse
+    // balance — data that is unchanged for UNSOLD, skip, or bucket-group transitions.
     revalidatePath('/admin');
     revalidatePath('/admin/auction');
-    revalidatePath('/admin/queue');
     revalidatePath('/live');
     revalidatePath('/live/projector');
     revalidatePath('/franchise/auction');
     revalidatePath('/player/auction');
+    if (options?.soldToFranchise) {
+      revalidatePath('/franchise');
+      revalidatePath('/franchise/squad');
+    }
 
     return { advanced: true, nextLotId: nextLot.id, nextLot: nextLotDetails };
   } catch (err: any) {
@@ -782,30 +831,33 @@ export async function confirmSaleAction(
         .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
     }
 
-    // Immediate post-commit broadcast for SALE
-    await broadcastAuctionUpdate(lot.season_id, 'SALE', {
-      lotId: lot.id,
-      lotStatus: 'sold',
-      currentPrice: lot.current_price,
-      highestBidderId: lot.highest_bidder_franchise_id,
-      sequenceNumber: mutation.data?.event?.sequence_number,
-    });
+    // Non-blocking post-commit broadcast for SALE via enqueueBackgroundBroadcast.
+    // The database mutation has already succeeded; broadcast failure is non-fatal
+    // and will be logged by broadcastAuctionUpdate's catch block.
+    // Using enqueueBackgroundBroadcast (Next.js after()) removes ~50–200ms blocking
+    // from the server action critical path so the response is returned immediately.
+    const saleSequenceNumber = mutation.data?.event?.sequence_number;
+    enqueueBackgroundBroadcast(() =>
+      realtimeModule.broadcastAuctionUpdate(lot.season_id, 'SALE', {
+        lotId: lot.id,
+        lotStatus: 'sold',
+        currentPrice: lot.current_price,
+        highestBidderId: lot.highest_bidder_franchise_id,
+        sequenceNumber: saleSequenceNumber,
+      })
+    );
 
-    revalidatePath('/admin');
-    revalidatePath('/admin/auction');
-    revalidatePath('/admin/queue');
-    revalidatePath('/live');
-    revalidatePath('/live/projector');
-    revalidatePath('/franchise/auction');
-    revalidatePath('/player/auction');
-    revalidatePath('/franchise');
-    revalidatePath('/franchise/squad');
+    // Fix B: Redundant pre-advance revalidatePath block removed.
+    // autoAdvanceToNextLot now owns all invalidation — after the next lot is activated
+    // in DB, so no premature cache stale window. soldToFranchise:true tells it to also
+    // invalidate /franchise and /franchise/squad since this is always a SOLD outcome.
 
     // 3. Concurrency-safe automatic advance to next player
     const advanceResult = await autoAdvanceToNextLot(
       adminClient,
       lot.season_id,
-      adminContext.user.id
+      adminContext.user.id,
+      { soldToFranchise: true }
     );
 
     const sessionState = await getAuctionSessionState(adminClient, lot.season_id);
@@ -917,20 +969,22 @@ export async function markUnsoldAction(
         .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
     }
 
-    // Immediate post-commit broadcast for UNSOLD
-    await broadcastAuctionUpdate(lot.season_id, 'UNSOLD', {
-      lotId: lot.id,
-      lotStatus: 'unsold',
-      sequenceNumber: mutation.data?.event?.sequence_number,
-    });
+    // Non-blocking post-commit broadcast for UNSOLD via enqueueBackgroundBroadcast.
+    // The database mutation has already succeeded; broadcast failure is non-fatal
+    // and will be logged by broadcastAuctionUpdate's catch block.
+    const unsoldSequenceNumber = mutation.data?.event?.sequence_number;
+    enqueueBackgroundBroadcast(() =>
+      realtimeModule.broadcastAuctionUpdate(lot.season_id, 'UNSOLD', {
+        lotId: lot.id,
+        lotStatus: 'unsold',
+        sequenceNumber: unsoldSequenceNumber,
+      })
+    );
 
-    revalidatePath('/admin');
-    revalidatePath('/admin/auction');
-    revalidatePath('/admin/queue');
-    revalidatePath('/live');
-    revalidatePath('/live/projector');
-    revalidatePath('/franchise/auction');
-    revalidatePath('/player/auction');
+    // Fix B: Redundant pre-advance revalidatePath block removed.
+    // autoAdvanceToNextLot owns all invalidation. soldToFranchise is not set
+    // because UNSOLD means no franchise won the player — /franchise and /franchise/squad
+    // are unaffected and do not need cache invalidation.
 
     // 3. Concurrency-safe automatic advance to next player
     const advanceResult = await autoAdvanceToNextLot(
@@ -1146,38 +1200,40 @@ export async function finalizeExpiredLotAction(
       .eq('season_id', targetSeasonId)
       .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
 
-    // 9. Post-commit broadcast for SALE or UNSOLD
+    // 9. Non-blocking post-commit broadcast for SALE or UNSOLD via enqueueBackgroundBroadcast.
+    // The database mutation has already succeeded; broadcast failure is non-fatal.
+    const finalizeSequenceNumber = mutation.data?.event?.sequence_number;
     if (isSold) {
-      await broadcastAuctionUpdate(targetSeasonId, 'SALE', {
-        lotId: lot.id,
-        lotStatus: 'sold',
-        currentPrice: lot.current_price,
-        highestBidderId: lot.highest_bidder_franchise_id,
-        sequenceNumber: mutation.data?.event?.sequence_number,
-      });
+      enqueueBackgroundBroadcast(() =>
+        broadcastAuctionUpdate(targetSeasonId, 'SALE', {
+          lotId: lot.id,
+          lotStatus: 'sold',
+          currentPrice: lot.current_price,
+          highestBidderId: lot.highest_bidder_franchise_id,
+          sequenceNumber: finalizeSequenceNumber,
+        })
+      );
     } else {
-      await broadcastAuctionUpdate(targetSeasonId, 'UNSOLD', {
-        lotId: lot.id,
-        lotStatus: 'unsold',
-        sequenceNumber: mutation.data?.event?.sequence_number,
-      });
+      enqueueBackgroundBroadcast(() =>
+        broadcastAuctionUpdate(targetSeasonId, 'UNSOLD', {
+          lotId: lot.id,
+          lotStatus: 'unsold',
+          sequenceNumber: finalizeSequenceNumber,
+        })
+      );
     }
 
-    revalidatePath('/admin');
-    revalidatePath('/admin/auction');
-    revalidatePath('/admin/queue');
-    revalidatePath('/live');
-    revalidatePath('/live/projector');
-    revalidatePath('/franchise/auction');
-    revalidatePath('/player/auction');
-    revalidatePath('/franchise');
-    revalidatePath('/franchise/squad');
+    // Fix B: Redundant pre-advance revalidatePath block removed.
+    // autoAdvanceToNextLot owns all invalidation. soldToFranchise mirrors isSold:
+    // if the expired lot had a highest bidder (SOLD), franchise squad/purse changed;
+    // if UNSOLD (no bids when timer expired), they did not.
 
     // 10. Automatic progression to next player
     const advanceResult = await autoAdvanceToNextLot(
       adminClient,
       targetSeasonId,
-      actorUserId
+      actorUserId,
+      { soldToFranchise: isSold }
     );
 
     const sessionState = await getAuctionSessionState(adminClient, targetSeasonId);

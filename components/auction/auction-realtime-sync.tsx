@@ -378,7 +378,39 @@ export function AuctionRealtimeSync({
             }
           }
           if (isAccepted) {
-            coordinator.handleRealtimeEvent();
+            // Fix D: PAUSE and RESUME events carry sufficient authoritative state
+            // in their payload (remainingSeconds, isPaused, startedAt) for all client
+            // components (AuctionTimer, FranchiseAuctionFloor, ProjectorAuctionFloor)
+            // to update immediately via subscribeAuctionDelta delta listeners — which
+            // already run synchronously before this code. Triggering router.refresh()
+            // on top of the delta update adds a redundant 100–400ms RSC round-trip
+            // that fetches no new lot data and causes visible timer "double-update" jitter.
+            //
+            // A refresh IS still scheduled for:
+            //   - Events that modify lot data: BID_PLACED, PLAYER_SELECTED, SALE, UNSOLD,
+            //     TIMER_EXTENDED, AUCTION_STARTED, AUCTION_ENDED.
+            //   - Any event where the payload does NOT carry authoritative remainingSeconds
+            //     (i.e. impoverished PAUSE/RESUME payloads, or fallback reconciliation).
+            //   - Sequence-gap events (fired directly by notifyAuctionDelta internals).
+            const eventType = payload?.type as string | undefined;
+
+            const isPauseWithAuthoritativeState =
+              eventType === 'PAUSE' &&
+              payload != null &&
+              typeof (payload as any).remainingSeconds === 'number';
+
+            const isResumeWithAuthoritativeState =
+              eventType === 'RESUME' &&
+              payload != null &&
+              typeof (payload as any).remainingSeconds === 'number' &&
+              typeof (payload as any).startedAt === 'string';
+
+            const shouldSkipRefresh =
+              isPauseWithAuthoritativeState || isResumeWithAuthoritativeState;
+
+            if (!shouldSkipRefresh) {
+              coordinator.handleRealtimeEvent();
+            }
           }
         }
       )
