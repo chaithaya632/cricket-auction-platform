@@ -155,16 +155,24 @@ export function AuctionTimer({
         if (payload.remainingSeconds !== undefined && payload.remainingSeconds !== null) {
           setRemaining(payload.remainingSeconds);
           lastPausedRemainingRef.current = payload.remainingSeconds;
+          resumeAnchorRef.current = {
+            resumedAt: getCalibratedNow(),
+            remainingAtResume: payload.remainingSeconds,
+            startedAtWhenResumed: payload.startedAt ?? effectiveStartedAt,
+          };
         }
       } else if (payload.type === 'TIMER_EXTENDED') {
+        resumeAnchorRef.current = null;
         if (payload.startedAt) setEffectiveStartedAt(payload.startedAt);
         if (payload.durationSeconds) setEffectiveDuration(payload.durationSeconds);
       } else if (payload.type === 'BID_PLACED') {
+        resumeAnchorRef.current = null;
         setInternalPaused(false);
         setInternalPausedRemaining(null);
         if (payload.startedAt) setEffectiveStartedAt(payload.startedAt);
         if (payload.durationSeconds) setEffectiveDuration(payload.durationSeconds);
       } else if (payload.type === 'PLAYER_SELECTED') {
+        resumeAnchorRef.current = null;
         setInternalPaused(Boolean(payload.isPaused));
         setInternalPausedRemaining(payload.pausedRemainingSeconds ?? null);
         if (payload.startedAt) setEffectiveStartedAt(payload.startedAt);
@@ -227,24 +235,36 @@ export function AuctionTimer({
       // If we have an active resume anchor, count down smoothly from the anchor
       // to eliminate the jump between local unfreeze and server RSC timestamp reconciliation.
       if (resumeAnchorRef.current) {
-        const timeDiff = Math.abs(
-          new Date(effectiveStartedAt).getTime() -
-          new Date(resumeAnchorRef.current.startedAtWhenResumed || effectiveStartedAt).getTime()
-        );
-        // If effectiveStartedAt shifted significantly (> 2000ms), a new bid or extension occurred; clear anchor
-        if (timeDiff > 2000) {
-          resumeAnchorRef.current = null;
-        } else {
-          const elapsedSec = (nowMs - resumeAnchorRef.current.resumedAt) / 1000;
-          const left = Math.max(0, Math.ceil(resumeAnchorRef.current.remainingAtResume - elapsedSec));
-          if (left > 0) {
-            return left;
+        const elapsedSec = (nowMs - resumeAnchorRef.current.resumedAt) / 1000;
+        const anchorLeft = Math.max(0, Math.ceil(resumeAnchorRef.current.remainingAtResume - elapsedSec));
+
+        const deadline = effectiveStartedAt
+          ? new Date(effectiveStartedAt).getTime() + effectiveDuration * 1000
+          : 0;
+        const deadlineLeft = effectiveStartedAt
+          ? Math.max(0, Math.ceil((deadline - nowMs) / 1000))
+          : 0;
+
+        if (anchorLeft > 0) {
+          // If a new bid or extension pushed deadline well beyond anchor, clear anchor and use deadline
+          if (deadlineLeft > anchorLeft + 1) {
+            resumeAnchorRef.current = null;
+            return deadlineLeft;
           }
-          resumeAnchorRef.current = null;
+          // If server's resumed timestamp has caught up and matches anchor within ±1s, reconcile
+          if (deadlineLeft > 0 && Math.abs(deadlineLeft - anchorLeft) <= 1) {
+            resumeAnchorRef.current = null;
+            return deadlineLeft;
+          }
+          // While effectiveStartedAt is still stale (deadline in past due to pause duration), smoothly use anchor
+          return anchorLeft;
         }
+        resumeAnchorRef.current = null;
       }
 
-      const deadline = new Date(effectiveStartedAt).getTime() + effectiveDuration * 1000;
+      const deadline = effectiveStartedAt
+        ? new Date(effectiveStartedAt).getTime() + effectiveDuration * 1000
+        : 0;
       return Math.max(0, Math.ceil((deadline - nowMs) / 1000));
     };
 

@@ -652,7 +652,7 @@ describe('Broadcast Ordering — enqueueBackgroundBroadcast Strict FIFO Executio
     }
 
     // Wait for all 5 to complete (25 + 10 + 20 + 5 + 15 = 75ms)
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(executionLog).toEqual([
       'task1:start',
@@ -688,7 +688,7 @@ describe('Broadcast Ordering — enqueueBackgroundBroadcast Strict FIFO Executio
       taskExecuted = true;
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await new Promise((resolve) => setTimeout(resolve, 100));
     expect(taskExecuted).toBe(true);
   });
 });

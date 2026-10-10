@@ -90,9 +90,20 @@ export function FranchiseAuctionFloor({
   }, []);
 
   const hasTriggeredExpiryRef = React.useRef<string | null>(null);
+  const [isTimerExpired, setIsTimerExpired] = useState<boolean>(false);
+
+  const handleRemainingChange = React.useCallback((rem: number) => {
+    if (rem <= 0) {
+      setIsTimerExpired(true);
+    } else {
+      setIsTimerExpired(false);
+    }
+  }, []);
+
   const handleTimerExpireRef = React.useRef<() => Promise<void>>(() => Promise.resolve());
 
   const handleTimerExpire = React.useCallback(async () => {
+    setIsTimerExpired(true);
     const currentLot = activeLotRef.current;
     if (!currentLot || currentLot.status !== 'in_progress' || sessionState.isPaused || !sessionState.isLive) {
       return;
@@ -200,8 +211,11 @@ export function FranchiseAuctionFloor({
   // Subscribe to instantaneous broadcast deltas
   useEffect(() => {
     return subscribeAuctionDelta((payload) => {
+      const currentLot = activeLotRef.current;
+
       if (payload.type === 'BID_PLACED') {
-        if (payload.lotId && (!activeLot || activeLot.id === payload.lotId)) {
+        if (payload.lotId && (!currentLot || currentLot.id === payload.lotId)) {
+          setIsTimerExpired(false);
           setActiveLot((prev) => {
             if (!prev || prev.id !== payload.lotId) return prev;
             return {
@@ -232,11 +246,11 @@ export function FranchiseAuctionFloor({
           guestDrawFallbackTimerRef.current = setTimeout(() => {
             if (pendingGuestDrawLotRef.current) {
               setActiveLot(pendingGuestDrawLotRef.current);
+              setIsTimerExpired(false);
               pendingGuestDrawLotRef.current = null;
             }
           }, 3500);
         } else {
-          const currentLot = activeLotRef.current;
           const isCurrentTerminal =
             currentLot &&
             (currentLot.status === 'sold' ||
@@ -249,12 +263,15 @@ export function FranchiseAuctionFloor({
             }
             pendingNextLotTimerRef.current = setTimeout(() => {
               setActiveLot(nextLot);
+              setIsTimerExpired(false);
               pendingNextLotTimerRef.current = null;
             }, 2200);
           } else if (nextLot) {
             setActiveLot(nextLot);
+            setIsTimerExpired(false);
           } else if (payload.isEmptyFloor) {
             setActiveLot(null);
+            setIsTimerExpired(true);
           }
         }
         if (payload.isPaused !== undefined) {
@@ -266,6 +283,7 @@ export function FranchiseAuctionFloor({
           }));
         }
       } else if (payload.type === 'SALE') {
+        setIsTimerExpired(true);
         if (payload.lotId) {
           terminalOutcomeRef.current = { lotId: payload.lotId, status: 'sold', timestamp: Date.now() };
         }
@@ -288,6 +306,7 @@ export function FranchiseAuctionFloor({
           };
         });
       } else if (payload.type === 'UNSOLD') {
+        setIsTimerExpired(true);
         if (payload.lotId) {
           terminalOutcomeRef.current = { lotId: payload.lotId, status: 'unsold', timestamp: Date.now() };
         }
@@ -303,6 +322,9 @@ export function FranchiseAuctionFloor({
           pausedRemainingSeconds: payload.remainingSeconds ?? prev.pausedRemainingSeconds,
         }));
       } else if (payload.type === 'RESUME') {
+        if (payload.remainingSeconds === undefined || payload.remainingSeconds === null || payload.remainingSeconds > 0) {
+          setIsTimerExpired(false);
+        }
         setSessionState((prev) => ({
           ...prev,
           isPaused: false,
@@ -313,6 +335,7 @@ export function FranchiseAuctionFloor({
           setActiveLot((prev) => (prev ? { ...prev, started_at: payload.startedAt! } : prev));
         }
       } else if (payload.type === 'AUCTION_ENDED') {
+        setIsTimerExpired(true);
         setSessionState((prev) => ({
           ...prev,
           isLive: false,
@@ -321,6 +344,7 @@ export function FranchiseAuctionFloor({
         }));
         setActiveLot(null); // Authoritative Floor Rule: floor is cleared
       } else if (payload.type === 'AUCTION_STARTED') {
+        setIsTimerExpired(false);
         setSessionState((prev) => ({
           ...prev,
           status: 'live',
@@ -334,11 +358,14 @@ export function FranchiseAuctionFloor({
           setActiveLot(payload.activeLot as AuctionLotWithDetails);
         }
       } else if (payload.type === 'TIMER_EXTENDED') {
-        if (payload.lotId && payload.startedAt) {
-          setActiveLot((prev) => {
-            if (!prev || prev.id !== payload.lotId) return prev;
-            return { ...prev, started_at: payload.startedAt! };
-          });
+        if (payload.lotId && (!currentLot || currentLot.id === payload.lotId)) {
+          setIsTimerExpired(false);
+          if (payload.startedAt) {
+            setActiveLot((prev) => {
+              if (!prev || prev.id !== payload.lotId) return prev;
+              return { ...prev, started_at: payload.startedAt! };
+            });
+          }
         }
       }
     });
@@ -365,12 +392,17 @@ export function FranchiseAuctionFloor({
             highestBidderId={activeLot.highest_bidder_franchise_id}
             size="md"
             onExpire={handleTimerExpire}
+            onRemainingChange={handleRemainingChange}
           />
         </div>
       )}
 
       {franchiseData && (
-        <BiddingControl lot={activeLot} franchise={franchiseData} />
+        <BiddingControl
+          lot={activeLot}
+          franchise={franchiseData}
+          isTimerExpired={isTimerExpired}
+        />
       )}
 
       {/* Official Guest Draw Reveal Popup Overlay */}

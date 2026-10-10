@@ -317,6 +317,81 @@ describe('1. Hydration Determinism & Zero React Error #418', () => {
     expect(container.textContent).toContain('16s');
   });
 
+  it('guarantees AuctionTimer does not drop to 0:00 when unpausing after a pause > 2 seconds while RESUME update is in transit', () => {
+    const onExpireMock = vi.fn();
+    const initialStartedAt = new Date('2026-09-27T09:00:00.000Z').toISOString();
+    vi.setSystemTime(new Date('2026-09-27T09:00:10.000Z')); // 20s remaining
+
+    const { container, rerender } = render(
+      <AuctionTimer
+        startedAt={initialStartedAt}
+        durationSeconds={30}
+        isActive={true}
+        isPaused={true}
+        pausedRemainingSeconds={20}
+        onExpire={onExpireMock}
+      />
+    );
+
+    expect(container.textContent).toContain('PAUSED (20s)');
+
+    // Simulate a 45-second pause (greatly exceeding the 2-second threshold)
+    act(() => {
+      vi.advanceTimersByTime(45_000); // Now at 09:00:55Z
+    });
+    expect(container.textContent).toContain('PAUSED (20s)');
+
+    // Step 1: Admin unpauses (optimistic resume or isPaused flips to false before new startedAt is received)
+    // Props still carry the old initialStartedAt (09:00:00Z) which is 55 seconds in the past
+    rerender(
+      <AuctionTimer
+        startedAt={initialStartedAt}
+        durationSeconds={30}
+        isActive={true}
+        isPaused={false}
+        pausedRemainingSeconds={null}
+        onExpire={onExpireMock}
+      />
+    );
+
+    // Must NOT drop to 0s or trigger onExpire despite initialStartedAt + 30s being in the past
+    expect(container.textContent).toContain('20s');
+    expect(container.textContent).not.toContain('PAUSED');
+    expect(container.textContent).not.toContain('TIME UP');
+    expect(onExpireMock).not.toHaveBeenCalled();
+
+    // Step 2: 1 second passes while RESUME broadcast is in transit
+    act(() => {
+      vi.advanceTimersByTime(1000); // 09:00:56Z
+    });
+    expect(container.textContent).toContain('19s');
+    expect(onExpireMock).not.toHaveBeenCalled();
+
+    // Step 3: Server's synthetic restoredStartedAt arrives via props or broadcast:
+    // restoredStartedAt = 09:00:55Z - (30 - 20)s = 09:00:45Z (deadline = 09:01:15Z)
+    const serverRestoredStartedAt = new Date('2026-09-27T09:00:45.000Z').toISOString();
+    rerender(
+      <AuctionTimer
+        startedAt={serverRestoredStartedAt}
+        durationSeconds={30}
+        isActive={true}
+        isPaused={false}
+        pausedRemainingSeconds={null}
+        onExpire={onExpireMock}
+      />
+    );
+
+    // Smoothly reconciles with server deadline: at 09:00:56Z, deadline is 09:01:15Z (19s remaining)
+    expect(container.textContent).toContain('19s');
+
+    // Step 4: Advance another 3 seconds -> 16s remaining
+    act(() => {
+      vi.advanceTimersByTime(3000); // 09:00:59Z
+    });
+    expect(container.textContent).toContain('16s');
+    expect(onExpireMock).not.toHaveBeenCalled();
+  });
+
   it('hydrates LiveAuctionBanner deterministically without Math.random mismatches', () => {
     const ssrHtml = renderToString(
       <LiveAuctionBanner initialIsLive={true} seasonId="season-001" role="franchise" />

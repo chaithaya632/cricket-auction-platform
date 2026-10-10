@@ -25,20 +25,36 @@ interface BiddingControlProps {
     maxSquadSize: number;
     maxPermissibleBid: number;
   };
+  isTimerExpired?: boolean;
 }
 
-export function BiddingControl({ lot, franchise }: BiddingControlProps) {
+export function BiddingControl({
+  lot,
+  franchise,
+  isTimerExpired = false,
+}: BiddingControlProps) {
   const router = useRouter();
   const [liveLot, setLiveLot] = useState<AuctionLotWithDetails | null>(lot);
   const [isPending, setIsPending] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [optimisticBid, setOptimisticBid] = useState<{ lotId: string; price: number } | null>(null);
+  const [internalExpired, setInternalExpired] = useState<boolean>(isTimerExpired);
   const isSubmittingRef = useRef(false);
+
+  useEffect(() => {
+    setInternalExpired(isTimerExpired);
+    setOptimisticBid(null);
+    setErrorMsg(null);
+  }, [lot?.id, isTimerExpired]);
 
   useEffect(() => {
     setLiveLot((prev) => {
       if (!lot) return null;
-      if (!prev || prev.id !== lot.id) return lot;
+      if (!prev || prev.id !== lot.id) {
+        setOptimisticBid(null);
+        setErrorMsg(null);
+        return lot;
+      }
       // Anti-stale guard: never downgrade current price if an in-memory broadcast has a higher price
       if (
         prev.current_price !== null &&
@@ -52,8 +68,13 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
 
   useEffect(() => {
     return subscribeAuctionDelta((payload) => {
+      const currentLotId = liveLot?.id || lot?.id;
+      if (!currentLotId) return;
+
       if (payload.type === 'BID_PLACED') {
-        if (payload.lotId && (!liveLot || liveLot.id === payload.lotId)) {
+        // Strict lot ID match: stale or other-lot bids must never affect current lot
+        if (payload.lotId && payload.lotId === currentLotId) {
+          setInternalExpired(false);
           setLiveLot((prev) => {
             const base = prev || (lot && lot.id === payload.lotId ? lot : null);
             if (!base || base.id !== payload.lotId) return base;
@@ -68,23 +89,41 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
           setOptimisticBid(null);
         }
       } else if (payload.type === 'PLAYER_SELECTED') {
-        if (payload.activeLot) {
-          setLiveLot(payload.activeLot as AuctionLotWithDetails);
-          setOptimisticBid(null);
-          setErrorMsg(null);
+        const nextLot = payload.activeLot as AuctionLotWithDetails | null;
+        if (nextLot) {
+          // If a new lot is mounted, reset expiry and pending state
+          if (nextLot.id !== currentLotId) {
+            setInternalExpired(false);
+            setLiveLot(nextLot);
+            setOptimisticBid(null);
+            setErrorMsg(null);
+          } else {
+            setLiveLot(nextLot);
+          }
         } else if (payload.isEmptyFloor) {
           setLiveLot(null);
           setOptimisticBid(null);
         }
+      } else if (payload.type === 'TIMER_EXTENDED') {
+        // Strict lot ID match: only unexpire if extension belongs to current lot
+        if (payload.lotId && payload.lotId === currentLotId) {
+          setInternalExpired(false);
+        }
+      } else if (payload.type === 'RESUME') {
+        // Only unexpire on RESUME if time actually remains
+        if (payload.remainingSeconds === undefined || payload.remainingSeconds === null || payload.remainingSeconds > 0) {
+          setInternalExpired(false);
+        }
       } else if (payload.type === 'SALE' || payload.type === 'UNSOLD') {
-        if (payload.lotId && liveLot && liveLot.id === payload.lotId) {
+        if (payload.lotId && payload.lotId === currentLotId) {
+          setInternalExpired(true);
           setLiveLot((prev) =>
             prev ? { ...prev, status: payload.type === 'SALE' ? 'sold' : 'unsold' } : prev
           );
         }
       }
     });
-  }, [liveLot?.id]);
+  }, [liveLot?.id, lot?.id]);
 
   const activeLot = liveLot || lot;
 
@@ -113,12 +152,13 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
   const nextBid = calculateNextBid(displayPrice, activeLot.base_price);
   const isSquadFull = franchise.squadCount >= franchise.maxSquadSize;
   const exceedsMaxBid = nextBid > franchise.maxPermissibleBid;
+  const isTimeUp = internalExpired;
 
-  const canBid = !isHighestBidder && !isSquadFull && !exceedsMaxBid && !isPending;
+  const canBid = !isHighestBidder && !isSquadFull && !exceedsMaxBid && !isPending && !isTimeUp;
 
   const handlePlaceBid = async () => {
     // Immediate anti-duplicate guard: reject secondary clicks synchronously before React rerenders
-    if (isSubmittingRef.current || isPending || !activeLot) return;
+    if (isSubmittingRef.current || isPending || !activeLot || isTimeUp) return;
     isSubmittingRef.current = true;
 
     setErrorMsg(null);
@@ -259,6 +299,8 @@ export function BiddingControl({ lot, franchise }: BiddingControlProps) {
           <span>Leading Bidder (₹{displayPrice})</span>
         ) : isProvisionalPending ? (
           <span>Provisional Bid ₹{displayPrice} Pending</span>
+        ) : isTimeUp ? (
+          <span>Bidding Closed (Time Up)</span>
         ) : exceedsMaxBid ? (
           <span>Bid Exceeds Permissible Limit</span>
         ) : (
