@@ -363,7 +363,7 @@ describe('Pause & Resume Server Actions — Schema Constraint Compliance, Atomic
     expect(capturedEvents.length).toBe(1);
     expect(capturedEvents[0].event_type).toBe('PAUSE');
     expect(capturedEvents[0].payload.remaining_seconds).toBe(15);
-    expect(mockRevalidatePath).toHaveBeenCalledWith('/admin/auction');
+    expect(mockRevalidatePath).not.toHaveBeenCalled();
   });
 
   it('B. pauseAuctionAction fails closed when season_config upsert fails (no PAUSE event inserted, no success returned)', async () => {
@@ -633,11 +633,8 @@ describe('Pause & Resume Server Actions — Schema Constraint Compliance, Atomic
     const res = await resumeAuctionAction();
     expect(res.success).toBe(true);
 
-    // Verify /admin/auction is revalidated once for authoritative operator state,
-    // and redundant blocking routes (/live, /live/projector, /franchise/auction, /player/auction) are omitted
-    expect(mockRevalidatePath).toHaveBeenCalledTimes(1);
-    expect(mockRevalidatePath).toHaveBeenCalledWith('/admin/auction');
-    expect(mockRevalidatePath).not.toHaveBeenCalledWith('/live');
-    expect(mockRevalidatePath).not.toHaveBeenCalledWith('/franchise/auction');
+    // Verify blocking revalidatePath calls on /admin/auction, /live, /franchise/auction are omitted
+    // to guarantee sub-250ms Server Action completion and unblock background broadcast
+    expect(mockRevalidatePath).not.toHaveBeenCalled();
   });
 });

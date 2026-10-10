@@ -47,6 +47,13 @@ export async function broadcastAuctionUpdate(
       ...(payloadData || {}),
     };
 
+    // Ensure socket authorization token is present for direct broadcast HTTP transport
+    if (channel && (channel as any).socket) {
+      if (!(channel as any).socket.accessTokenValue && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+        (channel as any).socket.accessTokenValue = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      }
+    }
+
     if (typeof (channel as any).httpSend === 'function') {
       await (channel as any).httpSend('auction_update', payload);
     } else {
@@ -58,7 +65,7 @@ export async function broadcastAuctionUpdate(
     }
 
     // Clean up the server-side channel asynchronously without blocking caller
-    adminClient.removeChannel(channel).catch(() => {});
+    Promise.resolve(adminClient.removeChannel(channel)).catch(() => {});
   } catch (err) {
     // Broadcast failure MUST NEVER fail the parent Server Action.
     // The database mutation already succeeded — clients will catch up

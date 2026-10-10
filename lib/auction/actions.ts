@@ -2759,7 +2759,7 @@ export async function pauseAuctionAction(
       pauseSequenceNumber = pauseEvent?.sequence_number;
     }
 
-    // Immediate post-commit broadcast for PAUSE
+    // Immediate post-commit broadcast for PAUSE to all connected viewing surfaces (<50ms)
     enqueueBackgroundBroadcast(() =>
       realtimeModule.broadcastAuctionUpdate(activeSeason.id, 'PAUSE', {
         lotId: activeLot?.id,
@@ -2769,9 +2769,6 @@ export async function pauseAuctionAction(
         sequenceNumber: pauseSequenceNumber,
       })
     );
-
-    // Authoritative operator page revalidation only; delta broadcast covers all live viewing surfaces (<20ms)
-    revalidatePath('/admin/auction');
 
     const sessionState: AuctionSessionState = {
       status: 'paused',
@@ -2961,14 +2958,12 @@ export async function resumeAuctionAction(): Promise<
       realtimeModule.broadcastAuctionUpdate(activeSeason.id, 'RESUME', {
         lotId: activeLot?.id,
         startedAt: activeLot ? restoredStartedAt : null,
+        remainingSeconds: remainingToRestore,
         sessionStatus: 'live',
         isPaused: false,
         sequenceNumber: resumeSequenceNumber,
       })
     );
-
-    // Authoritative operator page revalidation only; delta broadcast covers all live viewing surfaces (<20ms)
-    revalidatePath('/admin/auction');
 
     const sessionState: AuctionSessionState = {
       status: 'live',

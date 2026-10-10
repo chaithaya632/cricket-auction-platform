@@ -152,6 +152,10 @@ export function AuctionTimer({
         if (payload.startedAt) {
           setEffectiveStartedAt(payload.startedAt);
         }
+        if (payload.remainingSeconds !== undefined && payload.remainingSeconds !== null) {
+          setRemaining(payload.remainingSeconds);
+          lastPausedRemainingRef.current = payload.remainingSeconds;
+        }
       } else if (payload.type === 'TIMER_EXTENDED') {
         if (payload.startedAt) setEffectiveStartedAt(payload.startedAt);
         if (payload.durationSeconds) setEffectiveDuration(payload.durationSeconds);
@@ -220,15 +224,23 @@ export function AuctionTimer({
 
     const computeLiveRemaining = () => {
       const nowMs = getCalibratedNow();
-      // If we have an active resume anchor and effectiveStartedAt hasn't changed yet,
-      // count down smoothly from the anchor to eliminate the 20 -> 16 -> 20 jump.
+      // If we have an active resume anchor, count down smoothly from the anchor
+      // to eliminate the jump between local unfreeze and server RSC timestamp reconciliation.
       if (resumeAnchorRef.current) {
-        if (effectiveStartedAt !== resumeAnchorRef.current.startedAtWhenResumed) {
-          // Parent/server caught up with the updated started_at timestamp
+        const timeDiff = Math.abs(
+          new Date(effectiveStartedAt).getTime() -
+          new Date(resumeAnchorRef.current.startedAtWhenResumed || effectiveStartedAt).getTime()
+        );
+        // If effectiveStartedAt shifted significantly (> 2000ms), a new bid or extension occurred; clear anchor
+        if (timeDiff > 2000) {
           resumeAnchorRef.current = null;
         } else {
           const elapsedSec = (nowMs - resumeAnchorRef.current.resumedAt) / 1000;
-          return Math.max(0, Math.ceil(resumeAnchorRef.current.remainingAtResume - elapsedSec));
+          const left = Math.max(0, Math.ceil(resumeAnchorRef.current.remainingAtResume - elapsedSec));
+          if (left > 0) {
+            return left;
+          }
+          resumeAnchorRef.current = null;
         }
       }
 
