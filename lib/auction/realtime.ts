@@ -77,9 +77,25 @@ export async function broadcastAuctionUpdate(
   }
 }
 
+let activeBroadcastPromise: Promise<void> | null = null;
+
+/**
+ * Resets the background broadcast queue for testing isolation.
+ */
+export function _resetBroadcastChainForTesting(): void {
+  activeBroadcastPromise = null;
+}
+
 /**
  * Enqueues a server-side Realtime broadcast to be dispatched asynchronously
  * without blocking the caller Server Action's return to the client.
+ *
+ * GUARANTEED FIFO SEQUENCING:
+ * Broadcast tasks are chained onto a sequential Promise queue. Even if Next.js
+ * App Router's `after()` triggers multiple registered callbacks concurrently,
+ * task N+1 will never initiate its network transmission until task N has
+ * completely settled. This guarantees that SALE/UNSOLD events (sequence N)
+ * are published over the wire before PLAYER_SELECTED events (sequence N+1).
  *
  * SERVERLESS LIFECYCLE GUARANTEE:
  * Uses Next.js App Router's `after()` from 'next/server', which ties into Vercel
@@ -91,12 +107,42 @@ export async function broadcastAuctionUpdate(
  * the context error is caught and the broadcast task executes directly.
  */
 export function enqueueBackgroundBroadcast(broadcastTask: () => Promise<any>): void {
+  let taskPromise: Promise<void>;
+
+  if (!activeBroadcastPromise) {
+    // Queue is currently idle: execute task immediately
+    taskPromise = (async () => {
+      await broadcastTask();
+    })();
+  } else {
+    // Previous broadcast is still in flight: chain task to preserve strict FIFO sequencing
+    const previous = activeBroadcastPromise;
+    taskPromise = previous
+      .catch(() => {})
+      .then(async () => {
+        await broadcastTask();
+      });
+  }
+
+  // Update active broadcast pointer until chain settles
+  const trackedPromise = taskPromise
+    .catch((err) => {
+      console.error('[enqueueBackgroundBroadcast] Task error:', err);
+    })
+    .then(() => {
+      if (activeBroadcastPromise === trackedPromise) {
+        activeBroadcastPromise = null;
+      }
+    });
+
+  activeBroadcastPromise = trackedPromise;
+
   try {
     const { after } = require('next/server');
-    after(broadcastTask);
+    after(() => taskPromise);
   } catch {
     // Outside Next.js request context (e.g. during Vitest or CLI scripts)
-    broadcastTask().catch((err) => {
+    taskPromise.catch((err) => {
       console.error('[enqueueBackgroundBroadcast] Execution error:', err);
     });
   }

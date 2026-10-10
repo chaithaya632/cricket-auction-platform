@@ -604,7 +604,7 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
     expect(queryByText('Bring to Floor')).toBeNull();
   });
 
-  it('Admin Operator Controls: clicking RESUME AUCTION displays RESUMING... and does NOT optimistically unpause session state before server confirms', async () => {
+  it('Admin Operator Controls: clicking RESUME AUCTION optimistically unpauses session state immediately and reconciles when server confirms', async () => {
     let resolveResume!: (val: any) => void;
     mockResumeAuctionAction.mockImplementation(
       () =>
@@ -653,11 +653,23 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
       fireEvent.click(resumeBtn);
     });
 
-    // 1. In-flight verification: Pending state displayed, button disabled, NO optimistic unpause
+    // 1. In-flight verification (Fix C): Pending state displayed, button disabled, OPTIMISTIC unpause triggered
     expect(getByText('RESUMING...')).toBeTruthy();
     expect((resumeBtn as HTMLButtonElement).disabled).toBe(true);
-    expect(onSessionStateChange).not.toHaveBeenCalled();
-    expect(onActiveLotChange).not.toHaveBeenCalled();
+    expect(onSessionStateChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'live',
+        isLive: true,
+        isPaused: false,
+        pausedRemainingSeconds: null,
+      })
+    );
+    expect(onActiveLotChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'lot-active-1',
+        started_at: expect.any(String),
+      })
+    );
 
     // 2. Authoritative resolution: Server confirms with new synthetic startedAt
     const liveStartedAt = new Date().toISOString();
@@ -680,9 +692,9 @@ describe('3. Initiating Browser vs Other Browsers — Admin, Player Queue, Franc
       });
     });
 
-    // 3. Callback verification: Session unpauses with authoritative startedAt
-    expect(onSessionStateChange).toHaveBeenCalledWith(authoritativeLiveState);
-    expect(onActiveLotChange).toHaveBeenCalledWith({
+    // 3. Callback verification: Session reconciles with authoritative startedAt
+    expect(onSessionStateChange).toHaveBeenLastCalledWith(authoritativeLiveState);
+    expect(onActiveLotChange).toHaveBeenLastCalledWith({
       ...activeLot,
       started_at: liveStartedAt,
     });

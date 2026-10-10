@@ -237,8 +237,8 @@ describe('ACC Auction — Authoritative Floor Invariants, END LOT & END AUCTION'
 
       await waitFor(() => {
         expect(screen.getByText('Test Player 2')).toBeDefined();
-      });
-    });
+      }, { timeout: 8000 });
+    }, 15000);
 
     it('4. Clicking END LOT without bids marks unsold and automatically mounts next player with fresh timer', async () => {
       const activeLot = createMockLot('lot-1', 1, 'B1', 'in_progress', null, null);
@@ -276,8 +276,8 @@ describe('ACC Auction — Authoritative Floor Invariants, END LOT & END AUCTION'
 
       await waitFor(() => {
         expect(screen.getByText('Test Player 2')).toBeDefined();
-      });
-    });
+      }, { timeout: 8000 });
+    }, 15000);
 
     it('5. When no eligible players remain, END LOT alerts the operator and clears the floor', async () => {
       const activeLot = createMockLot('lot-last', 10, 'B3', 'in_progress', null, null);

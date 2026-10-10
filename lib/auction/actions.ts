@@ -594,11 +594,13 @@ export async function autoAdvanceToNextLot(
         revalidatePath('/franchise/squad');
       }
 
-      await broadcastAuctionUpdate(seasonId, 'PLAYER_SELECTED', {
-        lotId: null,
-        activeLot: null,
-        isEmptyFloor: true,
-      });
+      enqueueBackgroundBroadcast(() =>
+        realtimeModule.broadcastAuctionUpdate(seasonId, 'PLAYER_SELECTED', {
+          lotId: null,
+          activeLot: null,
+          isEmptyFloor: true,
+        })
+      );
 
       return {
         advanced: false,
@@ -688,19 +690,21 @@ export async function autoAdvanceToNextLot(
 
     const nextLotDetails = await getActiveLot(adminClient, seasonId);
 
-    // Immediate broadcast with hydrated details and monotonic sequence number
-    await broadcastAuctionUpdate(seasonId, 'PLAYER_SELECTED', {
-      lotId: nextLot.id,
-      lotStatus: 'in_progress',
-      currentPrice: null,
-      highestBidderId: null,
-      startedAt: now,
-      durationSeconds,
-      sequenceNumber: mutation.data?.event?.sequence_number,
-      activeLot: nextLotDetails,
-      isPaused,
-      pausedRemainingSeconds: isPaused ? durationSeconds : null,
-    });
+    // Immediate broadcast with hydrated details and monotonic sequence number enqueued in background
+    enqueueBackgroundBroadcast(() =>
+      realtimeModule.broadcastAuctionUpdate(seasonId, 'PLAYER_SELECTED', {
+        lotId: nextLot.id,
+        lotStatus: 'in_progress',
+        currentPrice: null,
+        highestBidderId: null,
+        startedAt: now,
+        durationSeconds,
+        sequenceNumber: mutation.data?.event?.sequence_number,
+        activeLot: nextLotDetails,
+        isPaused,
+        pausedRemainingSeconds: isPaused ? durationSeconds : null,
+      })
+    );
 
     // Fix B: All revalidation is centralized here, AFTER the new lot is committed to DB.
     // This eliminates the premature-invalidation window where the previous blocks in
@@ -831,6 +835,38 @@ export async function confirmSaleAction(
         .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
     }
 
+    // Fetch winning franchise and player info for authoritative broadcast payload
+    let winningFranchiseName: string | null = null;
+    let winningFranchiseShortName: string | null = null;
+    let winningFranchisePrimaryColor: string | null = null;
+    let playerName: string | null = null;
+
+    try {
+      const [playerRes, franchiseRes] = await Promise.all([
+        adminClient
+          .from('public_players_view')
+          .select('full_name')
+          .eq('registration_id', lot.registration_id)
+          .maybeSingle(),
+        lot.highest_bidder_franchise_id
+          ? adminClient
+              .from('public_franchises_view')
+              .select('name, short_name, color_primary')
+              .eq('franchise_id', lot.highest_bidder_franchise_id)
+              .maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+      ]);
+
+      playerName = playerRes?.data?.full_name || null;
+      if (franchiseRes?.data) {
+        winningFranchiseName = franchiseRes.data.name;
+        winningFranchiseShortName = franchiseRes.data.short_name;
+        winningFranchisePrimaryColor = franchiseRes.data.color_primary;
+      }
+    } catch {
+      // Non-fatal metadata fetch failure
+    }
+
     // Non-blocking post-commit broadcast for SALE via enqueueBackgroundBroadcast.
     // The database mutation has already succeeded; broadcast failure is non-fatal
     // and will be logged by broadcastAuctionUpdate's catch block.
@@ -843,6 +879,10 @@ export async function confirmSaleAction(
         lotStatus: 'sold',
         currentPrice: lot.current_price,
         highestBidderId: lot.highest_bidder_franchise_id,
+        highestBidderName: winningFranchiseName,
+        highestBidderShortName: winningFranchiseShortName,
+        highestBidderPrimaryColor: winningFranchisePrimaryColor,
+        playerName,
         sequenceNumber: saleSequenceNumber,
       })
     );
@@ -969,6 +1009,19 @@ export async function markUnsoldAction(
         .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
     }
 
+    // Fetch player info for public broadcast payload
+    let playerName: string | null = null;
+    try {
+      const { data: playerRes } = await adminClient
+        .from('public_players_view')
+        .select('full_name')
+        .eq('registration_id', lot.registration_id)
+        .maybeSingle();
+      playerName = playerRes?.full_name || null;
+    } catch {
+      // Non-fatal metadata fetch failure
+    }
+
     // Non-blocking post-commit broadcast for UNSOLD via enqueueBackgroundBroadcast.
     // The database mutation has already succeeded; broadcast failure is non-fatal
     // and will be logged by broadcastAuctionUpdate's catch block.
@@ -977,6 +1030,7 @@ export async function markUnsoldAction(
       realtimeModule.broadcastAuctionUpdate(lot.season_id, 'UNSOLD', {
         lotId: lot.id,
         lotStatus: 'unsold',
+        playerName,
         sequenceNumber: unsoldSequenceNumber,
       })
     );
@@ -1107,22 +1161,88 @@ export async function finalizeExpiredLotAction(
       10
     );
 
-    const timerDuration = lot.highest_bidder_franchise_id ? subsequentBidTimer : firstBidTimer;
+    // Authoritatively resolve highest valid committed bid from immutable auction_events
+    let latestBidEvent: { franchise_id: string; price: number; sequence_number: number } | null = null;
+    try {
+      const eventBuilder: any = adminClient
+        .from('auction_events')
+        .select('franchise_id, price, sequence_number')
+        .eq('lot_id', lotId)
+        .eq('event_type', 'BID_PLACED');
+
+      const ordered = typeof eventBuilder?.order === 'function'
+        ? eventBuilder.order('sequence_number', { ascending: false })
+        : eventBuilder;
+
+      const limited = typeof ordered?.limit === 'function'
+        ? ordered.limit(1)
+        : ordered;
+
+      const eventRes = typeof limited?.maybeSingle === 'function'
+        ? await limited.maybeSingle()
+        : typeof limited?.single === 'function'
+        ? await limited.single()
+        : await limited;
+
+      latestBidEvent = eventRes?.data || null;
+    } catch {
+      // Graceful fallback to operational lot projection if event log query fails
+      latestBidEvent = null;
+    }
+
+    const winningFranchiseId = latestBidEvent?.franchise_id || lot.highest_bidder_franchise_id;
+    const winningPrice = latestBidEvent?.price ?? lot.current_price;
+    const isSold = Boolean(winningFranchiseId && winningPrice !== null);
+    const targetStatus = isSold ? 'sold' : 'unsold';
+
+    const timerDuration = winningFranchiseId ? subsequentBidTimer : firstBidTimer;
     const deadlineMs = new Date(lot.started_at).getTime() + timerDuration * 1000;
     const nowMs = Date.now();
 
-    // 4. Server-side authoritative deadline check: reject early finalization attempt
+    // 4. Server-side authoritative deadline check: absorb slight clock skew, reject early finalization attempt
     if (nowMs < deadlineMs) {
-      return {
-        success: false,
-        error: `Cannot finalize lot: bidding deadline has not expired yet (${Math.ceil((deadlineMs - nowMs) / 1000)}s remaining).`,
-      };
+      const diffMs = deadlineMs - nowMs;
+      if (diffMs <= 2000) {
+        // Absorb client/server clock skew (<= 2 seconds) by awaiting the remainder of the deadline
+        await new Promise((resolve) => setTimeout(resolve, diffMs + 50));
+        // Re-check lot status after absorbing skew to handle concurrent mutations
+        const { data: freshLot } = await adminClient
+          .from('auction_lots')
+          .select('status, current_price, highest_bidder_franchise_id, started_at')
+          .eq('id', lotId)
+          .single();
+        if (freshLot && freshLot.status !== 'in_progress') {
+          return {
+            success: true,
+            data: {
+              finalized: false,
+              alreadyFinalized: true,
+              status: freshLot.status as 'sold' | 'unsold',
+              price: freshLot.current_price,
+              franchiseId: freshLot.highest_bidder_franchise_id,
+            },
+          };
+        }
+        if (
+          freshLot &&
+          ((freshLot.started_at && freshLot.started_at !== lot.started_at) ||
+            freshLot.current_price !== lot.current_price ||
+            freshLot.highest_bidder_franchise_id !== lot.highest_bidder_franchise_id)
+        ) {
+          return {
+            success: false,
+            error: 'A concurrent bid or timer extension occurred; lot is not expired.',
+          };
+        }
+      } else {
+        return {
+          success: false,
+          error: `Cannot finalize lot: bidding deadline has not expired yet (${Math.ceil(diffMs / 1000)}s remaining).`,
+        };
+      }
     }
 
-    // 5. Determine outcome: SOLD if valid highest bidder exists, else UNSOLD
-    const isSold = Boolean(lot.highest_bidder_franchise_id && lot.current_price !== null);
-    const targetStatus = isSold ? 'sold' : 'unsold';
-    const now = new Date(nowMs).toISOString();
+    const now = new Date().toISOString();
 
     // 6. Resolve actor ID: current logged-in user, or system super admin
     let actorUserId = '00000000-0000-0000-0000-000000000000';
@@ -1153,6 +1273,8 @@ export async function finalizeExpiredLotAction(
         lotId: lot.id,
         expectedStatus: 'in_progress',
         newStatus: targetStatus,
+        newPrice: isSold ? winningPrice : null,
+        highestBidderId: isSold ? winningFranchiseId : null,
         endedAt: now,
       },
       {
@@ -1160,8 +1282,8 @@ export async function finalizeExpiredLotAction(
         lotId: lot.id,
         eventType: isSold ? 'SALE' : 'UNSOLD',
         actorUserId,
-        franchiseId: isSold ? lot.highest_bidder_franchise_id : null,
-        price: isSold ? lot.current_price : null,
+        franchiseId: isSold ? winningFranchiseId : null,
+        price: isSold ? winningPrice : null,
         reason: isSold
           ? 'Automatically finalized (SOLD) upon timer expiration'
           : 'Automatically marked unsold upon timer expiration',
@@ -1200,24 +1322,61 @@ export async function finalizeExpiredLotAction(
       .eq('season_id', targetSeasonId)
       .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
 
+    // Fetch winning franchise and player info for authoritative broadcast payload
+    let winningFranchiseName: string | null = null;
+    let winningFranchiseShortName: string | null = null;
+    let winningFranchisePrimaryColor: string | null = null;
+    let playerName: string | null = null;
+
+    try {
+      const [playerRes, franchiseRes] = await Promise.all([
+        adminClient
+          .from('public_players_view')
+          .select('full_name')
+          .eq('registration_id', lot.registration_id)
+          .maybeSingle(),
+        isSold && winningFranchiseId
+          ? adminClient
+              .from('public_franchises_view')
+              .select('name, short_name, color_primary')
+              .eq('franchise_id', winningFranchiseId)
+              .maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+      ]);
+
+      playerName = playerRes?.data?.full_name || null;
+      if (franchiseRes?.data) {
+        winningFranchiseName = franchiseRes.data.name;
+        winningFranchiseShortName = franchiseRes.data.short_name;
+        winningFranchisePrimaryColor = franchiseRes.data.color_primary;
+      }
+    } catch {
+      // Non-fatal metadata fetch failure
+    }
+
     // 9. Non-blocking post-commit broadcast for SALE or UNSOLD via enqueueBackgroundBroadcast.
     // The database mutation has already succeeded; broadcast failure is non-fatal.
     const finalizeSequenceNumber = mutation.data?.event?.sequence_number;
     if (isSold) {
       enqueueBackgroundBroadcast(() =>
-        broadcastAuctionUpdate(targetSeasonId, 'SALE', {
+        realtimeModule.broadcastAuctionUpdate(targetSeasonId, 'SALE', {
           lotId: lot.id,
           lotStatus: 'sold',
-          currentPrice: lot.current_price,
-          highestBidderId: lot.highest_bidder_franchise_id,
+          currentPrice: winningPrice,
+          highestBidderId: winningFranchiseId,
+          highestBidderName: winningFranchiseName,
+          highestBidderShortName: winningFranchiseShortName,
+          highestBidderPrimaryColor: winningFranchisePrimaryColor,
+          playerName,
           sequenceNumber: finalizeSequenceNumber,
         })
       );
     } else {
       enqueueBackgroundBroadcast(() =>
-        broadcastAuctionUpdate(targetSeasonId, 'UNSOLD', {
+        realtimeModule.broadcastAuctionUpdate(targetSeasonId, 'UNSOLD', {
           lotId: lot.id,
           lotStatus: 'unsold',
+          playerName,
           sequenceNumber: finalizeSequenceNumber,
         })
       );
@@ -1243,8 +1402,8 @@ export async function finalizeExpiredLotAction(
       data: {
         finalized: true,
         status: targetStatus,
-        price: isSold ? lot.current_price : null,
-        franchiseId: isSold ? lot.highest_bidder_franchise_id : null,
+        price: isSold ? winningPrice : null,
+        franchiseId: isSold ? winningFranchiseId : null,
         nextLotId: advanceResult.nextLotId,
         activeLot: advanceResult.nextLot ?? null,
         sessionState,

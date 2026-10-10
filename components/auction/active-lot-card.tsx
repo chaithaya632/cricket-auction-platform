@@ -101,11 +101,49 @@ export function ActiveLotCard({
           });
         }
       } else if (payload.type === 'SALE') {
+        if (lotStatus === 'sold' && displayedLot.id === payload.lotId) {
+          return;
+        }
         setLotStatus('sold');
+        if (payload.currentPrice !== undefined && payload.currentPrice !== null) {
+          setCurrentPrice(payload.currentPrice);
+        }
+        if (payload.highestBidderId) {
+          setHighestBidder({
+            id: payload.highestBidderId,
+            name: payload.highestBidderName || 'Franchise',
+            short_name: payload.highestBidderShortName || '',
+            primary_color: payload.highestBidderPrimaryColor || '#10b981',
+            secondary_color: null,
+          });
+        }
+        setDisplayedLot((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: 'sold',
+                current_price: payload.currentPrice ?? prev.current_price,
+                highest_bidder_franchise_id: payload.highestBidderId ?? prev.highest_bidder_franchise_id,
+                highest_bidder: payload.highestBidderId
+                  ? {
+                      id: payload.highestBidderId,
+                      name: payload.highestBidderName || 'Franchise',
+                      short_name: payload.highestBidderShortName || '',
+                      primary_color: payload.highestBidderPrimaryColor || '#10b981',
+                      secondary_color: null,
+                    }
+                  : prev.highest_bidder,
+              }
+            : null
+        );
         scheduleTransitionToNextLot();
         playBidGavelChime(displayedLot.id, payload.currentPrice ?? currentPrice);
       } else if (payload.type === 'UNSOLD') {
+        if (lotStatus === 'unsold' && displayedLot.id === payload.lotId) {
+          return;
+        }
         setLotStatus('unsold');
+        setDisplayedLot((prev) => (prev ? { ...prev, status: 'unsold' } : null));
         scheduleTransitionToNextLot();
       }
     });

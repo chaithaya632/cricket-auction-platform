@@ -479,17 +479,66 @@ export function OperatorControls({
   };
 
   const handleResumeAuction = () => {
-    // Authoritative Resume synchronization:
-    // Do NOT start countdown optimistically before server confirms.
-    // The operator UI shows pending state ('RESUMING...') while awaiting the commit,
-    // ensuring admin countdown and all other clients unpause at the exact same moment.
+    // Prevent duplicate resume actions or resuming when not paused
+    if (pendingAction || isActionPending('resume') || !sessionState.isPaused) {
+      return;
+    }
+
+    const previousState = sessionState;
+    const previousActiveLot = activeLot;
+
+    // OPTIMISTIC RESUME (Fix C):
+    // Unfreeze the Admin UI immediately (<250ms / 0ms) at click time without waiting
+    // for server action roundtrip, eliminating operator-perceived delay (~300-600ms).
+    // Derive synthetic started_at anchor so the countdown timer continues seamlessly
+    // from the paused remaining duration.
+    const pausedRemaining =
+      sessionState.pausedRemainingSeconds ??
+      (getCurrentRemaining ? getCurrentRemaining() : null);
+
+    const timerDuration = activeLot?.highest_bidder_franchise_id ? 20 : 30;
+    const remainingToRestore =
+      pausedRemaining !== null && pausedRemaining !== undefined
+        ? Math.max(1, Math.min(timerDuration, pausedRemaining))
+        : (getCurrentRemaining ? getCurrentRemaining() : timerDuration);
+
+    const elapsedSeconds = Math.max(0, timerDuration - remainingToRestore);
+    const nowMs = Date.now();
+    const optimisticStartedAt = new Date(nowMs - elapsedSeconds * 1000).toISOString();
+
+    const optimisticState: AuctionSessionState = {
+      ...sessionState,
+      status: 'live',
+      isLive: true,
+      isPaused: false,
+      isNotStarted: false,
+      isCompleted: false,
+      startedAt: activeLot ? optimisticStartedAt : (sessionState.startedAt || new Date(nowMs).toISOString()),
+      pausedRemainingSeconds: null,
+      pausedAt: null,
+    };
+
+    onSessionStateChange?.(optimisticState);
+    if (activeLot) {
+      onActiveLotChange?.({
+        ...activeLot,
+        started_at: optimisticStartedAt,
+      });
+    }
+
     void runOperatorAction(
       'resume',
       () => resumeAuctionAction(),
       (res) => {
         if (!res.success) {
+          // ROLLBACK: Revert to previous paused state on server failure
+          onSessionStateChange?.(previousState);
+          if (previousActiveLot) {
+            onActiveLotChange?.(previousActiveLot);
+          }
           setErrorMsg(sanitizeActionError(res.error, 'Failed to resume auction.'));
         } else {
+          // RECONCILE: Apply authoritative server session state and startedAt anchor
           if (res.data?.sessionState) {
             onSessionStateChange?.(res.data.sessionState);
             if (activeLot && res.data.sessionState.startedAt) {
@@ -1062,7 +1111,7 @@ export function OperatorControls({
               <button
                 type="button"
                 onClick={handlePauseAuction}
-                disabled={isActionPending('pause')}
+                disabled={isActionPending('pause') || isActionPending('resume')}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-400 font-bold text-xs border border-zinc-700 shadow transition-colors cursor-pointer disabled:opacity-50"
               >
                 {pendingAction === 'pause' ? (

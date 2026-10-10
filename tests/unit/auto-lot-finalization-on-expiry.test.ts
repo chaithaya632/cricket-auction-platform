@@ -391,6 +391,7 @@ describe('Issue A — Automatic Lot Finalization on Timer Expiry', () => {
           eq: vi.fn().mockReturnThis(),
           in: vi.fn().mockReturnThis(),
           order: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnThis(),
           single: vi.fn().mockImplementation(async () => ({
             data: activeData,
             error: null,
@@ -440,6 +441,102 @@ describe('Issue A — Automatic Lot Finalization on Timer Expiry', () => {
 
       expect(res.success).toBe(true);
       expect(res.data?.status).toBe('unsold');
+    });
+
+    it('database failure in executeAuctionMutationFlow returns error and does NOT broadcast SALE', async () => {
+      const expiredStartedAt = new Date(Date.now() - 35000).toISOString();
+      const mockLot = {
+        id: lotIdWithBid,
+        season_id: seasonId,
+        status: 'in_progress',
+        current_price: 150,
+        base_price: 20,
+        highest_bidder_franchise_id: 'fran-rcb',
+        started_at: expiredStartedAt,
+      };
+
+      vi.spyOn(transactionLib, 'executeAuctionMutationFlow').mockResolvedValueOnce({
+        success: false,
+        error: 'Database constraint violation during sale transaction',
+      });
+
+      const mockClient = createMockSupabase({ lot: mockLot });
+      vi.spyOn(supabaseAdmin, 'createAdminClient').mockReturnValue(mockClient);
+
+      const res = await finalizeExpiredLotAction(lotIdWithBid, seasonId);
+
+      expect(res.success).toBe(false);
+      expect(res.error).toBe('Database constraint violation during sale transaction');
+      expect(mockBroadcast).not.toHaveBeenCalled();
+    });
+
+    it('absorbs clock skew (diffMs <= 2000) and aborts if a concurrent bid occurred while awaiting skew', async () => {
+      // Started 19.8s ago, duration is 20s => 200ms remaining (<= 2000ms clock skew)
+      const nearExpiredStartedAt = new Date(Date.now() - 19800).toISOString();
+      const mockLot = {
+        id: lotIdWithBid,
+        season_id: seasonId,
+        status: 'in_progress',
+        current_price: 150,
+        base_price: 20,
+        highest_bidder_franchise_id: 'fran-rcb',
+        started_at: nearExpiredStartedAt,
+      };
+
+      let lotQueryCount = 0;
+      const configRows = [
+        { key: 'auction_session_status', value: 'live' },
+        { key: 'auction_first_bid_timer_seconds', value: '30' },
+        { key: 'auction_subsequent_bid_timer_seconds', value: '20' },
+      ];
+      const mockClient = createMockSupabase({ lot: mockLot });
+      mockClient.from = vi.fn((table: string) => {
+        let activeData: any = null;
+        if (table === 'auction_lots') {
+          lotQueryCount++;
+          // First query returns mockLot, second query after skew absorption sees the newly placed bid!
+          activeData = lotQueryCount === 1
+            ? mockLot
+            : {
+                ...mockLot,
+                started_at: new Date().toISOString(),
+                current_price: 200,
+                highest_bidder_franchise_id: 'fran-csk',
+              };
+        } else if (table === 'season_config') {
+          activeData = configRows;
+        } else if (table === 'users') {
+          activeData = { id: 'admin-01', is_super_admin: true };
+        }
+
+        const builder: any = {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          in: vi.fn().mockReturnThis(),
+          order: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnThis(),
+          single: vi.fn().mockImplementation(async () => ({
+            data: activeData,
+            error: null,
+          })),
+          maybeSingle: vi.fn().mockResolvedValue({ data: activeData, error: null }),
+          then: (resolve: any, reject: any) => {
+            const list = Array.isArray(activeData) ? activeData : [activeData];
+            return Promise.resolve({ data: list, error: null }).then(resolve, reject);
+          },
+        };
+        return builder;
+      });
+
+      vi.spyOn(supabaseAdmin, 'createAdminClient').mockReturnValue(mockClient);
+      const mockMutationFlow = vi.spyOn(transactionLib, 'executeAuctionMutationFlow');
+
+      const res = await finalizeExpiredLotAction(lotIdWithBid, seasonId);
+
+      expect(res.success).toBe(false);
+      expect(res.error).toContain('A concurrent bid or timer extension occurred; lot is not expired.');
+      expect(mockMutationFlow).not.toHaveBeenCalled();
+      expect(mockBroadcast).not.toHaveBeenCalled();
     });
   });
 });

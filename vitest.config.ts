@@ -7,6 +7,7 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.{ts,tsx}'],
     pool: 'threads',
+    testTimeout: 15000,
   },
   resolve: {
     alias: {

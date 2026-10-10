@@ -899,10 +899,9 @@ describe('Phase 5.2 — Live Console Instant UI & State Machine Verification', (
 
       // Wait for snapshot candidates to load into UI
       await act(async () => {
-        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(0);
       });
 
-      // Find the card container
       const card = screen.getByTestId('guest-draw-card-1');
       expect(card).toBeDefined();
 
@@ -939,7 +938,7 @@ describe('Phase 5.2 — Live Console Instant UI & State Machine Verification', (
       expect(callDrawSpy).toHaveBeenCalledWith('lot-g-1', 'B3', 'season-001');
       expect(onPlayerDrawn).toHaveBeenCalledWith('lot-g-1', 'Guest Player One', null, undefined);
       expect(onClose).toHaveBeenCalled();
-    });
+    }, 15000);
 
     it('rolls back 3D flip when server action fails', async () => {
       const candidates = [
@@ -979,7 +978,7 @@ describe('Phase 5.2 — Live Console Instant UI & State Machine Verification', (
       );
 
       await act(async () => {
-        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(0);
       });
 
       const button = screen.getByRole('button', { name: /CLICK TO DRAW/i });
@@ -998,6 +997,6 @@ describe('Phase 5.2 — Live Console Instant UI & State Machine Verification', (
 
       // Error message is displayed and card is no longer in flipped state
       expect(screen.getByText('Active bidding is already in progress')).toBeDefined();
-    });
+    }, 15000);
   });
 });

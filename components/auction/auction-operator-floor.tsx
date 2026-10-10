@@ -93,25 +93,60 @@ export function AuctionOperatorFloor({
     }
   }, []);
 
+  const activeLotRef = useRef<AuctionLotWithDetails | null>(activeLot);
+  useEffect(() => {
+    activeLotRef.current = activeLot;
+  }, [activeLot]);
+
+  const terminalOutcomeRef = useRef<{ lotId: string; status: 'sold' | 'unsold'; timestamp: number } | null>(null);
+  const pendingNextLotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const hasTriggeredExpiryRef = useRef<string | null>(null);
+  const handleTimerExpireRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   const handleTimerExpire = useCallback(async () => {
-    if (!activeLot || activeLot.status !== 'in_progress' || sessionState.isPaused || !sessionState.isLive) {
+    const currentLot = activeLotRef.current;
+    if (!currentLot || currentLot.status !== 'in_progress' || sessionState.isPaused || !sessionState.isLive) {
       return;
     }
-    if (hasTriggeredExpiryRef.current === activeLot.id) {
+    if (hasTriggeredExpiryRef.current === currentLot.id) {
       return;
     }
-    hasTriggeredExpiryRef.current = activeLot.id;
+    hasTriggeredExpiryRef.current = currentLot.id;
 
     try {
-      await runWithLocalActionTracking(() =>
-        finalizeExpiredLotAction(activeLot.id, sessionState.seasonId)
+      const res = await runWithLocalActionTracking(() =>
+        finalizeExpiredLotAction(currentLot.id, sessionState.seasonId)
       );
+      if (!res?.success) {
+        // If transient rejection (clock skew / retryable), allow retry after 1s
+        setTimeout(() => {
+          if (
+            hasTriggeredExpiryRef.current === currentLot.id &&
+            activeLotRef.current?.id === currentLot.id &&
+            activeLotRef.current?.status === 'in_progress'
+          ) {
+            hasTriggeredExpiryRef.current = null;
+            void handleTimerExpireRef.current();
+          }
+        }, 1000);
+      }
     } catch (err: any) {
       console.error('[OperatorFloor] Auto-finalization error:', err);
+      setTimeout(() => {
+        if (
+          hasTriggeredExpiryRef.current === currentLot.id &&
+          activeLotRef.current?.id === currentLot.id &&
+          activeLotRef.current?.status === 'in_progress'
+        ) {
+          hasTriggeredExpiryRef.current = null;
+          void handleTimerExpireRef.current();
+        }
+      }, 1000);
     }
-  }, [activeLot, sessionState]);
+  }, [sessionState.isPaused, sessionState.isLive, sessionState.seasonId]);
+
+  handleTimerExpireRef.current = handleTimerExpire;
 
   const endLotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -123,13 +158,32 @@ export function AuctionOperatorFloor({
       if (endLotTimerRef.current) {
         clearTimeout(endLotTimerRef.current);
       }
+      if (pendingNextLotTimerRef.current) {
+        clearTimeout(pendingNextLotTimerRef.current);
+      }
     };
   }, []);
 
   // Synchronize with background RSC refreshes when new server data arrives (except during local action window)
   useEffect(() => {
     if (!isLocalActionEchoWindowActive()) {
-      setActiveLot(initialActiveLot);
+      setActiveLot((prev) => {
+        if (
+          prev &&
+          initialActiveLot &&
+          (prev.status === 'sold' || prev.status === 'unsold' || terminalOutcomeRef.current?.lotId === prev.id) &&
+          initialActiveLot.id !== prev.id
+        ) {
+          if (!pendingNextLotTimerRef.current) {
+            pendingNextLotTimerRef.current = setTimeout(() => {
+              setActiveLot(initialActiveLot);
+              pendingNextLotTimerRef.current = null;
+            }, 2200);
+          }
+          return prev;
+        }
+        return initialActiveLot;
+      });
     }
   }, [initialActiveLot]);
 
@@ -204,11 +258,31 @@ export function AuctionOperatorFloor({
           setActiveLot((prev) => (prev && prev.id === payload.lotId ? { ...prev, started_at: payload.startedAt! } : prev));
         }
       } else if (payload.type === 'SALE') {
+        if (payload.lotId) {
+          terminalOutcomeRef.current = { lotId: payload.lotId, status: 'sold', timestamp: Date.now() };
+        }
         setActiveLot((prev) => {
           if (!prev || (payload.lotId && prev.id !== payload.lotId)) return prev;
-          return { ...prev, status: 'sold' };
+          return {
+            ...prev,
+            status: 'sold',
+            current_price: payload.currentPrice ?? prev.current_price,
+            highest_bidder_franchise_id: payload.highestBidderId ?? prev.highest_bidder_franchise_id,
+            highest_bidder: payload.highestBidderId
+              ? {
+                  id: payload.highestBidderId,
+                  name: payload.highestBidderName || prev.highest_bidder?.name || 'Franchise',
+                  short_name: payload.highestBidderShortName || prev.highest_bidder?.short_name || '',
+                  primary_color: payload.highestBidderPrimaryColor || prev.highest_bidder?.primary_color || '#10b981',
+                  secondary_color: null,
+                }
+              : prev.highest_bidder,
+          };
         });
       } else if (payload.type === 'UNSOLD') {
+        if (payload.lotId) {
+          terminalOutcomeRef.current = { lotId: payload.lotId, status: 'unsold', timestamp: Date.now() };
+        }
         setActiveLot((prev) => {
           if (!prev || (payload.lotId && prev.id !== payload.lotId)) return prev;
           return { ...prev, status: 'unsold' };
@@ -246,34 +320,47 @@ export function AuctionOperatorFloor({
               pendingGuestDrawLotRef.current = null;
             }
           }, 3500);
-        } else if (activeLot && (activeLot.status === 'sold' || activeLot.status === 'unsold') && nextLot && nextLot.id !== activeLot.id) {
-          setTimeout(() => {
-            setActiveLot(nextLot);
+        } else {
+          const currentLot = activeLotRef.current;
+          const isCurrentTerminal =
+            currentLot &&
+            (currentLot.status === 'sold' ||
+              currentLot.status === 'unsold' ||
+              terminalOutcomeRef.current?.lotId === currentLot.id);
+
+          if (isCurrentTerminal && nextLot && nextLot.id !== currentLot.id) {
+            if (pendingNextLotTimerRef.current) {
+              clearTimeout(pendingNextLotTimerRef.current);
+            }
+            pendingNextLotTimerRef.current = setTimeout(() => {
+              setActiveLot(nextLot);
+              if (payload.lotId) {
+                setUpcomingLots((prev) => prev.filter((l) => l.id !== payload.lotId));
+              }
+              pendingNextLotTimerRef.current = null;
+            }, 2200);
+          } else if (payload.activeLot) {
+            setActiveLot(payload.activeLot as AuctionLotWithDetails);
             if (payload.lotId) {
               setUpcomingLots((prev) => prev.filter((l) => l.id !== payload.lotId));
             }
-          }, 2200);
-        } else if (payload.activeLot) {
-          setActiveLot(payload.activeLot as AuctionLotWithDetails);
-          if (payload.lotId) {
-            setUpcomingLots((prev) => prev.filter((l) => l.id !== payload.lotId));
+          } else if (payload.lotId) {
+            setUpcomingLots((prev) => {
+              const found = prev.find((l) => l.id === payload.lotId);
+              if (found) {
+                setActiveLot({
+                  ...found,
+                  status: 'in_progress',
+                  started_at: payload.startedAt || new Date().toISOString(),
+                  current_price: found.base_price,
+                  highest_bidder_franchise_id: null,
+                  highest_bidder: null,
+                });
+                return prev.filter((l) => l.id !== payload.lotId);
+              }
+              return prev;
+            });
           }
-        } else if (payload.lotId) {
-          setUpcomingLots((prev) => {
-            const found = prev.find((l) => l.id === payload.lotId);
-            if (found) {
-              setActiveLot({
-                ...found,
-                status: 'in_progress',
-                started_at: payload.startedAt || new Date().toISOString(),
-                current_price: found.base_price,
-                highest_bidder_franchise_id: null,
-                highest_bidder: null,
-              });
-              return prev.filter((l) => l.id !== payload.lotId);
-            }
-            return prev;
-          });
         }
         if (payload.isPaused !== undefined) {
           setSessionState((prev) => ({
