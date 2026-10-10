@@ -2852,20 +2852,15 @@ export async function pauseAuctionAction(
     const adminClient = createAdminClient();
     const now = new Date().toISOString();
 
-    // 0. Idempotency: if already paused, return success immediately
-    const { data: currentConfig } = await adminClient
-      .from('season_config')
-      .select('value')
-      .eq('season_id', activeSeason.id)
-      .eq('key', 'auction_session_status')
-      .maybeSingle();
-
-    if (currentConfig?.value === 'paused') {
-      return { success: true, data: { status: 'paused' } };
-    }
-
-    // 1. Fetch active lot and timer configs to calculate remaining seconds
-    const [activeLotRes, timerConfigsRes] = await Promise.all([
+    // Round-trip 1: idempotency check, active lot, and timer configs all in parallel.
+    // Mirrors resumeAuctionAction's pattern; reduces 4 sequential DB stages to 2.
+    const [idempotencyRes, activeLotRes, timerConfigsRes] = await Promise.all([
+      adminClient
+        .from('season_config')
+        .select('value')
+        .eq('season_id', activeSeason.id)
+        .eq('key', 'auction_session_status')
+        .maybeSingle(),
       adminClient
         .from('auction_lots')
         .select('id, started_at, highest_bidder_franchise_id')
@@ -2878,6 +2873,11 @@ export async function pauseAuctionAction(
         .eq('season_id', activeSeason.id)
         .in('key', ['first_bid_timer_seconds', 'subsequent_bid_timer_seconds']),
     ]);
+
+    // Idempotency: if already paused, return success immediately
+    if (idempotencyRes.data?.value === 'paused') {
+      return { success: true, data: { status: 'paused' } };
+    }
 
     const activeLot = activeLotRes.data;
     const timerConfigs = timerConfigsRes.data;
@@ -2905,7 +2905,7 @@ export async function pauseAuctionAction(
       remainingSeconds = Math.max(0, timerDuration - elapsedSec);
     }
 
-    // 2. Set auction_session_status, auction_paused_at, and auction_lot_paused_remaining_seconds
+    // Build upsert rows for season_config
     const configUpserts = [
       {
         season_id: activeSeason.id,
@@ -2933,46 +2933,52 @@ export async function pauseAuctionAction(
       });
     }
 
-    const { error: configErr } = await adminClient
+    // Round-trip 2: config upsert and PAUSE event insert run concurrently.
+    const configUpsertPromise = adminClient
       .from('season_config')
       .upsert(configUpserts, { onConflict: 'season_id,key' });
 
-    if (configErr) {
+    const insertEventPromise: Promise<{ data: any; error: any }> = activeLot
+      ? (async () => {
+          const insertQuery = adminClient.from('auction_events').insert({
+            season_id: activeSeason.id,
+            auction_lot_id: activeLot.id,
+            event_type: 'PAUSE',
+            actor_user_id: adminContext.user.id,
+            reason: 'Auction paused by operator',
+            payload: {
+              paused_at: now,
+              remaining_seconds: remainingSeconds,
+            },
+            created_at: now,
+          });
+
+          return typeof (insertQuery as any)?.select === 'function'
+            ? await (insertQuery as any).select().single()
+            : await insertQuery;
+        })()
+      : Promise.resolve({ data: null, error: null });
+
+    const [configRes, pauseEventRes] = await Promise.all([
+      configUpsertPromise,
+      insertEventPromise,
+    ]);
+
+    if (configRes.error) {
       return {
         success: false,
-        error: configErr.message || 'Failed to persist auction pause state.',
+        error: configRes.error.message || 'Failed to persist auction pause state.',
       };
     }
 
-    // 3. If a lot is currently in progress, record PAUSE event in auction_events
-    let pauseSequenceNumber: number | undefined;
-    if (activeLot) {
-      const insertQuery = adminClient.from('auction_events').insert({
-        season_id: activeSeason.id,
-        auction_lot_id: activeLot.id,
-        event_type: 'PAUSE',
-        actor_user_id: adminContext.user.id,
-        reason: 'Auction paused by operator',
-        payload: {
-          paused_at: now,
-          remaining_seconds: remainingSeconds,
-        },
-        created_at: now,
-      });
-
-      const { data: pauseEvent, error: eventErr } =
-        typeof (insertQuery as any)?.select === 'function'
-          ? await (insertQuery as any).select().single()
-          : await insertQuery;
-
-      if (eventErr) {
-        return {
-          success: false,
-          error: eventErr.message || 'Failed to record auction pause event.',
-        };
-      }
-      pauseSequenceNumber = pauseEvent?.sequence_number;
+    if (pauseEventRes.error) {
+      return {
+        success: false,
+        error: pauseEventRes.error.message || 'Failed to record auction pause event.',
+      };
     }
+
+    const pauseSequenceNumber: number | undefined = pauseEventRes.data?.sequence_number;
 
     // Immediate post-commit broadcast for PAUSE to all connected viewing surfaces (<50ms)
     enqueueBackgroundBroadcast(() =>
