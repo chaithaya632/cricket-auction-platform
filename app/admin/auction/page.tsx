@@ -23,6 +23,7 @@ import { RecentActivityStream } from '@/components/auction/recent-activity-strea
 import { DashboardShell } from '@/components/acc/dashboard-shell';
 import { getSessionUser } from '@/lib/acc/server-session';
 import { AuctionSessionIndicator } from '@/components/acc/status-badges';
+import { ClientBuildBadge } from '@/components/acc/client-build-badge';
 import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
 
 export default async function AdminAuctionPage() {
@@ -120,7 +121,12 @@ export default async function AdminAuctionPage() {
       role="admin"
       user={sessionUser}
       breadcrumb="Live Console"
-      actions={<AuctionSessionIndicator status={sessionState.status} />}
+      actions={
+        <div className="flex items-center gap-2">
+          <AuctionSessionIndicator status={sessionState.status} />
+          <ClientBuildBadge />
+        </div>
+      }
     >
       <AuctionRealtimeSync seasonId={seasonId} />
       <div className="space-y-8 max-w-[1800px] mx-auto">

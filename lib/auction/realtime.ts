@@ -69,3 +69,28 @@ export async function broadcastAuctionUpdate(
     );
   }
 }
+
+/**
+ * Enqueues a server-side Realtime broadcast to be dispatched asynchronously
+ * without blocking the caller Server Action's return to the client.
+ *
+ * SERVERLESS LIFECYCLE GUARANTEE:
+ * Uses Next.js App Router's `after()` from 'next/server', which ties into Vercel
+ * and Serverless platform execution hooks (waitUntil) to ensure the compute
+ * environment stays active until the HTTP send completes.
+ *
+ * TEST / CLI FALLBACK:
+ * If invoked outside an active Next.js request lifecycle (e.g. in Vitest unit tests),
+ * the context error is caught and the broadcast task executes directly.
+ */
+export function enqueueBackgroundBroadcast(broadcastTask: () => Promise<any>): void {
+  try {
+    const { after } = require('next/server');
+    after(broadcastTask);
+  } catch {
+    // Outside Next.js request context (e.g. during Vitest or CLI scripts)
+    broadcastTask().catch((err) => {
+      console.error('[enqueueBackgroundBroadcast] Execution error:', err);
+    });
+  }
+}

@@ -37,6 +37,9 @@ vi.mock('next/cache', () => ({
 const mockBroadcastAuctionUpdate = vi.fn().mockResolvedValue(true);
 vi.mock('@/lib/auction/realtime', () => ({
   broadcastAuctionUpdate: (...args: any[]) => mockBroadcastAuctionUpdate(...args),
+  enqueueBackgroundBroadcast: (task: () => Promise<any>) => {
+    return Promise.resolve().then(() => task()).catch(() => {});
+  },
 }));
 
 // Mock audit logger

@@ -1,10 +1,136 @@
 import { cache } from 'react';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { getCurrentUser } from '@/lib/auth/session';
-import { getUserPermissionContext } from './context';
+import { getCurrentUser, getAuthUser } from '@/lib/auth/session';
+import { getUserPermissionContext, getActiveSeason } from './context';
 import type { UserPermissionContext } from './types';
-import type { DbFranchise } from '@/lib/db/types';
+import type { DbFranchise, DbSeason, DbSeasonRole, DbUser } from '@/lib/db/types';
+
+/**
+ * Concurrently resolves the authenticated application user and their season-specific
+ * permissions in a single parallel round-trip instead of 3 sequential round-trips.
+ *
+ * Request-scoped memoization via React cache() ensures identity and roles are never
+ * re-queried redundantly across multiple guards in the same server request lifecycle.
+ */
+export const resolveAuthenticatedUserContext = cache(async (
+  seasonId?: string
+): Promise<{ authUser: any; appUser: DbUser; context: UserPermissionContext } | null> => {
+  const authUser = await getAuthUser();
+  if (!authUser) {
+    return null;
+  }
+
+  const supabase = await createClient();
+
+  // Concurrently resolve app user profile, target season, and active season_roles
+  const [userResult, seasonResult, roleRecordsResult] = await Promise.all([
+    supabase
+      .from('users')
+      .select('*')
+      .eq('id', authUser.id)
+      .maybeSingle(),
+    seasonId
+      ? supabase.from('seasons').select('*').eq('id', seasonId).maybeSingle()
+      : getActiveSeason(supabase),
+    supabase
+      .from('season_roles')
+      .select('*, franchise:franchises(*)')
+      .eq('user_id', authUser.id)
+      .eq('is_active', true),
+  ]);
+
+  let appUser = userResult.data as DbUser | null;
+  if (!appUser && !userResult.error) {
+    // Fallback sync if public.users record did not exist
+    const fallbackEmail = authUser.email || '';
+    const fallbackName =
+      authUser.user_metadata?.full_name ||
+      fallbackEmail.split('@')[0] ||
+      'User';
+
+    const { data: createdUser } = await supabase
+      .from('users')
+      .insert({
+        id: authUser.id,
+        email: fallbackEmail,
+        full_name: fallbackName,
+      })
+      .select('*')
+      .maybeSingle();
+
+    appUser = createdUser as DbUser | null;
+  }
+
+  if (!appUser) {
+    return null;
+  }
+
+  const targetSeason: DbSeason | null = (
+    seasonId ? (seasonResult as any)?.data : seasonResult
+  ) || null;
+
+  if (!targetSeason) {
+    const emptyContext: UserPermissionContext = {
+      user: appUser,
+      activeSeason: null,
+      roles: [],
+      assignedFranchise: null,
+      isSuperAdmin: false,
+      isOperator: false,
+      isAdmin: false,
+      isFranchise: false,
+      isPlayer: false,
+      isViewer: false,
+    };
+    return { authUser, appUser, context: emptyContext };
+  }
+
+  const allRoles = (roleRecordsResult.data || []) as any[];
+  const roles = allRoles.filter((r) => r.season_id === targetSeason.id) as DbSeasonRole[];
+
+  const isSuperAdmin = roles.some((r) => r.role === 'super_admin');
+  const isOperator = roles.some((r) => r.role === 'operator');
+  const isAdmin = isSuperAdmin || isOperator;
+  const isFranchise = roles.some((r) => r.role === 'franchise');
+  const isPlayer = roles.some((r) => r.role === 'player');
+  const isViewer = roles.some((r) => r.role === 'viewer') || roles.length === 0;
+
+  let assignedFranchise: DbFranchise | null = null;
+  const franchiseRole = allRoles.find(
+    (r) => r.season_id === targetSeason.id && r.role === 'franchise' && r.franchise_id
+  );
+
+  if (franchiseRole) {
+    assignedFranchise = (franchiseRole.franchise as DbFranchise) || null;
+    if (!assignedFranchise && franchiseRole.franchise_id) {
+      const { data: franchiseData } = await supabase
+        .from('franchises')
+        .select('*')
+        .eq('id', franchiseRole.franchise_id)
+        .eq('season_id', targetSeason.id)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      assignedFranchise = (franchiseData as DbFranchise) || null;
+    }
+  }
+
+  const context: UserPermissionContext = {
+    user: appUser,
+    activeSeason: targetSeason,
+    roles,
+    assignedFranchise,
+    isSuperAdmin,
+    isOperator,
+    isAdmin,
+    isFranchise,
+    isPlayer,
+    isViewer,
+  };
+
+  return { authUser, appUser, context };
+});
 
 /**
  * Requires that the user is authenticated.
@@ -12,15 +138,14 @@ import type { DbFranchise } from '@/lib/db/types';
  * Memoized per request with React cache().
  */
 export const requireAuth = cache(async (redirectTo?: string): Promise<UserPermissionContext> => {
-  const { authUser, appUser } = await getCurrentUser();
+  const resolved = await resolveAuthenticatedUserContext();
 
-  if (!authUser || !appUser) {
+  if (!resolved || !resolved.authUser || !resolved.appUser) {
     const target = redirectTo ? `?redirectTo=${encodeURIComponent(redirectTo)}` : '';
     redirect(`/login${target}`);
   }
 
-  const supabase = await createClient();
-  return await getUserPermissionContext(supabase, appUser);
+  return resolved.context;
 });
 
 /**
@@ -30,14 +155,13 @@ export const requireAuth = cache(async (redirectTo?: string): Promise<UserPermis
  * Memoized per request with React cache().
  */
 export const requireAdmin = cache(async (seasonId?: string): Promise<UserPermissionContext> => {
-  const { authUser, appUser } = await getCurrentUser();
+  const resolved = await resolveAuthenticatedUserContext(seasonId);
 
-  if (!authUser || !appUser) {
+  if (!resolved || !resolved.authUser || !resolved.appUser) {
     redirect('/login?redirectTo=/admin');
   }
 
-  const supabase = await createClient();
-  const context = await getUserPermissionContext(supabase, appUser, seasonId);
+  const { context } = resolved;
 
   if (!context.isAdmin) {
     if (context.roles.length === 0) {
@@ -55,14 +179,13 @@ export const requireAdmin = cache(async (seasonId?: string): Promise<UserPermiss
  * Memoized per request with React cache().
  */
 export const requireSuperAdmin = cache(async (seasonId?: string): Promise<UserPermissionContext> => {
-  const { authUser, appUser } = await getCurrentUser();
+  const resolved = await resolveAuthenticatedUserContext(seasonId);
 
-  if (!authUser || !appUser) {
+  if (!resolved || !resolved.authUser || !resolved.appUser) {
     redirect('/login?redirectTo=/admin');
   }
 
-  const supabase = await createClient();
-  const context = await getUserPermissionContext(supabase, appUser, seasonId);
+  const { context } = resolved;
 
   if (!context.isSuperAdmin) {
     redirect('/admin?error=unauthorized_super_admin');
@@ -81,14 +204,13 @@ export const requireSuperAdmin = cache(async (seasonId?: string): Promise<UserPe
 export const requireFranchise = cache(async (
   seasonId?: string
 ): Promise<UserPermissionContext & { assignedFranchise: DbFranchise }> => {
-  const { authUser, appUser } = await getCurrentUser();
+  const resolved = await resolveAuthenticatedUserContext(seasonId);
 
-  if (!authUser || !appUser) {
+  if (!resolved || !resolved.authUser || !resolved.appUser) {
     redirect('/login?redirectTo=/franchise');
   }
 
-  const supabase = await createClient();
-  const context = await getUserPermissionContext(supabase, appUser, seasonId);
+  const { context } = resolved;
 
   if (!context.isFranchise || !context.assignedFranchise) {
     if (context.roles.length === 0) {
@@ -105,14 +227,13 @@ export const requireFranchise = cache(async (
  * Memoized per request with React cache().
  */
 export const requirePlayer = cache(async (seasonId?: string): Promise<UserPermissionContext> => {
-  const { authUser, appUser } = await getCurrentUser();
+  const resolved = await resolveAuthenticatedUserContext(seasonId);
 
-  if (!authUser || !appUser) {
+  if (!resolved || !resolved.authUser || !resolved.appUser) {
     redirect('/login?redirectTo=/player');
   }
 
-  const supabase = await createClient();
-  const context = await getUserPermissionContext(supabase, appUser, seasonId);
+  const { context } = resolved;
 
   if (!context.isPlayer) {
     if (context.roles.length === 0) {

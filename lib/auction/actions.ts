@@ -27,7 +27,8 @@ import { getFranchiseSquadData } from '@/lib/franchises/queries';
 import { getActiveLot, getAuctionSessionState, getGuestDrawCandidates } from './queries';
 import { getActiveSeason } from '@/lib/permissions/context';
 import { executeAuctionMutationFlow } from './transaction';
-import { broadcastAuctionUpdate } from './realtime';
+import * as realtimeModule from './realtime';
+import { broadcastAuctionUpdate, enqueueBackgroundBroadcast } from './realtime';
 import { writeAuditLog } from '@/lib/audit/logger';
 import { DEFAULT_BUCKET_ORDER } from './types';
 import { parseBucketPlayerNumber } from './bucket-numbering';
@@ -420,19 +421,24 @@ export async function placeBidAction(
     const franchise = franchiseContext.assignedFranchise;
     const durationSeconds = subsequentBidTimerVal;
 
-    // Immediate post-commit broadcast with sequenceNumber to all connected devices
-    await broadcastAuctionUpdate(lot.season_id, 'BID_PLACED', {
-      lotId: lot.id,
-      lotStatus: 'in_progress',
-      currentPrice: nextBid,
-      highestBidderId: franchise.id,
-      highestBidderName: franchise.name,
-      highestBidderShortName: franchise.short_name,
-      highestBidderPrimaryColor: (franchise as any).color_primary || null,
-      startedAt: now,
-      durationSeconds,
-      sequenceNumber: mutation.data?.event?.sequence_number,
-    });
+    // Immediate post-commit broadcast with sequenceNumber to all connected devices.
+    // Dispatched asynchronously via enqueueBackgroundBroadcast (using Next.js after()
+    // serverless lifecycle guarantee) so the initiating franchise's response is not
+    // blocked by the ~950ms httpSend round-trip to the Supabase Realtime endpoint.
+    enqueueBackgroundBroadcast(() =>
+      realtimeModule.broadcastAuctionUpdate(lot.season_id, 'BID_PLACED', {
+        lotId: lot.id,
+        lotStatus: 'in_progress',
+        currentPrice: nextBid,
+        highestBidderId: franchise.id,
+        highestBidderName: franchise.name,
+        highestBidderShortName: franchise.short_name,
+        highestBidderPrimaryColor: (franchise as any).color_primary || null,
+        startedAt: now,
+        durationSeconds,
+        sequenceNumber: mutation.data?.event?.sequence_number,
+      })
+    );
     t5 = performance.now();
 
     // Note: Blocking synchronous revalidatePath calls removed from incremental bids.
@@ -2754,13 +2760,15 @@ export async function pauseAuctionAction(
     }
 
     // Immediate post-commit broadcast for PAUSE
-    await broadcastAuctionUpdate(activeSeason.id, 'PAUSE', {
-      lotId: activeLot?.id,
-      remainingSeconds,
-      sessionStatus: 'paused',
-      isPaused: true,
-      sequenceNumber: pauseSequenceNumber,
-    });
+    enqueueBackgroundBroadcast(() =>
+      realtimeModule.broadcastAuctionUpdate(activeSeason.id, 'PAUSE', {
+        lotId: activeLot?.id,
+        remainingSeconds,
+        sessionStatus: 'paused',
+        isPaused: true,
+        sequenceNumber: pauseSequenceNumber,
+      })
+    );
 
     // Authoritative operator page revalidation only; delta broadcast covers all live viewing surfaces (<20ms)
     revalidatePath('/admin/auction');
@@ -2804,19 +2812,7 @@ export async function resumeAuctionAction(): Promise<
     const adminClient = createAdminClient();
     const now = new Date().toISOString();
 
-    // 0. Idempotency: if already live, return success immediately
-    const { data: currentConfig } = await adminClient
-      .from('season_config')
-      .select('value')
-      .eq('season_id', activeSeason.id)
-      .eq('key', 'auction_session_status')
-      .maybeSingle();
-
-    if (currentConfig?.value === 'live') {
-      return { success: true, data: { status: 'live' } };
-    }
-
-    // 1. Fetch active lot and paused config to restore timer
+    // 1. Concurrently fetch active lot, session status, and paused configs in a single round-trip
     const [activeLotRes, configRowsRes] = await Promise.all([
       adminClient
         .from('auction_lots')
@@ -2829,6 +2825,7 @@ export async function resumeAuctionAction(): Promise<
         .select('key, value')
         .eq('season_id', activeSeason.id)
         .in('key', [
+          'auction_session_status',
           'auction_lot_paused_remaining_seconds',
           'first_bid_timer_seconds',
           'subsequent_bid_timer_seconds',
@@ -2838,12 +2835,14 @@ export async function resumeAuctionAction(): Promise<
     const activeLot = activeLotRes.data;
     const configRows = configRowsRes.data;
 
+    let currentSessionStatus: string | null = null;
     let firstBidSeconds = 30;
     let subsequentBidSeconds = 20;
     let pausedRemainingSec: number | null = null;
 
     if (configRows) {
       for (const cr of configRows) {
+        if (cr.key === 'auction_session_status') currentSessionStatus = cr.value;
         if (cr.key === 'first_bid_timer_seconds') firstBidSeconds = parseInt(cr.value, 10) || 30;
         if (cr.key === 'subsequent_bid_timer_seconds') subsequentBidSeconds = parseInt(cr.value, 10) || 20;
         if (cr.key === 'auction_lot_paused_remaining_seconds' && cr.value) {
@@ -2851,6 +2850,11 @@ export async function resumeAuctionAction(): Promise<
           if (!isNaN(parsed)) pausedRemainingSec = parsed;
         }
       }
+    }
+
+    // Idempotency: if already live, return success immediately
+    if (currentSessionStatus === 'live') {
+      return { success: true, data: { status: 'live' } };
     }
 
     const timerDuration = activeLot?.highest_bidder_franchise_id
@@ -2882,9 +2886,8 @@ export async function resumeAuctionAction(): Promise<
       }
     }
 
-    // 3. Only after auction_lots.started_at is updated, set auction_session_status to 'live'
-    // and delete pause keys.
-    const { error: statusUpsertErr } = await adminClient
+    // 3. Concurrently commit independent status upsert, pause config cleanup, and RESUME event recording
+    const statusUpsertPromise = adminClient
       .from('season_config')
       .upsert(
         {
@@ -2897,64 +2900,72 @@ export async function resumeAuctionAction(): Promise<
         { onConflict: 'season_id,key' }
       );
 
-    if (statusUpsertErr) {
-      return {
-        success: false,
-        error: statusUpsertErr.message || 'Failed to update auction session status to live.',
-      };
-    }
-
-    const { error: deletePauseErr } = await adminClient
+    const deletePausePromise = adminClient
       .from('season_config')
       .delete()
       .eq('season_id', activeSeason.id)
       .in('key', ['auction_lot_paused_remaining_seconds', 'auction_paused_at']);
 
-    if (deletePauseErr) {
+    const insertEventPromise = activeLot
+      ? (async () => {
+          const insertQuery = adminClient.from('auction_events').insert({
+            season_id: activeSeason.id,
+            auction_lot_id: activeLot.id,
+            event_type: 'RESUME',
+            actor_user_id: adminContext.user.id,
+            reason: 'Auction resumed by operator',
+            payload: {
+              resumed_at: now,
+              remaining_seconds: remainingToRestore,
+            },
+            created_at: now,
+          });
+
+          return typeof (insertQuery as any)?.select === 'function'
+            ? await (insertQuery as any).select().single()
+            : await insertQuery;
+        })()
+      : Promise.resolve({ data: null, error: null });
+
+    const [statusUpsertRes, deletePauseRes, resumeEventRes] = await Promise.all([
+      statusUpsertPromise,
+      deletePausePromise,
+      insertEventPromise,
+    ]);
+
+    if (statusUpsertRes.error) {
       return {
         success: false,
-        error: deletePauseErr.message || 'Failed to clear paused timer configuration.',
+        error: statusUpsertRes.error.message || 'Failed to update auction session status to live.',
       };
     }
 
-    // 4. If a lot is currently in progress, record RESUME event
-    let resumeSequenceNumber: number | undefined;
-    if (activeLot) {
-      const insertQuery = adminClient.from('auction_events').insert({
-        season_id: activeSeason.id,
-        auction_lot_id: activeLot.id,
-        event_type: 'RESUME',
-        actor_user_id: adminContext.user.id,
-        reason: 'Auction resumed by operator',
-        payload: {
-          resumed_at: now,
-          remaining_seconds: remainingToRestore,
-        },
-        created_at: now,
-      });
-
-      const { data: resumeEvent, error: resumeEventErr } =
-        typeof (insertQuery as any)?.select === 'function'
-          ? await (insertQuery as any).select().single()
-          : await insertQuery;
-
-      if (resumeEventErr) {
-        return {
-          success: false,
-          error: resumeEventErr.message || 'Failed to record auction resume event.',
-        };
-      }
-      resumeSequenceNumber = resumeEvent?.sequence_number;
+    if (deletePauseRes.error) {
+      return {
+        success: false,
+        error: deletePauseRes.error.message || 'Failed to clear paused timer configuration.',
+      };
     }
 
-    // Immediate post-commit broadcast for RESUME
-    await broadcastAuctionUpdate(activeSeason.id, 'RESUME', {
-      lotId: activeLot?.id,
-      startedAt: activeLot ? restoredStartedAt : null,
-      sessionStatus: 'live',
-      isPaused: false,
-      sequenceNumber: resumeSequenceNumber,
-    });
+    if (resumeEventRes.error) {
+      return {
+        success: false,
+        error: resumeEventRes.error.message || 'Failed to record auction resume event.',
+      };
+    }
+
+    const resumeSequenceNumber = resumeEventRes.data?.sequence_number;
+
+    // Non-blocking, serverless-guaranteed broadcast dispatch for RESUME
+    enqueueBackgroundBroadcast(() =>
+      realtimeModule.broadcastAuctionUpdate(activeSeason.id, 'RESUME', {
+        lotId: activeLot?.id,
+        startedAt: activeLot ? restoredStartedAt : null,
+        sessionStatus: 'live',
+        isPaused: false,
+        sequenceNumber: resumeSequenceNumber,
+      })
+    );
 
     // Authoritative operator page revalidation only; delta broadcast covers all live viewing surfaces (<20ms)
     revalidatePath('/admin/auction');

@@ -193,6 +193,7 @@ export interface RealtimeRefreshCoordinatorOptions {
   inFlightWindowMs?: number;
   now?: () => number;
   isLocalActionSuppressed?: () => boolean;
+  reconnectRecovery?: boolean;
 }
 
 export interface RealtimeRefreshCoordinator {
@@ -210,6 +211,7 @@ export function createRealtimeRefreshCoordinator({
   coalesceMs = 80,
   inFlightWindowMs = 150,
   isLocalActionSuppressed,
+  reconnectRecovery = false,
 }: RealtimeRefreshCoordinatorOptions): RealtimeRefreshCoordinator {
   const checkSuppressed = isLocalActionSuppressed ?? (() => isLocalActionEchoWindowActive());
   let channelStatus: RealtimeChannelHealth = 'CONNECTING';
@@ -286,7 +288,12 @@ export function createRealtimeRefreshCoordinator({
       scheduleCoalescedRefresh();
     },
     setChannelStatus: (status: RealtimeChannelHealth) => {
+      const wasDegraded = channelStatus !== 'SUBSCRIBED' && channelStatus !== 'CONNECTING';
       channelStatus = status;
+      if (reconnectRecovery && wasDegraded && status === 'SUBSCRIBED') {
+        // Authoritative reconnect snapshot recovery: refresh page to reconcile any missed mutations
+        scheduleCoalescedRefresh();
+      }
     },
     getChannelStatus: () => channelStatus,
     notifyLocalActionStarted: () => {

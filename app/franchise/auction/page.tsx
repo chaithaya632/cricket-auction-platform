@@ -13,6 +13,7 @@ import { RecentActivityStream } from '@/components/auction/recent-activity-strea
 import { DashboardShell } from '@/components/acc/dashboard-shell';
 import { getSessionUser } from '@/lib/acc/server-session';
 import { AuctionSessionIndicator } from '@/components/acc/status-badges';
+import { ClientBuildBadge } from '@/components/acc/client-build-badge';
 import { AuctionRealtimeSync } from '@/components/auction/auction-realtime-sync';
 
 export const metadata: Metadata = { title: 'Live Auction · Franchise' };
@@ -54,7 +55,12 @@ export default async function FranchiseAuctionPage() {
       role="franchise"
       user={sessionUser}
       breadcrumb="Live Auction"
-      actions={<AuctionSessionIndicator status={sessionState.status} />}
+      actions={
+        <div className="flex items-center gap-2">
+          <AuctionSessionIndicator status={sessionState.status} />
+          <ClientBuildBadge />
+        </div>
+      }
     >
       <AuctionRealtimeSync seasonId={seasonId} />
       <div className="space-y-8 max-w-7xl mx-auto">

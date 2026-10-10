@@ -8,6 +8,7 @@ import React, { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { ArrowLeft, Maximize, Minimize, LogOut } from "lucide-react"
+import { ClientBuildBadge } from "@/components/acc/client-build-badge"
 
 interface LiveExitBarProps {
   mode: "live_room" | "projector"
@@ -86,6 +87,7 @@ export function LiveExitBar({
         </div>
 
         <div className="flex items-center gap-2">
+          <ClientBuildBadge />
           <span className="hidden sm:inline font-mono text-[11px] text-zinc-300">
             {isFullscreen ? "Press Esc or click to exit fullscreen" : "Auditorium Mode"}
           </span>
@@ -138,6 +140,7 @@ export function LiveExitBar({
       </div>
 
       <div className="flex items-center gap-2">
+        <ClientBuildBadge />
         {canFullscreen && (
           <button
             type="button"
