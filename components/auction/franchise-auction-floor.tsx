@@ -52,6 +52,11 @@ export function FranchiseAuctionFloor({
   const [activeLot, setActiveLot] = useState<AuctionLotWithDetails | null>(initialActiveLot);
   const [sessionState, setSessionState] = useState<AuctionSessionState>(initialSessionState);
   const [franchiseData, setFranchiseData] = useState<FranchiseBiddingData | null>(franchise);
+  const [overrideDuration, setOverrideDuration] = useState<number | null>(null);
+
+  useEffect(() => {
+    setOverrideDuration(null);
+  }, [activeLot?.id]);
 
   // Single authoritative owner for Guest Draw completion:
   // pendingGuestDrawLotRef stores the incoming lot while GuestDrawRevealOverlay displays.
@@ -170,6 +175,14 @@ export function FranchiseAuctionFloor({
         if (
           (prev.status === 'sold' || prev.status === 'unsold') &&
           initialActiveLot.status === 'in_progress'
+        ) {
+          return prev;
+        }
+        // Guard: never let stale RSC overwrite a more-recent started_at (e.g. after RESUME)
+        if (
+          prev.started_at &&
+          initialActiveLot.started_at &&
+          new Date(prev.started_at).getTime() > new Date(initialActiveLot.started_at).getTime()
         ) {
           return prev;
         }
@@ -334,6 +347,9 @@ export function FranchiseAuctionFloor({
         if (payload.startedAt) {
           setActiveLot((prev) => (prev ? { ...prev, started_at: payload.startedAt! } : prev));
         }
+        if (payload.durationSeconds !== undefined && payload.durationSeconds !== null) {
+          setOverrideDuration(payload.durationSeconds);
+        }
       } else if (payload.type === 'AUCTION_ENDED') {
         setIsTimerExpired(true);
         setSessionState((prev) => ({
@@ -366,17 +382,41 @@ export function FranchiseAuctionFloor({
               return { ...prev, started_at: payload.startedAt! };
             });
           }
+          if (payload.durationSeconds !== undefined && payload.durationSeconds !== null) {
+            setOverrideDuration(payload.durationSeconds);
+          }
         }
       }
     });
   }, [activeLot?.id]);
 
-  const timerDuration = activeLot?.highest_bidder_franchise_id
+  const timerDuration = overrideDuration ?? (activeLot?.highest_bidder_franchise_id
     ? config.subsequentBidTimerSeconds
-    : config.firstBidTimerSeconds;
+    : config.firstBidTimerSeconds);
 
   return (
     <div className="space-y-6">
+      {/* Franchise Dashboard Section - Purse Protection */}
+      {franchiseData && (
+        <div className="rounded-2xl border border-border bg-zinc-950 p-4 shadow-lg text-zinc-300">
+          <h3 className="font-semibold text-zinc-100 mb-2">Franchise Dashboard</h3>
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span className="text-zinc-500">Remaining Purse:</span> <span className="font-mono text-emerald-400">₹{franchiseData.remainingPurse.toLocaleString('en-IN')}</span>
+            </div>
+            <div>
+              <span className="text-zinc-500">Amount Spent:</span> <span className="font-mono">₹{(config.defaultPurse - franchiseData.remainingPurse).toLocaleString('en-IN')}</span>
+            </div>
+            <div>
+              <span className="text-zinc-500">Players Purchased:</span> <span className="font-mono">{franchiseData.squadCount}</span>
+            </div>
+            <div>
+              <span className="text-zinc-500">Players Still Needed:</span> <span className="font-mono">{Math.max(0, 11 - franchiseData.squadCount)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ActiveLotCard lot={activeLot} />
 
       {activeLot && (

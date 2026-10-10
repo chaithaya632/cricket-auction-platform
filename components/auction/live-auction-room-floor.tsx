@@ -44,6 +44,11 @@ export function LiveAuctionRoomFloor({
 }: LiveAuctionRoomFloorProps) {
   const [activeLot, setActiveLot] = useState<AuctionLotWithDetails | null>(initialActiveLot);
   const [sessionState, setSessionState] = useState<AuctionSessionState>(initialSessionState);
+  const [overrideDuration, setOverrideDuration] = useState<number | null>(null);
+
+  useEffect(() => {
+    setOverrideDuration(null);
+  }, [activeLot?.id]);
 
   // Single authoritative owner for Guest Draw completion:
   // pendingGuestDrawLotRef stores the incoming lot while GuestDrawRevealOverlay displays.
@@ -158,6 +163,14 @@ export function LiveAuctionRoomFloor({
         if (
           (prev.status === 'sold' || prev.status === 'unsold') &&
           initialActiveLot.status === 'in_progress'
+        ) {
+          return prev;
+        }
+        // Guard: never let stale RSC overwrite a more-recent started_at (e.g. after RESUME)
+        if (
+          prev.started_at &&
+          initialActiveLot.started_at &&
+          new Date(prev.started_at).getTime() > new Date(initialActiveLot.started_at).getTime()
         ) {
           return prev;
         }
@@ -315,6 +328,9 @@ export function LiveAuctionRoomFloor({
         if (payload.startedAt) {
           setActiveLot((prev) => (prev ? { ...prev, started_at: payload.startedAt! } : prev));
         }
+        if (payload.durationSeconds !== undefined && payload.durationSeconds !== null) {
+          setOverrideDuration(payload.durationSeconds);
+        }
       } else if (payload.type === 'AUCTION_ENDED') {
         setIsTimerExpired(true);
         setSessionState((prev) => ({
@@ -347,14 +363,17 @@ export function LiveAuctionRoomFloor({
               return { ...prev, started_at: payload.startedAt! };
             });
           }
+          if (payload.durationSeconds !== undefined && payload.durationSeconds !== null) {
+            setOverrideDuration(payload.durationSeconds);
+          }
         }
       }
     });
   }, [activeLot?.id]);
 
-  const timerDuration = activeLot?.highest_bidder_franchise_id
+  const timerDuration = overrideDuration ?? (activeLot?.highest_bidder_franchise_id
     ? config.subsequentBidTimerSeconds
-    : config.firstBidTimerSeconds;
+    : config.firstBidTimerSeconds);
 
   return (
     <div className="lg:col-span-8 space-y-6">

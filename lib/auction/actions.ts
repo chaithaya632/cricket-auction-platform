@@ -293,6 +293,7 @@ export async function placeBidAction(
     let sessionStatusVal: string | null = null;
     let firstBidTimerVal = 30;
     let subsequentBidTimerVal = 20;
+    let minAuctionPurchasesVal = 15; // default fallback
 
     if (Array.isArray(configRows)) {
       for (const row of configRows) {
@@ -310,6 +311,10 @@ export async function placeBidAction(
         ) {
           const parsed = parseInt(row.value, 10);
           if (!isNaN(parsed)) subsequentBidTimerVal = parsed;
+        }
+        if (row.key === 'min_auction_purchases' && row.value) {
+          const parsed = parseInt(row.value, 10);
+          if (!isNaN(parsed)) minAuctionPurchasesVal = parsed;
         }
       }
     } else if (configRows && typeof configRows === 'object' && 'value' in configRows) {
@@ -368,7 +373,7 @@ export async function placeBidAction(
         squadCount: squadData.purseState.totalSquadCount,
         maxSquadSize: 22,
         auctionPurchasesSoFar: squadData.purseState.auctionPurchasesCount,
-        minAuctionPurchases: 15,
+        minAuctionPurchases: minAuctionPurchasesVal,
         minBasePrice: 20,
         mandatoryBucketDeficits,
       },

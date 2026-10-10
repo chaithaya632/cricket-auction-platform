@@ -517,43 +517,59 @@ export function ActiveLotCard({
           )}
 
           {/* Self-Declared Career Stats / Questionnaire Summary (§14) */}
-          {lot.skills?.parsed_stats && (
-            <div className="rounded-xl bg-zinc-950/90 border border-zinc-800/80 p-4 space-y-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 block">
-                Player Profile Details
-              </span>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
-                {lot.skills.parsed_stats.bowlingRoles && Array.isArray(lot.skills.parsed_stats.bowlingRoles) && (
-                  <div className="col-span-2 sm:col-span-4 rounded bg-zinc-900/80 p-2 text-xs text-left">
-                    <span className="text-zinc-500 block text-[10px] uppercase font-bold">Specialist Roles</span>
-                    <span className="text-zinc-300">{lot.skills.parsed_stats.bowlingRoles.join(' • ')}</span>
+          {lot.skills?.parsed_stats && (() => {
+            const stats = lot.skills.parsed_stats as Record<string, any>;
+
+            const profileKeys = ['highestLevelPlayed', 'playedPreviousAcc', 'previousAccTeam', 'bowlingRoles', 'fieldingZone'];
+
+            const batKeywords = ['bat', 'runs', 'innings', 'average', 'strike_rate', 'centuries', 'fifties', 'fours', 'sixes', 'highest'];
+            const bowlKeywords = ['bowl', 'wickets', 'overs', 'economy', 'maiden'];
+            const fieldKeywords = ['field', 'catch', 'stumping', 'run_out'];
+
+            const allKeys = Object.keys(stats);
+
+            const battingKeys = allKeys.filter(k => !profileKeys.includes(k) && batKeywords.some(kw => k.toLowerCase().includes(kw.toLowerCase())));
+            const bowlingKeys = allKeys.filter(k => !profileKeys.includes(k) && !battingKeys.includes(k) && bowlKeywords.some(kw => k.toLowerCase().includes(kw.toLowerCase())));
+            const fieldingKeys = allKeys.filter(k => !profileKeys.includes(k) && !battingKeys.includes(k) && !bowlingKeys.includes(k) && fieldKeywords.some(kw => k.toLowerCase().includes(kw.toLowerCase())));
+
+            const formatLabel = (k: string) => k.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').replace(/^./, str => str.toUpperCase()).trim();
+            const formatVal = (v: any) => {
+              if (v === null || v === undefined || v === '') return <span className="text-zinc-600 italic">Unavailable</span>;
+              if (Array.isArray(v)) return v.join(' • ');
+              return String(v).replace(/_/g, ' ');
+            };
+
+            const renderSection = (title: string, keys: string[]) => {
+              if (keys.length === 0) return null;
+              return (
+                <div className="rounded bg-zinc-900/80 p-3 text-xs mb-2">
+                  <span className="text-zinc-500 block text-[10px] uppercase font-bold mb-2 pb-1 border-b border-zinc-800">{title}</span>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
+                    {keys.map(k => (
+                      <div key={k} className="flex flex-col justify-center bg-zinc-950/50 p-2 rounded border border-zinc-800/50">
+                        <span className="text-zinc-400 text-[10px] mb-1">{formatLabel(k)}</span>
+                        <span className="text-zinc-200 font-mono capitalize">{formatVal(stats[k])}</span>
+                      </div>
+                    ))}
                   </div>
-                )}
-                {lot.skills.parsed_stats.fieldingZone && (
-                  <div className="rounded bg-zinc-900/80 p-2 text-xs">
-                    <span className="text-zinc-500 block text-[10px] uppercase font-bold">Zone</span>
-                    <span className="text-zinc-200 capitalize font-mono">{lot.skills.parsed_stats.fieldingZone}</span>
-                  </div>
-                )}
-                {lot.skills.parsed_stats.highestLevelPlayed && (
-                  <div className="rounded bg-zinc-900/80 p-2 text-xs">
-                    <span className="text-zinc-500 block text-[10px] uppercase font-bold">Level</span>
-                    <span className="text-zinc-200 capitalize font-mono">
-                      {lot.skills.parsed_stats.highestLevelPlayed.replace(/_/g, ' ')}
-                    </span>
-                  </div>
-                )}
-                {lot.skills.parsed_stats.playedPreviousAcc && (
-                  <div className="rounded bg-zinc-900/80 p-2 text-xs">
-                    <span className="text-zinc-500 block text-[10px] uppercase font-bold">ACC Veteran</span>
-                    <span className="text-amber-400 font-bold">
-                      {lot.skills.parsed_stats.previousAccTeam || 'Yes'}
-                    </span>
-                  </div>
-                )}
+                </div>
+              );
+            };
+
+            return (
+              <div className="mt-4 rounded-xl bg-zinc-950/90 border border-zinc-800/80 p-4">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-3 flex items-center gap-2">
+                  Player Profile & Statistics
+                </h4>
+                <div className="space-y-1">
+                  {renderSection('Profile Info', profileKeys.filter(k => Object.prototype.hasOwnProperty.call(stats, k)))}
+                  {renderSection('Batting Stats', battingKeys)}
+                  {renderSection('Bowling Stats', bowlingKeys)}
+                  {renderSection('Fielding Stats', fieldingKeys)}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     </div>
