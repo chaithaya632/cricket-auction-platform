@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { requireFranchise } from '@/lib/permissions/guards';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import {
   getActiveLot,
   getRecentAuctionEvents,
@@ -22,11 +23,12 @@ export default async function FranchiseAuctionPage() {
   const permContext = await requireFranchise();
   const { assignedFranchise, activeSeason } = permContext;
   const supabase = await createClient();
+  const adminClient = createAdminClient();
 
   const seasonId = activeSeason?.id || '00000000-0000-0000-0000-000000000001';
 
   const [activeLot, recentEvents, config, squadData, sessionUser, sessionState] = await Promise.all([
-    getActiveLot(supabase, seasonId),
+    getActiveLot(adminClient, seasonId),
     getRecentAuctionEvents(supabase, seasonId, 20),
     getSeasonAuctionConfig(supabase, seasonId),
     getFranchiseSquadData(supabase, assignedFranchise.id, seasonId),

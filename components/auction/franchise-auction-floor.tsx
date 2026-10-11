@@ -199,6 +199,14 @@ export function FranchiseAuctionFloor({
         }
         return prev;
       }
+      // Preserve broadcast-enriched skills when RSC lot lacks them (franchise RLS blocks player_skill_profiles)
+      if (
+        prev.skills?.parsed_stats &&
+        !initialActiveLot.skills?.parsed_stats &&
+        prev.id === initialActiveLot.id
+      ) {
+        return { ...initialActiveLot, skills: prev.skills };
+      }
       return initialActiveLot;
     });
   }, [initialActiveLot, sessionState.isCompleted, sessionState.status]);
