@@ -77,7 +77,7 @@ export function validateBucketEligibility(
   const remainingSlotsAfterPurchase = remainingSlots - 1;
 
   // 1. Slot deficit check: must have enough slots left for remaining mandatory quotas
-  if (remainingSlotsAfterPurchase < deficitAfterPurchase) {
+  if (deficitAfterPurchase > 0 && remainingSlotsAfterPurchase < deficitAfterPurchase) {
     return {
       isEligible: false,
       reason: `Blocked: Franchise has ${remainingSlots} slot(s) remaining and still needs ${totalDeficit} mandatory player(s). Acquiring a ${targetBucket} player would leave ${remainingSlotsAfterPurchase} slot(s) for ${deficitAfterPurchase} unfilled mandatory requirement(s).`,

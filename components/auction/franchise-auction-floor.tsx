@@ -419,7 +419,7 @@ export function FranchiseAuctionFloor({
               <span className="text-zinc-500">Players Purchased:</span> <span className="font-mono">{franchiseData.squadCount}</span>
             </div>
             <div>
-              <span className="text-zinc-500">Players Still Needed:</span> <span className="font-mono">{Math.max(0, 11 - franchiseData.squadCount)}</span>
+              <span className="text-zinc-500">Players Still Needed:</span> <span className="font-mono">{Math.max(0, (config.minAuctionPurchases || 15) - franchiseData.squadCount)}</span>
             </div>
           </div>
         </div>

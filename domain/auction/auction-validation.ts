@@ -125,7 +125,9 @@ export function validateBidEligibility(
   }
 
   // 6. Mandatory Bucket Eligibility Check (§12.2, Appendix A Cases 7-10)
-  const remainingSlots = (franchise.minAuctionPurchases ?? 15) - franchise.auctionPurchasesSoFar;
+  const remainingAuctionSlots = Math.max(0, (franchise.minAuctionPurchases ?? 15) - franchise.auctionPurchasesSoFar);
+  const remainingSquadSlots = Math.max(0, (franchise.maxSquadSize ?? 22) - franchise.squadCount);
+  const remainingSlots = remainingAuctionSlots > 0 ? Math.min(remainingAuctionSlots, remainingSquadSlots) : remainingSquadSlots;
   const bucketEligibility = validateBucketEligibility({
     remainingSlots,
     unfilledMandatoryDeficits: franchise.mandatoryBucketDeficits.map((d) => ({

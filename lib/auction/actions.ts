@@ -345,18 +345,43 @@ export async function placeBidAction(
       };
     }
 
-    if (!squadData) {
+    let effectiveSquadData = squadData;
+    if (lot.season_id && lot.season_id !== targetSeasonId) {
+      const resSquad = await getFranchiseSquadData(adminClient, franchiseId, lot.season_id, {
+        skipPlayerProfiles: true,
+        franchise: franchiseContext.assignedFranchise,
+      });
+      if (resSquad) {
+        effectiveSquadData = resSquad;
+      }
+    }
+
+    if (!effectiveSquadData) {
       return { success: false, error: 'Franchise data could not be retrieved.' };
     }
 
     // 3. Determine next legal bid and validate full domain eligibility
-    const mandatoryBucketDeficits = squadData.bucketProgress.buckets
+    let mandatoryBucketDeficits = effectiveSquadData.bucketProgress.buckets
       .filter((b) => b.isMandatory)
       .map((b) => ({
         bucket: b.bucket,
         minRequired: b.minPurchases,
         acquiredCount: b.acquiredCount,
       }));
+
+    if (mandatoryBucketDeficits.length === 0) {
+      const defaultMandatoryBuckets = ['B1', 'B2', 'B3', 'B4', 'B5'];
+      mandatoryBucketDeficits = defaultMandatoryBuckets.map((bucket) => {
+        const found = effectiveSquadData.bucketProgress.buckets.find((b) => b.bucket === bucket);
+        return {
+          bucket,
+          minRequired: 2,
+          acquiredCount: found ? found.acquiredCount : 0,
+        };
+      });
+    }
+
+    const nextLegalBid = calculateNextBid(lot.current_price, lot.base_price);
 
     const validation = validateBidEligibility({
       lot: {
@@ -369,15 +394,15 @@ export async function placeBidAction(
       },
       franchise: {
         id: franchiseId,
-        remainingPurse: squadData.purseState.remainingPurse,
-        squadCount: squadData.purseState.totalSquadCount,
+        remainingPurse: effectiveSquadData.purseState.remainingPurse,
+        squadCount: effectiveSquadData.purseState.totalSquadCount,
         maxSquadSize: 22,
-        auctionPurchasesSoFar: squadData.purseState.auctionPurchasesCount,
+        auctionPurchasesSoFar: effectiveSquadData.purseState.auctionPurchasesCount,
         minAuctionPurchases: minAuctionPurchasesVal,
         minBasePrice: 20,
         mandatoryBucketDeficits,
       },
-      proposedBid: validationNextBidTarget(lot.current_price, lot.base_price),
+      proposedBid: nextLegalBid,
     });
 
     if (!validation.eligible || !validation.expectedBid) {
@@ -3574,13 +3599,38 @@ export async function adminProxyBidAction(
       return { success: false, error: 'Target franchise not found.' };
     }
 
-    const mandatoryBucketDeficits = squadData.bucketProgress.buckets
+    const { data: minPurchasesRow } = await adminClient
+      .from('season_config')
+      .select('value')
+      .eq('season_id', lot.season_id)
+      .eq('key', 'min_auction_purchases')
+      .maybeSingle();
+
+    let minAuctionPurchasesVal = 15;
+    if (minPurchasesRow?.value) {
+      const parsed = parseInt(minPurchasesRow.value, 10);
+      if (!isNaN(parsed)) minAuctionPurchasesVal = parsed;
+    }
+
+    let mandatoryBucketDeficits = squadData.bucketProgress.buckets
       .filter((b) => b.isMandatory)
       .map((b) => ({
         bucket: b.bucket,
         minRequired: b.minPurchases,
         acquiredCount: b.acquiredCount,
       }));
+
+    if (mandatoryBucketDeficits.length === 0) {
+      const defaultMandatoryBuckets = ['B1', 'B2', 'B3', 'B4', 'B5'];
+      mandatoryBucketDeficits = defaultMandatoryBuckets.map((bucket) => {
+        const found = squadData.bucketProgress.buckets.find((b) => b.bucket === bucket);
+        return {
+          bucket,
+          minRequired: 2,
+          acquiredCount: found ? found.acquiredCount : 0,
+        };
+      });
+    }
 
     const nextBid = calculateNextBid(lot.current_price, lot.base_price);
 
@@ -3599,7 +3649,7 @@ export async function adminProxyBidAction(
         squadCount: squadData.purseState.totalSquadCount,
         maxSquadSize: 22,
         auctionPurchasesSoFar: squadData.purseState.auctionPurchasesCount,
-        minAuctionPurchases: 15,
+        minAuctionPurchases: minAuctionPurchasesVal,
         minBasePrice: 20,
         mandatoryBucketDeficits,
       },
